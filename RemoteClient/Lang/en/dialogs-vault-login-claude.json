@@ -78,7 +78,6 @@
   "Client ID 에 해당하는 OAuth 앱을 찾을 수 없습니다. Client ID 를 확인하세요.": "No OAuth app was found for the Client ID. Check the Client ID.",
   "요청한 권한(scope)을 이 앱에서 쓸 수 없습니다.": "The requested permissions (scope) are not available for this app.",
   "로그인 실패: {0}": "Sign-in failed: {0}",
-  "사용 안 함": "Not used",
   "Client ID 를 넣으세요.": "Enter the Client ID.",
   "Google 은 Client Secret 도 필요합니다 (\"TV 및 입력 제한 기기\" 유형 클라이언트).": "Google also requires a Client Secret (\"TVs and Limited Input devices\" client type).",
   "Microsoft 테넌트를 넣으세요 (회사 계정이면 organizations).": "Enter the Microsoft tenant (organizations for work accounts).",
@@ -142,5 +141,6 @@
   "저장된 계정이 없습니다. '새로 만들기' 로 추가하세요.": "No saved accounts. Add one with 'Create new'.",
   "Vault 계정 선택": "Select Vault account",
   "이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다. RDP 는 비밀번호만 씁니다.": "Choose the account to sign in to this host with. Its username, password and SSH key are used to connect; values entered directly on the host take precedence. RDP uses only the password.",
-  "이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다.": "Choose the account to sign in to this host with. Its username, password and SSH key are used to connect; values entered directly on the host take precedence."
+  "이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다.": "Choose the account to sign in to this host with. Its username, password and SSH key are used to connect; values entered directly on the host take precedence.",
+  "쓰는 호스트 없음": "Not used"
 }

@@ -105,7 +105,7 @@ public sealed class VaultEntry
     }
     /// <summary>이 항목을 쓰는 호스트 수 (목록 표시 때 채움)</summary>
     [JsonIgnore] public int UsedBy { get; set; }
-    [JsonIgnore] public string UsedByText => UsedBy == 0 ? L.T("사용 안 함") : L.F("호스트 {0}개", UsedBy);
+    [JsonIgnore] public string UsedByText => UsedBy == 0 ? L.T("쓰는 호스트 없음") : L.F("호스트 {0}개", UsedBy);
     [JsonIgnore] public Visibility CopyVisibility => HasKey && !string.IsNullOrEmpty(PublicKey) ? Visibility.Visible : Visibility.Collapsed;
 }
 

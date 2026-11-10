@@ -18,7 +18,6 @@
   "삭제": "Delete",
   "경로 복사": "Copy path",
   "취소": "Cancel",
-
   "{0} 파일입니다. 받아서 편집할까요?": "This file is {0}. Download it and edit?",
   "편집": "Edit",
   "편집용으로 받는 중: {0}": "Downloading for editing: {0}",
@@ -31,7 +30,6 @@
   "저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})": "Saved → uploaded to server: {0}  ({1:HH:mm:ss}, {2})",
   "자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)": "Auto upload failed: {0} — {1} (save again to retry)",
   "편집기를 열지 못했습니다: {0}": "Could not open the editor: {0}",
-
   "{0} 에 업로드": "Upload to {0}",
   "{0} 에 업로드할 파일": "Files to upload to {0}",
   "이미 있는 항목 {0}개를 덮어쓸까요?\n\n": "Overwrite {0} existing item(s)?\n\n",
@@ -51,7 +49,6 @@
   "다운로드를 취소했습니다.": "Download canceled.",
   "다운로드 실패: {0}": "Download failed: {0}",
   "끌어다 놓은 위치": "drop location",
-
   "폴더": "Folder",
   "터미널 현재 폴더를 알 수 없습니다. 프롬프트가 user@host:/경로$ 형식이 아니고, 셸이 현재 폴더를 알려주지 않습니다(OSC 7).": "Can't tell the terminal's current folder. The prompt isn't in user@host:/path$ form and the shell doesn't report its current folder (OSC 7).",
   "터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요.": "Available after the terminal sign-in finishes.\nPress Refresh in a moment.",
@@ -62,7 +59,6 @@
   "\n(폴더 {0}개는 안의 내용까지 모두 삭제)": "\n({0} folder(s) will be deleted with all their contents)",
   "삭제 확인": "Confirm delete",
   "삭제 중...": "Deleting...",
-
   "CreatePseudoConsole 실패": "CreatePseudoConsole failed",
   "프로세스 실행 실패: {0}": "Failed to start process: {0}",
   "프로세스가 종료되었습니다.": "The process has exited.",
@@ -78,7 +74,6 @@
   "연결이 끊어졌습니다. (사유 코드 {0})": "Disconnected. (reason code {0})",
   "\n(사유 코드 {0})": "\n(reason code {0})",
   "{0} 연결 종료": "{0} disconnected",
-
   "SFTP 파일 (업로드·다운로드)": "SFTP files (upload / download)",
   "인증 정보 입력이 취소되었습니다. Enter 키를 누르면 다시 시도합니다.": "Credential entry was canceled. Press Enter to try again.",
   "인증 실패: {0}": "Authentication failed: {0}",
