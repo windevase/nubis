@@ -8,7 +8,7 @@
 
 > Name: Latin *nubis* = "of the cloud" + Korean *nubida* ("to roam through") — roaming the servers of many clouds.
 
-> **Note:** the app UI is currently in Korean only. This document describes every screen and option in English.
+> **Languages:** the app UI is available in Korean and English — pick one on first launch (Korean is the default) and switch any time in Settings → Language. The Claude panel answers in the same language.
 
 ## Highlights
 
@@ -92,7 +92,7 @@ The WebView2 runtime ships with Windows 10/11.
   - Changing a Vault account applies to every host using it
   - If a host that used a Vault password fails authentication and you enter and save a new password, the Vault account is updated
   - Deleting an account unlinks it from its hosts (the list is shown before deleting)
-- **Settings**: terminal theme (9 dark + 2 light), font, font size — applied to open terminals immediately
+- **Settings**: language (Korean / English — applies after restart), terminal theme (9 dark + 2 light), font, font size — applied to open terminals immediately
   - *Syntax highlighting*: adds color to IP addresses (incl. CIDR · port), numbers (incl. units) and status keywords (error/warn/ok and their Korean equivalents). The output itself is not changed; text already colored by the server and full-screen programs such as vim · htop are left alone
   - *Terminal GPU acceleration*: off by default (saves about 70 MB of WebView2 memory). Turn it on if you often print large output — applies after restart
   - *Automatic contrast*: adjusts low-contrast text colors (e.g. white text on a light theme) so they stay readable (xterm.js `minimumContrastRatio` 4.5)
@@ -215,7 +215,6 @@ Open-source components and theme sources are listed in [THIRD-PARTY-NOTICES.md](
 
 ## Known limitations
 
-- The app UI is Korean only for now
 - While the RDP screen has focus, `Ctrl+Tab` goes to the remote machine (click a tab to switch)
 - No port forwarding, jump hosts or RDP gateway yet
 - Once the data files are encrypted, older versions (0.1.2 or earlier) cannot read them — do not go back to an old exe after running the new version
