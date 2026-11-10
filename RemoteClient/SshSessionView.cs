@@ -1,0 +1,359 @@
+using System;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using Renci.SshNet;
+using Renci.SshNet.Common;
+
+namespace Nubis;
+
+/// <summary>SSH 세션 탭: XtermView(xterm.js) 화면 ⇄ SSH.NET ShellStream</summary>
+public sealed class SshSessionView : UserControl, ISessionView
+{
+    private readonly HostEntry _host;
+    private readonly XtermView _term = new();
+    private readonly Decoder _utf8 = new UTF8Encoding(false).GetDecoder();
+    private readonly object _decodeLock = new();
+
+    private SshClient? _client;
+    private ShellStream? _shell;
+    private bool _closed, _connecting;
+    private volatile int _gen;
+    private SessionStatus _status = SessionStatus.Connecting;
+
+    public event Action<SessionStatus>? StatusChanged;
+    public XtermView Terminal => _term;
+    public SessionStatus Status => _status;
+
+    private readonly Action<string, string>? _saveCredentials;
+    private bool _started;
+
+    // 로그인에 성공한 계정 (SFTP 패널이 같은 계정으로 연결)
+    private string? _authUser, _authPassword;
+
+    // 레이아웃: [도구 막대] [SFTP 패널] [분할선] [터미널]
+    private readonly ColumnDefinition _sftpColumn = new() { Width = new GridLength(0) };
+    private readonly GridSplitter _splitter;
+    private SftpPanel? _sftp;
+    private double _sftpWidth = 400;
+
+    /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
+    public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
+    {
+        _host = host;
+        _saveCredentials = saveCredentials;
+
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(_sftpColumn);
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var strip = BuildToolStrip();
+        Grid.SetColumn(strip, 0);
+        _splitter = new GridSplitter
+        {
+            Width = 4, Background = (System.Windows.Media.Brush)Application.Current.Resources["Line"],
+            HorizontalAlignment = HorizontalAlignment.Center, ResizeBehavior = GridResizeBehavior.PreviousAndNext,
+            Visibility = Visibility.Collapsed,
+        };
+        Grid.SetColumn(_splitter, 2);
+        Grid.SetColumn(_term, 3);
+        grid.Children.Add(strip);
+        grid.Children.Add(_splitter);
+        grid.Children.Add(_term);
+        Content = grid;
+        // 터미널 화면 준비(탭이 처음 보일 때)를 기다리지 않고 바로 연결. 출력은 XtermView 가 모아 둔다
+        Loaded += (_, _) => { if (!_started) { _started = true; _ = ConnectAsync(); } };
+        _term.Ready += () => { try { _shell?.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { } };
+        _term.Resized += (c, r) => { try { _shell?.ChangeWindowSize(c, r, 0, 0); } catch { } };
+        _term.Input += OnInput;
+    }
+
+    private FrameworkElement BuildToolStrip()
+    {
+        var res = Application.Current.Resources;
+        var sftpButton = new Button
+        {
+            Style = (Style)res["IconButton"],
+            Content = "",
+            FontSize = 15,
+            Width = 30,
+            Height = 30,
+            Margin = new Thickness(0, 6, 0, 0),
+            ToolTip = "SFTP 파일 (업로드·다운로드)",
+        };
+        sftpButton.Click += (_, _) => ToggleSftp();
+        var panel = new StackPanel();
+        panel.Children.Add(sftpButton);
+        return new Border
+        {
+            Width = 36,
+            Background = (System.Windows.Media.Brush)res["SidebarBg"],
+            BorderBrush = (System.Windows.Media.Brush)res["Line"],
+            BorderThickness = new Thickness(0, 0, 1, 0),
+            Child = panel,
+        };
+    }
+
+    public void ToggleSftp(bool? open = null)
+    {
+        var isOpen = _sftpColumn.Width.Value > 0;
+        var want = open ?? !isOpen;
+        if (want == isOpen) return;
+        if (want)
+        {
+            if (_sftp == null)
+            {
+                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null);
+                _sftp.CloseRequested += () => ToggleSftp(false);
+                Grid.SetColumn(_sftp, 1);
+                ((Grid)Content).Children.Add(_sftp);
+            }
+            _sftp.Visibility = Visibility.Visible;
+            _sftpColumn.MinWidth = 260;
+            _sftpColumn.Width = new GridLength(_sftpWidth);
+            _splitter.Visibility = Visibility.Visible;
+            _ = _sftp.OpenAsync();
+        }
+        else
+        {
+            _sftpWidth = _sftpColumn.ActualWidth > 0 ? _sftpColumn.ActualWidth : _sftpWidth;
+            _sftpColumn.MinWidth = 0;
+            _sftpColumn.Width = new GridLength(0);
+            _splitter.Visibility = Visibility.Collapsed;
+            if (_sftp != null) _sftp.Visibility = Visibility.Collapsed;
+            _term.FocusTerminal();
+        }
+    }
+
+    private void OnInput(string d)
+    {
+        if (_shell != null && _status == SessionStatus.Connected) SendRaw(d);
+        else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r')) _ = ConnectAsync();
+    }
+
+    private void SendRaw(string d)
+    {
+        var bytes = Encoding.UTF8.GetBytes(d);
+        try { _shell!.Write(bytes, 0, bytes.Length); _shell.Flush(); } catch { }
+    }
+
+    private void SetStatus(SessionStatus s)
+    {
+        _status = s;
+        Dispatcher.BeginInvoke(() => StatusChanged?.Invoke(s));
+    }
+
+    // ---------- SSH ----------
+    private async Task ConnectAsync()
+    {
+        if (_connecting || _closed) return;
+        _connecting = true;
+        SetStatus(SessionStatus.Connecting);
+        var gen = ++_gen;   // 이전 연결의 Closed/Error 이벤트는 무시
+        DisposeSsh();
+
+        var user = _host.Username;
+        var password = _host.Password;
+        var save = false;
+
+        // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
+        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && string.IsNullOrWhiteSpace(_host.KeyPath)))
+        {
+            var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", user, _saveCredentials != null);
+            if (cred == null)
+            {
+                _term.Info("인증 정보 입력이 취소되었습니다. Enter 키를 누르면 다시 시도합니다.", "33");
+                _connecting = false;
+                SetStatus(SessionStatus.Disconnected);
+                return;
+            }
+            user = cred.Value.User;
+            password = cred.Value.Password;
+            save = cred.Value.Save;
+        }
+
+        _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ...");
+        var (cols, rows) = (_term.Cols, _term.Rows);
+
+        try
+        {
+            _hostKeyAccepted = false;
+            await Task.Run(() =>
+            {
+                var client = new SshClient(SshAuth.Build(_host, user, password)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                ShellStream? shell = null;
+                try
+                {
+                    client.HostKeyReceived += OnHostKey;
+                    client.ErrorOccurred += (_, e) => { if (gen == _gen) OnDisconnected(e.Exception.Message); };
+                    client.Connect();
+
+                    shell = client.CreateShellStream("xterm-256color", cols, rows, 0, 0, 65536);
+                    shell.DataReceived += OnData;
+                    shell.Closed += (_, _) => { if (gen == _gen) OnDisconnected(null); };
+                }
+                catch
+                {
+                    // 연결은 됐는데 셸 생성에 실패한 경우에도 연결을 남기지 않는다
+                    try { shell?.Dispose(); } catch { }
+                    try { client.Dispose(); } catch { }
+                    throw;
+                }
+
+                // 연결하는 동안 탭이 닫혔거나 새 연결 시도가 시작됐으면 이 연결은 버린다 (누수 방지)
+                if (_closed || gen != _gen)
+                {
+                    try { shell.Dispose(); } catch { }
+                    try { client.Dispose(); } catch { }
+                    throw new OperationCanceledException();
+                }
+                _client = client;
+                _shell = shell;
+            });
+
+            // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
+            if (_status == SessionStatus.Disconnected) return;
+            SetStatus(SessionStatus.Connected);
+            _askCredentials = false;
+            _authUser = user;
+            _authPassword = password;
+            // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
+            if (save)
+            {
+                _host.Username = user;
+                _host.Password = password;
+                Dispatcher.Invoke(() => _saveCredentials?.Invoke(user, password));
+            }
+            Dispatcher.Invoke(() => { if (IsVisible) _term.FocusTerminal(); });
+        }
+        catch (OperationCanceledException) when (_closed || gen != _gen)
+        {
+            // 닫힌 탭 / 이전 시도 — 조용히 종료
+        }
+        catch (SshAuthenticationException ex)
+        {
+            // 저장된 비밀번호가 바뀐 경우 등: 다음 시도에서 계정을 다시 묻는다
+            _askCredentials = true;
+            _term.Info($"인증 실패: {ex.Message}", "31");
+            _term.Info("Enter 키를 누르면 계정을 다시 입력합니다.");
+            DisposeSsh();
+            SetStatus(SessionStatus.Disconnected);
+        }
+        catch (Exception ex) when (_hostKeyAccepted && !_retriedAfterHostKey)
+        {
+            // 호스트키 확인 창을 읽는 동안 키 교환 시간이 초과될 수 있음 — 키는 저장됐으니 한 번 자동 재시도
+            _retriedAfterHostKey = true;
+            _connecting = false;
+            DisposeSsh();
+            _term.Info($"({ex.Message.Split('\n')[0]}) 호스트키를 저장했으니 다시 연결합니다...");
+            _ = ConnectAsync();
+            return;
+        }
+        catch (Exception ex)
+        {
+            _term.Info($"연결 실패: {ex.Message}", "31");
+            _term.Info("Enter 키를 누르면 다시 연결합니다.");
+            DisposeSsh();
+            SetStatus(SessionStatus.Disconnected);
+        }
+        finally
+        {
+            _connecting = false;
+        }
+    }
+
+    private bool _askCredentials, _hostKeyAccepted, _retriedAfterHostKey;
+
+    private void OnHostKey(object? sender, HostKeyEventArgs e)
+    {
+        var key = SshAuth.HostKeyId(_host);
+        var fp = SshAuth.Fingerprint(e);
+        var known = KnownHostStore.Get(key);
+        if (known == fp) { e.CanTrust = true; return; }
+
+        // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)
+        // 저장된 키와 다른 경우(중간자 공격 가능)와 사용자가 전에 거부한 키는 아래에서 항상 묻는다
+        if (known == null && !SettingsStore.Current.SshHostKeyPrompt)
+        {
+            KnownHostStore.Set(key, fp);
+            _term.Info($"새 호스트키 저장: {key} {fp}");
+            e.CanTrust = true;
+            return;
+        }
+        // 사용자가 전에 거부한 키는 "아직 신뢰 안 함" 으로 보고 다시 묻는다
+        if (known != null && KnownHostStore.IsRejected(known)) known = null;
+
+        var (title, msg, detail, icon) = known == null
+            ? ("처음 접속하는 서버입니다",
+               $"{_host.DisplayName} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.",
+               $"{key}\n{fp}", MessageBoxImage.Question)
+            : ("호스트키가 바뀌었습니다",
+               "저장된 값과 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 새 키로 교체하고 접속할까요?",
+               $"{key}\n저장된 값: {known}\n현재 값:   {fp}", MessageBoxImage.Warning);
+
+        var ok = Dispatcher.Invoke(() =>
+            Dialog.Show(Window.GetWindow(this), msg, title, MessageBoxButton.YesNo, icon, detail) == MessageBoxResult.Yes);
+        if (ok) { KnownHostStore.Set(key, fp); _hostKeyAccepted = true; }
+        // 거부한 키는 기록해 둔다 — Claude 일괄 실행·SFTP 의 "처음 보는 키 자동 신뢰" 가 이 키를 받아들이지 않도록
+        else if (KnownHostStore.Get(key) == null) KnownHostStore.Set(key, KnownHostStore.RejectedMark(fp));
+        e.CanTrust = ok;
+    }
+
+    private void OnData(object? sender, ShellDataEventArgs e)
+    {
+        string text;
+        lock (_decodeLock)
+        {
+            var chars = new char[_utf8.GetCharCount(e.Data, 0, e.Data.Length)];
+            _utf8.GetChars(e.Data, 0, e.Data.Length, chars, 0);
+            text = new string(chars);
+        }
+        _term.Write(text);
+    }
+
+    private void OnDisconnected(string? reason)
+    {
+        if (_status == SessionStatus.Disconnected || _closed) return;
+        SetStatus(SessionStatus.Disconnected);
+        _term.Write("\r\n");
+        if (reason != null) _term.Info($"오류: {reason}", "31");
+        _term.Info("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다.", "33");
+    }
+
+    private void DisposeSsh()
+    {
+        var shell = _shell; var client = _client;
+        _shell = null; _client = null;
+        Task.Run(() =>
+        {
+            try { shell?.Dispose(); } catch { }
+            try { if (client?.IsConnected == true) client.Disconnect(); } catch { }
+            try { client?.Dispose(); } catch { }
+        });
+    }
+
+    // ---------- ISessionView ----------
+    public void FocusSession() => _term.FocusTerminal();
+
+    public async Task<string?> ReadTerminalAsync(int lines) => await _term.ReadBufferAsync(lines);
+    public async Task<string?> GetSelectionAsync() => await _term.GetSelectionAsync();
+
+    /// <summary>대화형 셸에 텍스트 입력 (Claude send_to_terminal 용)</summary>
+    public bool SendText(string text)
+    {
+        if (_shell == null || _status != SessionStatus.Connected) return false;
+        SendRaw(text);
+        return true;
+    }
+
+    public void CloseSession()
+    {
+        _closed = true;
+        DisposeSsh();
+        _sftp?.Close();
+        _term.Close();
+    }
+}

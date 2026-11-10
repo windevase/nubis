@@ -1,0 +1,45 @@
+<Window x:Class="Nubis.MessageDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Nubis" Width="460" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}"
+        FontSize="13">
+    <Border x:Name="Frame" Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <Grid Margin="24,22,24,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <Border x:Name="IconBadge" Width="34" Height="34" CornerRadius="17" Margin="0,0,14,0" VerticalAlignment="Top"
+                    Grid.RowSpan="3" Visibility="Collapsed">
+                <TextBlock x:Name="IconGlyph" FontFamily="{StaticResource IconFont}" FontSize="16"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+
+            <TextBlock x:Name="TitleText" Grid.Column="1" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,5,0,0"/>
+            <TextBlock x:Name="MessageText" Grid.Column="1" Grid.Row="1" Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="20"
+                       Foreground="#C9CDDB"/>
+            <TextBox x:Name="DetailBox" Grid.Column="1" Grid.Row="2" Margin="0,12,0,0" IsReadOnly="True" Height="Auto" MaxHeight="220"
+                     Padding="10,8" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed"/>
+
+            <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                <Button x:Name="SecondaryButton" Style="{StaticResource GhostButton}" MinWidth="88" Margin="0,0,8,0"
+                        Click="OnSecondary" Visibility="Collapsed"/>
+                <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}" MinWidth="88" Click="OnPrimary"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Window>

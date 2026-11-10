@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <!-- WPF + WinForms 를 같이 쓰면 implicit using 이 이름 충돌(Button, MessageBox 등)을 일으킨다 -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Nubis</RootNamespace>
+    <AssemblyName>Nubis</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\nubis.ico</ApplicationIcon>
+    <Product>Nubis</Product>
+    <Description>Nubis - Cloud &amp; AI Remote Client</Description>
+    <Version>0.1.0</Version>
+    <Authors>windevase</Authors>
+    <Company>Nubis</Company>
+    <Copyright>Copyright (c) 2026 windevase. MIT License.</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="Nubis.Tests" />
+    <Resource Include="Assets\nubis.ico" />
+    <Resource Include="Assets\nubis-256.png" />
+    <None Remove="Assets\nubis-512.png" />
+    <None Include="..\THIRD-PARTY-NOTICES.md" Link="THIRD-PARTY-NOTICES.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.EC2" Version="4.0.132.2" />
+    <PackageReference Include="AWSSDK.SSO" Version="4.0.100.26" />
+    <PackageReference Include="AWSSDK.SSOOIDC" Version="4.0.100.25" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Google.Apis.Auth" Version="1.78.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+  </ItemGroup>
+
+</Project>
+

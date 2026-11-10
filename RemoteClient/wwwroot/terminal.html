@@ -1,0 +1,240 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="xterm.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #161925; overflow: hidden; }
+  #t { position: absolute; top: 10px; left: 14px; right: 6px; bottom: 6px; }
+  .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: #2E3350 transparent; }
+</style>
+</head>
+<body>
+<div id="t"></div>
+<script src="xterm.js"></script>
+<script src="addon-fit.js"></script>
+<script>
+  const term = new Terminal({
+    fontFamily: '"Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace',
+    fontSize: 14,
+    lineHeight: 1.15,
+    cursorBlink: true,
+    scrollback: 10000,
+    allowProposedApi: true,
+    theme: {
+      background: '#161925', foreground: '#E6E8F0', cursor: '#20C5A0', cursorAccent: '#161925',
+      selectionBackground: '#3A4A6A',
+      black: '#1E2232', red: '#F0616D', green: '#20C5A0', yellow: '#F5B740',
+      blue: '#4F8CFF', magenta: '#C27BFF', cyan: '#3EC7E0', white: '#C9CDDB',
+      brightBlack: '#5B6180', brightRed: '#FF7A85', brightGreen: '#4BE0BC', brightYellow: '#FFD06B',
+      brightBlue: '#7AA8FF', brightMagenta: '#D59BFF', brightCyan: '#6ADCF0', brightWhite: '#FFFFFF'
+    }
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  const el = document.getElementById('t');
+  term.open(el);
+  fit.fit();
+
+  const post = m => window.chrome.webview.postMessage(m);
+
+  term.onData(d => post({ t: 'in', d }));
+  term.onResize(({ cols, rows }) => post({ t: 'resize', cols, rows }));
+  new ResizeObserver(() => { try { fit.fit(); } catch (e) { } }).observe(el);
+
+  // 복사/붙여넣기: Ctrl+Shift+C / Ctrl+Shift+V, 우클릭(선택 있으면 복사, 없으면 붙여넣기)
+  term.attachCustomKeyEventHandler(ev => {
+    if (ev.type !== 'keydown') return true;
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
+      const s = term.getSelection(); if (s) post({ t: 'copy', d: s });
+      return false;
+    }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyV') { post({ t: 'paste' }); return false; }
+    if (ev.shiftKey && ev.code === 'Insert') { post({ t: 'paste' }); return false; }
+    // 앱 단축키: 터미널에 포커스가 있어도 앱이 처리
+    if (ev.ctrlKey && ev.code === 'Tab') { post({ t: 'hotkey', k: ev.shiftKey ? 'prevtab' : 'nexttab' }); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyA') { post({ t: 'hotkey', k: 'claude' }); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyT') { post({ t: 'hotkey', k: 'localterm' }); return false; }
+    return true;
+  });
+
+  // MCP 용: 현재 화면 버퍼(일반/전체화면)의 마지막 n 줄
+  function readBuffer(n) {
+    const b = term.buffer.active;
+    const end = b.baseY + b.cursorY;
+    const out = [];
+    for (let y = Math.max(0, end - n + 1); y <= end; y++) {
+      const line = b.getLine(y);
+      if (line) out.push(line.translateToString(true));
+    }
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out.join('\n');
+  }
+  document.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const s = term.getSelection();
+    if (s) { post({ t: 'copy', d: s }); term.clearSelection(); }
+    else post({ t: 'paste' });
+  });
+
+  // ===================== 구문 강조 =====================
+  // 출력 데이터는 건드리지 않고, 화면에 그려진 줄을 읽어 xterm 데코레이션으로 글자색만 덧입힌다.
+  //  - 서버가 이미 색을 지정한 글자는 건너뜀 (ls --color 등)
+  //  - 전체 화면 프로그램(alternate buffer: vim, htop, less)에서는 동작 안 함
+  const IP_RE = /(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?:\/\d{1,2})?(?::\d{1,5})?(?![\w.])/g;
+  const NUM_RE = /(?<![\w.:\/#-])\d+(?:[.,]\d+)*(?:[KMGTP]i?B?|[kmgtp]b|%|ms|us|ns|s|m|h|d)?(?![\w.:\/])/g;
+  const BAD_RE = /\b(?:error|errors|err|fail|failed|failure|fatal|denied|refused|critical|exception|panic|unreachable|invalid|not found|down)\b/gi;
+  const WARN_RE = /\b(?:warn|warning|warnings|deprecated|timeout|timed out|retry|retrying|pending)\b/gi;
+  const GOOD_RE = /\b(?:ok|success|successful|succeeded|done|active|running|enabled|passed|healthy|up|ready|connected|accepted)\b/gi;
+
+  let hl = { ip: true, num: true, kw: true };
+  let colors = {};
+  let rules = [];
+  let all = [];        // 모든 데코레이션(정리용)
+  let recent = [];     // 화면 근처 줄의 데코레이션 { marker(줄), items } — 커서가 위로 올라가 다시 그려질 수 있어 매번 재계산
+  let mark = null;     // 다음 스캔 시작 위치 (스크롤백이 잘려도 따라가는 마커)
+  let scanQueued = false;
+
+  function buildRules() {
+    rules = [];
+    if (hl.ip) rules.push({ re: IP_RE, color: colors.ip });
+    if (hl.kw) {
+      rules.push({ re: BAD_RE, color: colors.bad });
+      rules.push({ re: WARN_RE, color: colors.warn });
+      rules.push({ re: GOOD_RE, color: colors.good });
+      rules.push({ re: /오류|에러|실패|거부|장애|중단됨/g, color: colors.bad });
+      rules.push({ re: /경고|주의|지연|재시도/g, color: colors.warn });
+      rules.push({ re: /성공|완료|정상/g, color: colors.good });
+    }
+    if (hl.num) rules.push({ re: NUM_RE, color: colors.num });
+  }
+
+  function clearDecorations() {
+    all.forEach(d => { try { d.dispose(); } catch (e) { } });
+    all = []; recent = [];
+    if (mark) { mark.dispose(); mark = null; }
+  }
+
+  function decorateLine(b, y, cur) {
+    const line = b.getLine(y);
+    if (!line) return [];
+    // 문자열 인덱스 → 셀 열 매핑 (한글 등 넓은 문자는 2칸)
+    let text = '', cols = [], widths = [];
+    for (let x = 0; x < term.cols; x++) {
+      const cell = line.getCell(x);
+      if (!cell) break;
+      const w = cell.getWidth();
+      if (w === 0) continue;
+      const ch = cell.getChars() || ' ';
+      for (let i = 0; i < ch.length; i++) { cols.push(x); widths.push(w); }
+      text += ch;
+    }
+    text = text.replace(/\s+$/, '');
+    if (!text) return [];
+
+    const taken = new Uint8Array(text.length);
+    const out = [];
+    for (const rule of rules) {
+      rule.re.lastIndex = 0;
+      let m;
+      while ((m = rule.re.exec(text))) {
+        const s = m.index, e = s + m[0].length;
+        if (m[0].length === 0) { rule.re.lastIndex++; continue; }
+        let overlap = false;
+        for (let i = s; i < e; i++) if (taken[i]) { overlap = true; break; }
+        if (overlap) continue;
+        const cell = line.getCell(cols[s]);
+        if (cell && !cell.isFgDefault()) continue;   // 서버가 색을 준 글자는 그대로
+        for (let i = s; i < e; i++) taken[i] = 1;
+
+        const marker = term.registerMarker(y - cur);
+        if (!marker) continue;
+        const x = cols[s];
+        const width = cols[e - 1] + widths[e - 1] - x;
+        const deco = term.registerDecoration({ marker, x, width, foregroundColor: rule.color, layer: 'top' });
+        out.push(marker);
+        if (deco) out.push(deco);
+      }
+    }
+    return out;
+  }
+
+  function scan(backlog) {
+    scanQueued = false;
+    const b = term.buffer.active;
+    if (b.type !== 'normal' || rules.length === 0) return;
+    const cur = b.baseY + b.cursorY;
+    // 다시 계산할 범위: 커서 위로 화면 한 장(진행률 표시·여러 줄 프롬프트처럼 앞줄을 고쳐 그리는 경우 대비)
+    // + 지난번 스캔 이후 새로 생긴 줄 전부 (한 번에 많은 출력이 지나간 경우)
+    const winStart = Math.max(0, cur - term.rows + 1);
+    const last = (mark && !mark.isDisposed && mark.line >= 0) ? mark.line : Math.max(0, cur - (backlog || term.rows));
+    const start = Math.min(last, winStart);
+
+    // 범위 안 줄의 이전 강조는 지우고 다시 그림
+    recent = recent.filter(r => {
+      if (r.marker.isDisposed) return false;
+      if (r.marker.line >= start) { r.items.forEach(d => { try { d.dispose(); } catch (e) { } }); return false; }
+      return r.marker.line >= cur - term.rows * 3;   // 충분히 위로 올라간 줄은 더 추적하지 않음 (강조는 유지)
+    });
+    for (let y = start; y <= cur; y++) {
+      const items = decorateLine(b, y, cur);
+      if (items.length === 0) continue;
+      const lineMarker = term.registerMarker(y - cur);
+      if (!lineMarker) continue;
+      items.push(lineMarker);
+      recent.push({ marker: lineMarker, items });
+      all.push(...items);
+    }
+    if (mark) mark.dispose();
+    mark = term.registerMarker(0);
+    if (all.length > 60000) all = all.filter(d => !d.isDisposed);
+  }
+
+  function queueScan() {
+    if (scanQueued) return;
+    scanQueued = true;
+    requestAnimationFrame(() => scan());
+  }
+
+  function rescanAll() {
+    clearDecorations();
+    buildRules();
+    scan(2000);
+  }
+
+  // 테마/글꼴 적용. minimumContrastRatio 로 배경과 대비가 낮은 글자색(밝은 테마의 흰 글자 등)을 자동 보정
+  function applySettings(s) {
+    term.options.theme = s.theme;
+    term.options.fontSize = s.fontSize;
+    term.options.fontFamily = '"' + s.fontFamily + '", "Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace';
+    term.options.minimumContrastRatio = s.autoContrast ? 4.5 : 1;
+    document.body.style.background = s.theme.background;
+    try { fit.fit(); } catch (e) { }
+
+    hl = { ip: s.hlIp, num: s.hlNum, kw: s.hlKeywords };
+    const t = s.theme;
+    colors = { ip: t.cyan, num: t.magenta, bad: t.red, warn: t.yellow, good: t.green };
+    rescanAll();
+  }
+
+  // 창 크기가 바뀌면 줄이 다시 배치(reflow)되므로 강조 위치를 다시 계산
+  let resizeTimer = 0;
+  term.onResize(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(rescanAll, 300); });
+  // 전체 화면 프로그램 종료 등으로 일반 화면으로 돌아오면 이어서 스캔
+  term.buffer.onBufferChange(() => queueScan());
+
+  window.chrome.webview.addEventListener('message', e => {
+    const m = e.data;
+    switch (m.t) {
+      case 'out': term.write(m.d, queueScan); break;
+      case 'paste': term.paste(m.d); break;
+      case 'focus': term.focus(); break;
+      case 'settings': applySettings(m); break;
+    }
+  });
+
+  term.focus();
+  post({ t: 'ready', cols: term.cols, rows: term.rows });
+</script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<Window x:Class="Nubis.ProfileDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="프로필 설정" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel Margin="24,22,24,22">
+            <StackPanel Orientation="Horizontal">
+                <Border x:Name="Badge" CornerRadius="5" Padding="7,2" VerticalAlignment="Center">
+                    <TextBlock x:Name="BadgeText" FontSize="11" FontWeight="Bold" Foreground="#0B0D14"/>
+                </Border>
+                <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock x:Name="SubText" Foreground="{StaticResource SubText}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
+
+            <TextBlock Text="그룹 이름" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="NameBox"/>
+
+            <TextBlock Text="기본 사용자명" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="UserBox" Tag="이 그룹 서버 접속 시 사용할 계정"/>
+            <TextBlock Text="기본 비밀번호" Style="{StaticResource FieldLabel}"/>
+            <PasswordBox x:Name="PassBox"/>
+            <TextBlock Text="호스트별로 따로 지정한 계정이 있으면 그 값이 우선합니다. 비우면 접속할 때 묻습니다."
+                       FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+
+            <Grid Margin="0,0,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="SSH 포트 (Linux)" Style="{StaticResource FieldLabel}"/>
+                    <TextBox x:Name="SshPortBox"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="RDP 포트 (Windows)" Style="{StaticResource FieldLabel}"/>
+                    <TextBox x:Name="RdpPortBox"/>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock Text="기본 접속 주소 (공인 IP 가 있는 서버)" Style="{StaticResource FieldLabel}"/>
+            <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                <UniformGrid Columns="2">
+                    <RadioButton x:Name="PrivateIp" Style="{StaticResource Segment}" Content="사설 IP" GroupName="addr"/>
+                    <RadioButton x:Name="PublicIp" Style="{StaticResource Segment}" Content="공인 IP (없으면 사설)" GroupName="addr"/>
+                </UniformGrid>
+            </Border>
+
+            <CheckBox x:Name="StoppedBox" Content="중지된 서버도 목록에 포함" Margin="0,16,0,0"/>
+            <CheckBox x:Name="UnhideBox" Margin="0,10,0,0" Visibility="Collapsed"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                <Button Content="취소" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
+                <Button Content="저장" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

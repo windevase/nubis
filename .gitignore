@@ -1,0 +1,12 @@
+# 빌드 결과
+bin/
+obj/
+publish/
+dist/
+*.user
+.vs/
+TestResults/
+
+# 로컬 실행 흔적 (사용자 데이터는 %APPDATA%\Nubis 에 있어 저장소에 없음)
+*.log
+.claude/

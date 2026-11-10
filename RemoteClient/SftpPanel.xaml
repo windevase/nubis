@@ -1,0 +1,140 @@
+<UserControl x:Class="Nubis.SftpPanel"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="{StaticResource SidebarBg}" Foreground="{StaticResource Text}" FontSize="12.5">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="38"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 툴바 -->
+        <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1">
+            <Grid Margin="10,0,4,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                    <TextBlock Text="SFTP" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Style="{StaticResource IconButton}" Content="&#xE74A;" Click="OnUp" ToolTip="상위 폴더 (Backspace)"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE80F;" Click="OnHome" ToolTip="홈 폴더"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE72C;" Click="OnRefresh" ToolTip="새로고침 (F5)"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE8F4;" Click="OnNewFolder" ToolTip="새 폴더"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE898;" Click="OnUploadClick" ToolTip="업로드 (탐색기에서 끌어다 놓아도 됩니다)"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE896;" Click="OnDownloadClick" ToolTip="선택 항목 다운로드"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="9" Click="OnClose" ToolTip="닫기"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- 경로 -->
+        <TextBox x:Name="PathBox" Grid.Row="1" Margin="8,8,8,6" Height="32" FontFamily="Cascadia Mono, Consolas" FontSize="12"
+                 Tag="원격 경로" KeyDown="OnPathKeyDown"/>
+
+        <!-- 열 머리글 -->
+        <Grid Grid.Row="2" Margin="14,2,16,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="70"/>
+                <ColumnDefinition Width="124"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="이름" Foreground="{StaticResource SubText}" FontSize="11.5"/>
+            <TextBlock Grid.Column="1" Text="크기" Foreground="{StaticResource SubText}" FontSize="11.5" HorizontalAlignment="Right"/>
+            <TextBlock Grid.Column="2" Text="수정한 날짜" Foreground="{StaticResource SubText}" FontSize="11.5" Margin="12,0,0,0"/>
+        </Grid>
+
+        <!-- 파일 목록 (끌어다 놓아 업로드) -->
+        <Grid Grid.Row="3">
+            <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}" SelectionMode="Extended"
+                     AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" DragLeave="OnDragLeave"
+                     MouseDoubleClick="OnItemDoubleClick" KeyDown="OnListKeyDown"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="열기" Click="OnOpenItem"/>
+                        <MenuItem Header="다운로드..." Click="OnDownloadClick"/>
+                        <MenuItem Header="이름 변경" Click="OnRename"/>
+                        <MenuItem Header="삭제" Click="OnDelete"/>
+                        <MenuItem Header="새 폴더" Click="OnNewFolder"/>
+                        <MenuItem Header="경로 복사" Click="OnCopyPath"/>
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ListBoxItem">
+                                    <Border x:Name="bd" Background="Transparent" CornerRadius="6" Padding="6,5" Margin="6,0,6,1">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="#181B27"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="#22283D"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </ListBox.ItemContainerStyle>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid ToolTip="{Binding ToolTipText, Mode=OneTime}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="22"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="124"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{Binding Glyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" Foreground="{Binding GlyphBrush, Mode=OneTime}"
+                                       VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="{Binding Name, Mode=OneTime}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="2" Text="{Binding SizeText, Mode=OneTime}" Foreground="{StaticResource SubText}"
+                                       HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="3" Text="{Binding ModifiedText, Mode=OneTime}" Foreground="{StaticResource SubText}"
+                                       Margin="12,0,0,0" VerticalAlignment="Center"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <!-- 끌어다 놓기 표시 -->
+            <Border x:Name="DropHint" Margin="8" CornerRadius="10" BorderThickness="2" BorderBrush="{StaticResource Accent}"
+                    Background="#2020C5A0" IsHitTestVisible="False" Visibility="Collapsed">
+                <TextBlock x:Name="DropHintText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" FontWeight="SemiBold"/>
+            </Border>
+
+            <TextBlock x:Name="MessageText" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SubText}"
+                       TextWrapping="Wrap" TextAlignment="Center" Margin="20" Visibility="Collapsed"/>
+        </Grid>
+
+        <!-- 전송 상태 -->
+        <Border x:Name="TransferBar" Grid.Row="4" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="10,8"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition/>
+                    <RowDefinition/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TransferText" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                <Button x:Name="CancelButton" Grid.Column="1" Grid.RowSpan="2" Style="{StaticResource GhostButton}" Content="취소"
+                        Padding="10,4" Margin="8,0,0,0" FontSize="12" Click="OnCancelTransfer"/>
+                <ProgressBar x:Name="TransferProgress" Grid.Row="1" Height="4" Margin="0,6,0,0" Minimum="0" Maximum="1"
+                             Background="{StaticResource CardBg}" Foreground="{StaticResource Accent}" BorderThickness="0"/>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
