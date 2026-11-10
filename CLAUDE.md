@@ -15,7 +15,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 - 직접 `dotnet` 을 부를 때는 `$env:DOTNET_ROOT="$env:LOCALAPPDATA\Microsoft\dotnet"` 를 설정해야 빌드된 exe/테스트 exe 가 실행된다.
 - 단일 exe **압축(EnableCompressionInSingleFile)은 쓰지 않는다** — 실행할 때마다 DLL 을 메모리에 풀어 약 100MB 를 더 쓴다. ReadyToRun 도 효과 대비 크기만 커져 뺐다 (exe 약 180MB 가 정상).
 - **사용자가 `publish\Nubis.exe` 를 실행 중이면 publish 가 파일 잠금으로 실패한다.** 사용자의 Nubis 를 종료하지 말고, 닫아 달라고 요청한다. 확인:
-  `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like 'E:\remote client\publish\*'`
+  `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like '*\publish\Nubis.exe'`
 - 변경 후에는 빌드 경고 0 · 테스트 전체 통과를 확인한다.
 
 ## 구조
@@ -50,7 +50,9 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 
 ## 데이터 위치
 
-- 사용자 데이터: `%APPDATA%\Nubis\` (`hosts.json`, `cloud_profiles.json`, `known_hosts.json`, `settings.json`, `claude\`, `claude_audit.log`). 저장소(`E:\remote client`)에는 데이터가 없다.
+- 사용자 데이터: `%APPDATA%\Nubis\` (`hosts.json`, `cloud_profiles.json`, `known_hosts.json`, `vault.json`, `login.json`, `settings.json`, `claude\`, `claude_audit.log`). 저장소에는 데이터가 없다.
+- `hosts.json` · `cloud_profiles.json` · `known_hosts.json` · `vault.json` · `login.json` 은 **파일 전체 DPAPI 암호화**(`SafeFile.LoadProtected/WriteProtected`, 표식 `NUBIS-DPAPI1`, entropy `Nubis.DataFile.v1` — 바꾸지 않는다). 표식이 없는 평문은 읽을 때 자동 암호화. `settings.json` 은 평문 유지(비밀 값 없음, 로그인 설정을 잘못했을 때 사용자가 직접 고쳐 풀 수 있게). 새 데이터 파일을 만들면 `WriteProtected` 를 쓰고 `ClaudeGuard.SecretFiles` 에 추가한다.
+- **암호화된 데이터는 이전 버전(0.1.2 이하)이 읽지 못한다** — 읽기 실패로 빈 목록이 되므로 옛 exe 를 실행하지 않게 안내한다.
 - 캐시: `%LOCALAPPDATA%\Nubis\WebView2\`
 - `NUBIS_DATA_DIR` 환경변수로 데이터 폴더를 바꿀 수 있다 → **테스트는 반드시 이걸로 별도 폴더에서** 한다. xUnit 은 `VaultTests.cs` 의 `[ModuleInitializer]` 가 임시 폴더로 지정한다.
 - 구 폴더 `%APPDATA%\RemoteClient` 는 시작 시 자동 이전.
@@ -76,7 +78,8 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 ## 테스트 요령
 
 - 공개 SSH/SFTP 데모 서버: `test.rebex.net:22`, `demo` / `password` (읽기 전용, 한글을 깨뜨려 돌려주므로 UTF-8 검증용으로는 부적합). 호스트키 `ssh-ed25519 SHA256:d7Te2DHmvBNSWJNBWik2KbDTjmWtYHe2bvXTMM9lVg4`.
-- 테스트 호스트의 `ProtectedPassword` 는 DPAPI(entropy `RemoteClient.v1`, CurrentUser)로 만들어 `hosts.json` 에 넣는다.
+- 테스트 호스트의 `ProtectedPassword` 는 DPAPI(entropy `RemoteClient.v1`, CurrentUser)로 만들어 `hosts.json` 에 넣는다. 테스트용 `hosts.json` 은 평문으로 써 두면 앱이 처음 읽을 때 암호화한다.
+- 시작 화면 로그인은 `settings.json` 의 `Login` 으로 켜고 끈다 (테스트 데이터 폴더에서). 실제 로그인 검증에는 사용자의 OAuth 앱 Client ID 와 브라우저 승인이 필요하다.
 - `Nubis.exe --connect "호스트이름"` 으로 시작하면서 바로 접속 (여러 번 지정 가능). `--claude` 는 시작하면서 Claude 패널을 연다.
 - 터미널 내부 검증: `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9222"` 로 실행하면 CDP 로 `readBuffer(n)`, `term.write()` 등을 호출할 수 있다.
 - MCP 서버는 Claude 패널을 열어야 시작된다. 주소·토큰은 `<데이터폴더>\claude\mcp-config.json`. 토큰은 출력하지 않는다.

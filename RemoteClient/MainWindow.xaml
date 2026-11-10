@@ -692,6 +692,56 @@
                             <TextBox x:Name="DefRdpPortBox" Width="90" Tag="3389" LostFocus="OnDefaultPortChanged"/>
                         </StackPanel>
 
+                        <TextBlock Text="시작 화면 로그인" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
+                        <TextBlock Text="Nubis 를 열 때 GitHub · Google · Microsoft 계정으로 로그인하게 합니다. 허용한 계정만 들어올 수 있습니다. 저장된 서버 목록·계정은 로그인과 별도로 Windows DPAPI 로 암호화되어 있습니다."
+                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1" MaxWidth="560" HorizontalAlignment="Left">
+                            <UniformGrid Columns="4">
+                                <RadioButton x:Name="LoginNone" Style="{StaticResource Segment}" Content="사용 안 함" GroupName="login" Checked="OnLoginProviderChanged" MinWidth="120"/>
+                                <RadioButton x:Name="LoginGitHub" Style="{StaticResource Segment}" Content="GitHub" GroupName="login" Checked="OnLoginProviderChanged"/>
+                                <RadioButton x:Name="LoginGoogle" Style="{StaticResource Segment}" Content="Google" GroupName="login" Checked="OnLoginProviderChanged"/>
+                                <RadioButton x:Name="LoginMicrosoft" Style="{StaticResource Segment}" Content="Microsoft" GroupName="login" Checked="OnLoginProviderChanged"/>
+                            </UniformGrid>
+                        </Border>
+                        <StackPanel x:Name="LoginFields" MaxWidth="560" HorizontalAlignment="Left">
+                            <TextBlock x:Name="LoginHelpText" Foreground="{StaticResource SubText}" FontSize="12" Margin="2,10,0,0" TextWrapping="Wrap"/>
+                            <TextBlock Text="Client ID" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="LoginClientIdBox"/>
+                            <StackPanel x:Name="LoginSecretPanel">
+                                <TextBlock Text="Client Secret (Google 만 — 비워 두면 저장된 값 유지)" Style="{StaticResource FieldLabel}"/>
+                                <PasswordBox x:Name="LoginSecretBox"/>
+                            </StackPanel>
+                            <StackPanel x:Name="LoginTenantPanel">
+                                <TextBlock Text="테넌트 (회사·학교 계정은 organizations, 특정 회사만이면 테넌트 ID 또는 도메인)" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="LoginTenantBox" Tag="organizations"/>
+                            </StackPanel>
+                            <TextBlock x:Name="LoginAllowedLabel" Text="허용 계정" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="LoginAllowedBox"/>
+                            <StackPanel x:Name="LoginOrgPanel">
+                                <TextBlock Text="GitHub Organization (이 조직 멤버면 허용 — 선택)" Style="{StaticResource FieldLabel}"/>
+                                <TextBox x:Name="LoginOrgBox" Tag="예: my-org"/>
+                            </StackPanel>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="로그인 유지 (시간, 0 = 실행할 때마다)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="LoginRememberBox" Tag="0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="2">
+                                    <TextBlock Text="오프라인 허용 (일, 0 = 막음)" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="LoginOfflineBox" Tag="0"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                            <Button x:Name="LoginSaveButton" Style="{StaticResource PrimaryButton}" Content="테스트 로그인 후 저장" Click="OnLoginSave"/>
+                        </StackPanel>
+                        <TextBlock x:Name="LoginStatusText" Foreground="{StaticResource SubText}" FontSize="12" Margin="2,8,0,0" TextWrapping="Wrap" MaxWidth="560" HorizontalAlignment="Left"/>
+
                         <TextBlock Text="Claude" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
                         <CheckBox x:Name="AutoReadOnlyBox" Click="OnAutoReadOnlyClick">
                             <TextBlock TextWrapping="Wrap">

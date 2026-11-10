@@ -13,7 +13,8 @@
 | UI | WPF (.NET 10), 다크 테마, 커스텀 타이틀바 탭 |
 | SSH | [SSH.NET](https://github.com/sshnet/SSH.NET) + WebView2 위의 [xterm.js](https://xtermjs.org/) |
 | RDP | Windows 내장 RDP ActiveX(`mstscax.dll`, mstsc 와 같은 엔진)를 `WindowsFormsHost` 로 임베드 |
-| 저장 | `%APPDATA%\Nubis\hosts.json`. 비밀번호는 Windows DPAPI(현재 사용자)로 암호화 |
+| 저장 | `%APPDATA%\Nubis\` 의 `hosts.json` · `cloud_profiles.json` · `known_hosts.json` · `vault.json` 은 **파일 전체를 Windows DPAPI(현재 사용자, AES-256)로 암호화** — 서버 이름·IP·계정 이름도 보이지 않고, 이 PC·이 Windows 계정에서만 풀린다. 비밀번호·키는 그 안에서 한 번 더 DPAPI 로 암호화. 예전 평문 파일은 처음 읽을 때 자동으로 암호화 |
+| 시작 화면 로그인 | 선택: GitHub · Google · Microsoft(Entra ID) 계정으로 로그인해야 앱이 열림 (Device Flow, 허용 계정·GitHub Organization). 아래 참고 |
 | Vault | `%APPDATA%\Nubis\vault.json`. 여러 호스트가 함께 쓰는 비밀번호·SSH 개인키(+키 암호)를 DPAPI 로 암호화해 저장 |
 | 호스트키 | `%APPDATA%\Nubis\known_hosts.json` (SHA256 지문). 처음 접속은 확인 없이 저장(Settings 에서 확인 창 켜기 가능), 키가 바뀌면 항상 경고 |
 | SFTP | SSH.NET SftpClient (터미널과 같은 계정으로 별도 연결) |
@@ -102,6 +103,20 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 - **인증 파일 경로**: 섹션마다 "경로 변경" 으로 직접 지정 (기본은 위 표의 표준 위치). AWS 는 `AWS_CONFIG_FILE`(같은 폴더의 `credentials` 포함), GCP 는 `GOOGLE_APPLICATION_CREDENTIALS`, Azure 는 `AZURE_CONFIG_DIR` 로 적용되어 로그인 버튼으로 띄우는 CLI 에도 같은 경로가 쓰인다. Tencent 는 지정한 폴더의 `*.credential` 을 읽는다
 - 일부 리전/영역 조회가 실패하면 그 동기화에서는 **삭제하지 않는다** (일시 장애로 호스트·저장 계정이 사라지는 것 방지)
 - 클라우드 호스트를 목록에서 삭제하면 해당 프로필에서 숨김 처리 (프로필 설정에서 해제). 복제하면 일반 호스트로 만들어진다
+
+## 시작 화면 로그인 (선택)
+
+Settings → **시작 화면 로그인** 에서 GitHub · Google · Microsoft 중 하나를 고르면, Nubis 를 열 때 그 계정으로 로그인해야 들어갈 수 있다.
+
+- 방식: OAuth Device Flow — 화면에 나온 코드를 브라우저에서 입력하고 승인. 비밀번호는 브라우저(GitHub/Google/Microsoft)에서만 입력하고 Nubis 는 받지 않는다. 받은 토큰은 계정 확인에만 쓰고 저장하지 않는다
+- 허용: 계정 이름(GitHub 로그인 이름 / 이메일), `@회사.com` 은 그 도메인 전체, GitHub 는 Organization 멤버도 가능
+- 로그인 유지(시간, 0 = 매번)·오프라인 허용(일, 0 = 막음). 마지막 로그인 기록은 `login.json` 에 암호화해 저장
+- **테스트 로그인에 성공해야 저장**된다 (잘못된 설정으로 못 들어오는 일 방지). 그래도 못 들어오면 `%APPDATA%\Nubis\settings.json` 의 `"Login"` → `"Provider"` 를 `"None"` 으로
+- 등록
+  - GitHub: github.com/settings/developers → OAuth Apps → New OAuth App (Homepage·Callback URL 은 아무 주소) → **Enable Device Flow** 체크 → Client ID
+  - Google: Google Cloud 콘솔 → 사용자 인증 정보 → OAuth 클라이언트 ID → 유형 **TV 및 입력 제한 기기** → Client ID·Secret
+  - Microsoft: Entra 관리 센터 → 앱 등록 → 인증 → **공용 클라이언트 흐름 허용** → 애플리케이션(클라이언트) ID, 테넌트는 `organizations` 또는 회사 테넌트
+- 한계: 로그인은 "앱에 들어가는 문" 이다. 데이터 암호화(DPAPI)와 묶여 있지 않으므로, 같은 Windows 계정에서 도는 프로그램이 파일을 직접 푸는 것까지 막지는 못한다 (다른 PC·계정으로 파일이 새는 것은 DPAPI 가 막음)
 
 ## Claude Code 패널
 

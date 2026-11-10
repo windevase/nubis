@@ -17,7 +17,7 @@ public static class ClaudeGuard
     public const string FileName = "nubis-permissions.json";
 
     /// <summary>계정·암호가 저장되는 파일 (백업·임시 파일 포함하도록 뒤에 * 를 붙여 쓴다)</summary>
-    private static readonly string[] SecretFiles = { "hosts.json", "cloud_profiles.json", VaultStore.FileName };
+    private static readonly string[] SecretFiles = { "hosts.json", "cloud_profiles.json", "known_hosts.json", VaultStore.FileName, LoginState.FileName };
 
     /// <summary>
     /// Windows 경로를 Claude Code 권한 규칙의 절대 경로 형식으로 바꾼다. C:\Users\a → //c/Users/a

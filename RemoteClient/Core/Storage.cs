@@ -72,6 +72,58 @@ public static class SafeFile
         File.Move(tmp, path, overwrite: true);
     }
 
+    // ----- 파일 전체 암호화 (DPAPI CurrentUser) -----
+    // 서버 목록·IP·계정 이름까지 숨긴다. 파일 앞에 표식을 두고, 표식이 없으면 예전 평문 파일로 읽는다(다음 저장 때 암호화).
+
+    private static readonly byte[] Magic = Encoding.ASCII.GetBytes("NUBIS-DPAPI1\n");
+    private static readonly byte[] FileEntropy = Encoding.UTF8.GetBytes("Nubis.DataFile.v1");
+
+    public static bool IsProtected(byte[] bytes) => bytes.AsSpan().StartsWith(Magic);
+
+    public static byte[] ProtectBytes(string content) =>
+        [.. Magic, .. ProtectedData.Protect(Encoding.UTF8.GetBytes(content), FileEntropy, DataProtectionScope.CurrentUser)];
+
+    /// <summary>암호화된 파일이면 풀고, 예전 평문이면 그대로. 다른 PC·계정에서 만든 파일이면 CryptographicException</summary>
+    public static string UnprotectBytes(byte[] bytes) =>
+        IsProtected(bytes)
+            ? Encoding.UTF8.GetString(ProtectedData.Unprotect(bytes[Magic.Length..], FileEntropy, DataProtectionScope.CurrentUser))
+            : Encoding.UTF8.GetString(bytes).TrimStart('﻿');
+
+    public static void WriteProtected(string path, string content)
+    {
+        var tmp = path + ".tmp";
+        File.WriteAllBytes(tmp, ProtectBytes(content));
+        File.Move(tmp, path, overwrite: true);
+    }
+
+    /// <summary>
+    /// 암호화 파일 읽기. 예전 평문 파일이면 읽은 뒤 바로 암호화해 다시 쓴다.
+    /// 풀 수 없으면(다른 PC·Windows 계정) Load 와 같이 원본을 보관하고 빈 값으로 시작한다.
+    /// </summary>
+    public static T LoadProtected<T>(string path, Func<string, T?> parse, Func<T> fallback) where T : class
+    {
+        if (!File.Exists(path)) return fallback();
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            var value = parse(UnprotectBytes(bytes)) ?? fallback();
+            if (!IsProtected(bytes))
+            {
+                try { WriteProtected(path, File.ReadAllText(path)); } catch { }
+            }
+            return value;
+        }
+        catch (Exception ex)
+        {
+            var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
+            try { File.Copy(path, backup, overwrite: true); } catch { }
+            var why = ex is CryptographicException ? "이 PC·이 Windows 계정에서 만든 파일이 아니라 풀 수 없습니다" : ex.Message.Split('\n')[0];
+            lock (LoadWarnings)
+                LoadWarnings.Add($"{Path.GetFileName(path)} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {backup} 에 보관했습니다.\n({why})");
+            return fallback();
+        }
+    }
+
     public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback) where T : class
     {
         if (!File.Exists(path)) return fallback();
@@ -120,7 +172,7 @@ public static class HostStore
 
     public static List<HostEntry> Load()
     {
-        var hosts = SafeFile.Load(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>());
+        var hosts = SafeFile.LoadProtected(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>());
         var migrated = false;
         foreach (var h in hosts) migrated |= h.MigrateLegacyVault();
         if (migrated) { try { Save(hosts); } catch { } }
@@ -128,7 +180,7 @@ public static class HostStore
     }
 
     public static void Save(IEnumerable<HostEntry> hosts) =>
-        SafeFile.WriteAtomic(AppPaths.HostsFile, JsonSerializer.Serialize(hosts, Options));
+        SafeFile.WriteProtected(AppPaths.HostsFile, JsonSerializer.Serialize(hosts, Options));
 }
 
 public sealed class AppSettings
@@ -159,6 +211,8 @@ public sealed class AppSettings
     public bool SftpFollowTerminal { get; set; } = true;
     /// <summary>SFTP 파일 편집에 쓸 프로그램 (비우면 Windows 기본 프로그램). Claude 는 바꿀 수 없다</summary>
     public string SftpEditor { get; set; } = "";
+    /// <summary>앱 시작 화면 로그인 (GitHub · Google · Microsoft). Claude 는 바꿀 수 없다</summary>
+    public LoginConfig Login { get; set; } = new();
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 }
@@ -193,7 +247,7 @@ public static class KnownHostStore
     {
         lock (Gate)
         {
-            return SafeFile.Load(AppPaths.KnownHostsFile, s => JsonSerializer.Deserialize<Dictionary<string, string>>(s),
+            return SafeFile.LoadProtected(AppPaths.KnownHostsFile, s => JsonSerializer.Deserialize<Dictionary<string, string>>(s),
                 () => new Dictionary<string, string>());
         }
     }
@@ -211,7 +265,7 @@ public static class KnownHostStore
         {
             var all = Load();
             all[key] = value;
-            SafeFile.WriteAtomic(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
+            SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 
@@ -221,7 +275,7 @@ public static class KnownHostStore
         {
             var all = Load();
             if (all.Remove(key))
-                SafeFile.WriteAtomic(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
+                SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 }

@@ -1,0 +1,56 @@
+<Window x:Class="Nubis.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Nubis 로그인" Width="460" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel Margin="28,26,28,24">
+            <StackPanel Orientation="Horizontal">
+                <Image Source="/Assets/nubis-256.png" Width="34" Height="34" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="Nubis" FontSize="17" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="SubTitle" FontSize="12" Foreground="{StaticResource SubText}" Margin="0,2,0,0"/>
+                </StackPanel>
+            </StackPanel>
+
+            <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="InfoText" Foreground="{StaticResource SubText}" FontSize="12.5" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+            <!-- 코드 표시 -->
+            <StackPanel x:Name="CodePanel" Visibility="Collapsed" Margin="0,18,0,0">
+                <Border Background="{StaticResource InputBg}" CornerRadius="10" Padding="12" BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                    <TextBox x:Name="CodeBox" IsReadOnly="True" BorderThickness="0" Background="Transparent" Height="Auto"
+                             FontFamily="Cascadia Mono, Consolas" FontSize="30" FontWeight="SemiBold" HorizontalContentAlignment="Center"
+                             Foreground="{StaticResource Text}"/>
+                </Border>
+                <TextBlock x:Name="UrlText" FontSize="12" Foreground="{StaticResource SubText}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                    <Button Style="{StaticResource GhostButton}" Content="코드 복사" Margin="0,0,8,0" Click="OnCopyCode"/>
+                    <Button Style="{StaticResource GhostButton}" Content="브라우저 열기" Click="OnOpenBrowser"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                    <ProgressBar IsIndeterminate="True" Width="18" Height="4" Background="Transparent" Foreground="{StaticResource Accent}"
+                                 BorderThickness="0" VerticalAlignment="Center"/>
+                    <TextBlock Text="브라우저에서 승인을 기다리는 중..." FontSize="12" Foreground="{StaticResource SubText}" Margin="8,0,0,0"/>
+                </StackPanel>
+            </StackPanel>
+
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" FontSize="12.5" Margin="0,14,0,0" TextWrapping="Wrap"
+                       Visibility="Collapsed"/>
+
+            <Grid Margin="0,22,0,0">
+                <Button x:Name="OfflineButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Visibility="Collapsed"
+                        Click="OnOffline"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelButton" Style="{StaticResource GhostButton}" Content="종료" Margin="0,0,8,0" MinWidth="80" Click="OnCancel"/>
+                    <Button x:Name="LoginButton" Style="{StaticResource PrimaryButton}" MinWidth="120" Click="OnLogin" IsDefault="True"/>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </Border>
+</Window>

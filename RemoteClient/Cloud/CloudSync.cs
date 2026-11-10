@@ -33,10 +33,10 @@ public static class CloudStore
     private static readonly JsonSerializerOptions Options = new() { WriteIndented = true, Converters = { new JsonStringEnumConverter() } };
 
     public static List<CloudProfile> Load() =>
-        SafeFile.Load(FilePath, s => JsonSerializer.Deserialize<List<CloudProfile>>(s, Options), () => new List<CloudProfile>());
+        SafeFile.LoadProtected(FilePath, s => JsonSerializer.Deserialize<List<CloudProfile>>(s, Options), () => new List<CloudProfile>());
 
     public static void Save(IEnumerable<CloudProfile> profiles) =>
-        SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(profiles, Options));
+        SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(profiles, Options));
 }
 
 public static class CloudSync

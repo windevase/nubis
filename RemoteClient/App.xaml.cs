@@ -12,6 +12,17 @@ public partial class App : Application
         base.OnStartup(e);
         DispatcherUnhandledException += OnUnhandled;
         CloudPaths.Apply();   // 사용자가 지정한 클라우드 인증 경로를 환경변수로 적용
+
+        // 시작 화면 로그인 (설정한 경우). 로그인에 실패·취소하면 메인 창을 열지 않고 종료
+        if (!LoginWindow.EnsureAtStartup())
+        {
+            Shutdown();
+            return;
+        }
+        var main = new MainWindow();
+        MainWindow = main;
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
+        main.Show();
     }
 
     private static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)

@@ -129,7 +129,7 @@ public static class VaultStore
             lock (Gate)
             {
                 if (_entries != null) return _entries;
-                _entries = SafeFile.Load(FilePath, s => JsonSerializer.Deserialize<List<VaultEntry>>(s, Options), () => new List<VaultEntry>());
+                _entries = SafeFile.LoadProtected(FilePath, s => JsonSerializer.Deserialize<List<VaultEntry>>(s, Options), () => new List<VaultEntry>());
                 var migrated = false;
                 foreach (var e in _entries) migrated |= e.MigrateLegacy();
                 if (migrated) { try { Save(); } catch { } }
@@ -168,7 +168,7 @@ public static class VaultStore
         }
     }
 
-    private static void Save() => SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Entries, Options));
+    private static void Save() => SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(Entries, Options));
 
     /// <summary>
     /// 접속용 사본에 Vault 계정 값을 채운다 (사본을 직접 바꾼다). 호스트에 직접 적은 값이 우선한다:

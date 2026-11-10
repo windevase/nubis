@@ -43,6 +43,7 @@ public partial class MainWindow
         SftpAutoOpenBox.IsChecked = s.SftpAutoOpen;
         SftpFollowBox.IsChecked = s.SftpFollowTerminal;
         SftpEditorBox.Text = s.SftpEditor;
+        LoadLoginSettings();
         DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
         DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
         FontSizeText.Text = $"{s.FontSize}px";
@@ -132,6 +133,99 @@ public partial class MainWindow
             }
         if (changed > 0) { SaveHosts(); RefreshHosts(); }
         return changed;
+    }
+
+    // ----- 시작 화면 로그인 -----
+
+    private void LoadLoginSettings()
+    {
+        var c = SettingsStore.Current.Login;
+        (c.Provider switch
+        {
+            LoginProviderKind.GitHub => LoginGitHub,
+            LoginProviderKind.Google => LoginGoogle,
+            LoginProviderKind.Microsoft => LoginMicrosoft,
+            _ => LoginNone,
+        }).IsChecked = true;
+        LoginClientIdBox.Text = c.ClientId;
+        LoginSecretBox.Clear();
+        LoginTenantBox.Text = c.Tenant;
+        LoginAllowedBox.Text = string.Join(", ", c.AllowedAccounts);
+        LoginOrgBox.Text = c.GitHubOrg;
+        LoginRememberBox.Text = c.RememberHours.ToString();
+        LoginOfflineBox.Text = c.OfflineDays.ToString();
+        var st = LoginState.Load();
+        LoginStatusText.Text = c.Enabled
+            ? $"현재: {LoginConfig.ProviderLabel(c.Provider)} 로그인 사용 중" + (st != null && st.Account.Length > 0 ? $" — 마지막 로그인 {st.Account} ({st.LastSuccessUtc.ToLocalTime():yyyy-MM-dd HH:mm})" : "") +
+              "\n설정을 잘못해 들어갈 수 없으면 %APPDATA%\\Nubis\\settings.json 의 \"Login\" → \"Provider\" 를 \"None\" 으로 바꾸세요."
+            : "현재: 사용 안 함";
+        UpdateLoginUi();
+    }
+
+    private LoginProviderKind SelectedLoginProvider =>
+        LoginGitHub.IsChecked == true ? LoginProviderKind.GitHub
+        : LoginGoogle.IsChecked == true ? LoginProviderKind.Google
+        : LoginMicrosoft.IsChecked == true ? LoginProviderKind.Microsoft
+        : LoginProviderKind.None;
+
+    private void OnLoginProviderChanged(object sender, RoutedEventArgs e) => UpdateLoginUi();
+
+    private void UpdateLoginUi()
+    {
+        if (LoginFields == null || LoginOrgPanel == null) return;   // InitializeComponent 중
+        var p = SelectedLoginProvider;
+        LoginFields.Visibility = p == LoginProviderKind.None ? Visibility.Collapsed : Visibility.Visible;
+        LoginSecretPanel.Visibility = p == LoginProviderKind.Google ? Visibility.Visible : Visibility.Collapsed;
+        LoginTenantPanel.Visibility = p == LoginProviderKind.Microsoft ? Visibility.Visible : Visibility.Collapsed;
+        LoginOrgPanel.Visibility = p == LoginProviderKind.GitHub ? Visibility.Visible : Visibility.Collapsed;
+        LoginSaveButton.Content = p == LoginProviderKind.None ? "저장 (로그인 끄기)" : "테스트 로그인 후 저장";
+        LoginAllowedLabel.Text = p == LoginProviderKind.GitHub
+            ? "허용 계정 (GitHub 로그인 이름, 쉼표로 여러 개 — 예: octocat)"
+            : "허용 계정 (이메일, 쉼표로 여러 개. @회사.com 은 그 도메인 전체)";
+        LoginAllowedBox.Tag = p == LoginProviderKind.GitHub ? "octocat" : "me@example.com, @example.com";
+        LoginHelpText.Text = p switch
+        {
+            LoginProviderKind.GitHub => "등록: github.com/settings/developers → OAuth Apps → New OAuth App (Homepage·Callback URL 은 아무 주소, 예: http://localhost) → 만든 뒤 'Enable Device Flow' 체크 → Client ID 를 아래에. Client Secret 은 필요 없습니다.",
+            LoginProviderKind.Google => "등록: Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 유형 'TV 및 입력 제한 기기' → Client ID 와 Secret 을 아래에 (이 유형의 Secret 은 기기에 넣어 쓰는 값입니다).",
+            LoginProviderKind.Microsoft => "등록: Entra 관리 센터 → 앱 등록 → 새 등록 → 인증 → '공용 클라이언트 흐름 허용' 을 예로 → 애플리케이션(클라이언트) ID 를 아래에. Secret 은 필요 없습니다.",
+            _ => "",
+        };
+    }
+
+    private void OnLoginSave(object sender, RoutedEventArgs e)
+    {
+        var current = SettingsStore.Current.Login;
+        var draft = current.Clone();
+        draft.Provider = SelectedLoginProvider;
+        if (draft.Provider == LoginProviderKind.None)
+        {
+            if (current.Enabled && Dialog.Show(this, "시작 화면 로그인을 끌까요?\n앞으로는 로그인 없이 Nubis 가 열립니다.", "시작 화면 로그인",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { LoadLoginSettings(); return; }
+            SettingsStore.Update(s => s.Login = draft);
+            LoginState.Clear();
+            AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, "사용 안 함", "변경");
+            LoadLoginSettings();
+            return;
+        }
+
+        draft.ClientId = LoginClientIdBox.Text.Trim();
+        if (LoginSecretBox.Password.Length > 0) draft.ClientSecret = LoginSecretBox.Password;
+        draft.Tenant = LoginTenantBox.Text.Trim().Length > 0 ? LoginTenantBox.Text.Trim() : "organizations";
+        draft.AllowedAccounts = LoginConfig.ParseList(LoginAllowedBox.Text);
+        draft.GitHubOrg = LoginOrgBox.Text.Trim();
+        draft.RememberHours = int.TryParse(LoginRememberBox.Text.Trim(), out var h) ? h : -1;
+        draft.OfflineDays = int.TryParse(LoginOfflineBox.Text.Trim(), out var d) ? d : -1;
+        if (draft.Validate() is { } problem) { LoginStatusText.Text = "⚠ " + problem; return; }
+
+        // 실제로 로그인해 허용되는지 확인한 뒤에만 저장 (잘못된 설정으로 앱에 못 들어오는 일 방지)
+        var who = LoginWindow.Test(this, draft);
+        if (who == null) { LoginStatusText.Text = "테스트 로그인에 성공하지 못해 저장하지 않았습니다."; return; }
+        SettingsStore.Update(s => s.Login = draft);
+        LoginSecretBox.Clear();
+        AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, $"{LoginConfig.ProviderLabel(draft.Provider)} · 허용 {string.Join(", ", draft.AllowedAccounts)}" +
+                       (draft.GitHubOrg.Length > 0 ? $" · Org {draft.GitHubOrg}" : ""), "테스트 로그인 성공·저장");
+        LoadLoginSettings();
+        LoginStatusText.Text = $"저장했습니다. {who.Account} 로 로그인을 확인했습니다. 다음 실행부터 로그인 화면이 나옵니다.\n" + LoginStatusText.Text;
     }
 
     private void OnSftpOptionClick(object sender, RoutedEventArgs e) =>
