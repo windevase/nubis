@@ -207,6 +207,22 @@ When SSH login succeeds, the SFTP panel attaches on the left automatically (turn
 
 The **+** button in the title bar (or `Ctrl+Shift+T`) opens a local PowerShell tab. `Ctrl+Tab` switches tabs even while the terminal has focus.
 
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+> Signing through SignPath Foundation has been applied for. Until it is approved, release builds are unsigned — check the SHA256 in `SHA256SUMS.txt` on the release page.
+
+- Release binaries are built only by [GitHub Actions](.github/workflows/build.yml) from this repository's source (a `v*` tag builds, tests and publishes the release). Locally built files are never signed.
+- Committers and reviewers: [windevase](https://github.com/windevase)
+- Approvers: [windevase](https://github.com/windevase)
+
+## Privacy
+
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+
+Nubis connects only to the places you configure: the servers you connect to, the cloud APIs of the profiles you add (with the CLI sign-in on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
+
 ## License
 
 [MIT License](LICENSE) — free to use, modify and distribute for personal or commercial purposes (keep the copyright notice and license text).

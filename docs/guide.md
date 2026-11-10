@@ -45,7 +45,7 @@ Nubis is a Windows remote-access client. It gathers your cloud servers by profil
 
 Nubis is a portable app with no installer. Your data is stored in `%APPDATA%\Nubis`, not in the exe folder, so to update you only replace the exe.
 
-> **Note** Starting with this version, data files are encrypted. After you run the new version once, do not go back to version 0.1.2 or earlier. Older versions cannot read the encrypted files and start with an empty list.
+> **Note** Starting with this version, data files are encrypted. After you run the new version once, do not go back to a 0.1.x version. Older versions cannot read the encrypted files and start with an empty list.
 
 ### 1.3 First run
 

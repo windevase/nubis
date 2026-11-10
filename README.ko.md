@@ -207,6 +207,22 @@ SSH 로그인에 성공하면 왼쪽에 SFTP 패널이 자동으로 붙는다 (S
 
 타이틀바 **+** 버튼(또는 `Ctrl+Shift+T`)으로 로컬 PowerShell 탭. 터미널 포커스 중에도 `Ctrl+Tab` 탭 전환 동작.
 
+## 코드 서명 정책
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+> SignPath Foundation 에 무료 코드 서명을 신청했다. 승인 전까지 배포 파일은 서명되지 않으므로, 릴리스 페이지의 `SHA256SUMS.txt` 로 SHA256 을 확인한다.
+
+- 배포 파일은 이 저장소의 소스로 [GitHub Actions](.github/workflows/build.yml) 만 만든다 (`v*` 태그를 푸시하면 테스트·빌드 후 릴리스). 로컬에서 만든 파일은 서명하지 않는다.
+- 커밋·리뷰: [windevase](https://github.com/windevase)
+- 서명 승인: [windevase](https://github.com/windevase)
+
+## 개인정보
+
+이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다.
+
+Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 클라우드 프로필의 API (이 PC 의 CLI 로그인 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
+
 ## 라이선스
 
 [MIT License](LICENSE) — 개인·상업 용도 관계없이 자유롭게 사용·수정·배포할 수 있다 (저작권 고지와 라이선스 문구 유지).
