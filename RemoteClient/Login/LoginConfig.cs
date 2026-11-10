@@ -33,6 +33,13 @@ public sealed class LoginConfig
     public int RememberHours { get; set; }
     /// <summary>인터넷이 안 될 때 최근 로그인 기록으로 들어갈 수 있는 기간 (0 = 허용 안 함)</summary>
     public int OfflineDays { get; set; }
+    /// <summary>
+    /// 소유자 프로필 (로그인을 설정한 계정, Profiles.Key). 로그인을 켜기 전 데이터는 이 계정이 처음 로그인할 때 넘겨받고,
+    /// 로그인 설정은 이 계정만 바꿀 수 있다. 로그인을 꺼도 이 프로필을 쓴다.
+    /// </summary>
+    public string OwnerKey { get; set; } = "";
+    /// <summary>소유자가 로그인 방식을 바꿨을 때 예전 프로필 이름 (다음 실행 때 새 이름으로 옮긴다)</summary>
+    public string PreviousOwnerKey { get; set; } = "";
 
     [JsonIgnore]
     public string ClientSecret
@@ -99,7 +106,10 @@ public sealed class LoginConfig
 }
 
 /// <summary>로그인한 사람 (토큰은 담지 않는다)</summary>
-public sealed record LoginIdentity(LoginProviderKind Provider, string Account, string Name, string Id);
+public sealed record LoginIdentity(LoginProviderKind Provider, string Account, string Name, string Id)
+{
+    public string ProfileKey => Profiles.Key(Provider, Id, Account);
+}
 
 /// <summary>마지막 로그인 기록 (login.json, DPAPI 파일 암호화). 로그인 유지·오프라인 허용 판단에 쓴다</summary>
 public sealed class LoginState
@@ -107,10 +117,14 @@ public sealed class LoginState
     public LoginProviderKind Provider { get; set; }
     public string ClientId { get; set; } = "";
     public string Account { get; set; } = "";
+    /// <summary>바뀌지 않는 계정 ID (GitHub 사용자 번호, Google sub, Microsoft oid) — 프로필 폴더 이름</summary>
+    public string AccountId { get; set; } = "";
     public DateTime LastSuccessUtc { get; set; }
 
+    public string ProfileKey => Profiles.Key(Provider, AccountId, Account);
+
     public const string FileName = "login.json";
-    private static string FilePath => Path.Combine(AppPaths.DataDir, FileName);
+    private static string FilePath => Path.Combine(AppPaths.RootDir, FileName);   // 공통 폴더 (로그인 전에 읽음)
 
     public static LoginState? Load() =>
         File.Exists(FilePath) ? SafeFile.LoadProtected<LoginState>(FilePath, s => JsonSerializer.Deserialize<LoginState>(s), () => new LoginState()) : null;
@@ -118,7 +132,7 @@ public sealed class LoginState
     public static void Save(LoginIdentity who, LoginConfig cfg) =>
         SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(new LoginState
         {
-            Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, LastSuccessUtc = DateTime.UtcNow,
+            Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, AccountId = who.Id, LastSuccessUtc = DateTime.UtcNow,
         }));
 
     public static void Clear()

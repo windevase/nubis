@@ -30,27 +30,38 @@ public static class ClaudeGuard
         return "//" + char.ToLowerInvariant(full[0]) + full[2..].Replace('\\', '/');
     }
 
-    public static List<string> DenyRules(string dataDir)
+    /// <param name="dataDir">지금 쓰는 데이터 폴더 (로그인했으면 그 계정의 프로필 폴더)</param>
+    /// <param name="rootDir">공통 폴더 (로그인 설정·로그인 기록, users\ 아래 다른 계정의 프로필). 생략하면 dataDir 와 같음</param>
+    public static List<string> DenyRules(string dataDir, string? rootDir = null)
     {
         var rules = new List<string>();
         var root = ToRulePath(dataDir);
+        var common = rootDir != null ? ToRulePath(rootDir) : null;
+        if (common == root) common = null;
+        // 같은 보호 규칙을 지금 데이터 폴더 · 공통 폴더 · 모든 계정 프로필(users\**)에 건다
+        // (공통 settings.json 에는 로그인 설정이 있어, 고쳐서 로그인을 끄거나 소유자를 바꾸는 우회도 막는다)
+        var bases = new List<string>();
+        if (root != null) bases.Add(root);
+        if (common != null) bases.Add(common);
+        if ((common ?? root) is { } top) bases.Add($"{top}/users/**");
+
         foreach (var f in SecretFiles)
         {
-            if (root != null)
+            foreach (var b in bases)
                 foreach (var tool in new[] { "Read", "Edit" })   // Edit 규칙이 Write 등 모든 쓰기 도구를 막는다
-                    rules.Add($"{tool}({root}/{f}*)");
+                    rules.Add($"{tool}({b}/{f}*)");
             // 셸로 우회하는 것도 막는다 (파일 이름이 들어간 명령)
             rules.Add($"Bash(*{f}*)");
             rules.Add($"PowerShell(*{f}*)");
         }
-        if (root != null)
+        foreach (var b in bases)
         {
-            rules.Add($"Edit({root}/claude_audit.log*)");
-            rules.Add($"Edit({root}/claude/mcp-config.json)");
-            rules.Add($"Edit({root}/claude/{FileName})");
-            rules.Add($"Edit({root}/claude/{ActiveContextFile})");
+            rules.Add($"Edit({b}/claude_audit.log*)");
+            rules.Add($"Edit({b}/claude/mcp-config.json)");
+            rules.Add($"Edit({b}/claude/{FileName})");
+            rules.Add($"Edit({b}/claude/{ActiveContextFile})");
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
-            rules.Add($"Edit({root}/settings.json*)");
+            rules.Add($"Edit({b}/settings.json*)");
         }
         // 저장된 암호 복호화(DPAPI) 시도
         foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "AutoApproveReadOnly" })
@@ -76,9 +87,9 @@ public static class ClaudeGuard
                $"\"[Console]::OutputEncoding=[Text.Encoding]::UTF8; if (Test-Path -LiteralPath '{p}') {{ Get-Content -Raw -Encoding UTF8 -LiteralPath '{p}' }}\"";
     }
 
-    public static string BuildSettingsJson(string dataDir, string? contextFile = null)
+    public static string BuildSettingsJson(string dataDir, string? contextFile = null, string? rootDir = null)
     {
-        var deny = DenyRules(dataDir);
+        var deny = DenyRules(dataDir, rootDir);
         object settings = contextFile == null
             ? new { permissions = new { deny } }
             : new

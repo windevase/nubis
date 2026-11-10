@@ -17,7 +17,22 @@ public static class AppPaths
     private static readonly string? OverrideDir = Environment.GetEnvironmentVariable("NUBIS_DATA_DIR") is { Length: > 0 } d
         ? Path.GetFullPath(Environment.ExpandEnvironmentVariables(d)) : null;
 
-    public static string DataDir { get; } = Ensure(OverrideDir ?? Migrate(Environment.SpecialFolder.ApplicationData));
+    /// <summary>공통 데이터 폴더 (%APPDATA%\Nubis): 언어·로그인 설정(settings.json), 마지막 로그인 기록, 계정별 프로필(users\)</summary>
+    public static string RootDir { get; } = Ensure(OverrideDir ?? Migrate(Environment.SpecialFolder.ApplicationData));
+
+    /// <summary>
+    /// 지금 쓰는 데이터 폴더 (호스트·Vault·클라우드 프로필·known_hosts·Claude 작업 폴더·감사 로그).
+    /// 로그인을 쓰지 않으면 RootDir, 로그인하면 그 계정의 프로필 폴더 (앱 시작 때 한 번 정한다).
+    /// </summary>
+    public static string DataDir { get; private set; } = RootDir;
+
+    /// <summary>계정별 프로필 폴더들의 위치</summary>
+    public static string UsersDir => Path.Combine(RootDir, "users");
+
+    public static bool UsingProfile => !string.Equals(DataDir, RootDir, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>앱 시작 때 로그인한 계정의 프로필 폴더로 바꾼다 (메인 창을 열기 전에)</summary>
+    public static void UseDataDir(string dir) => DataDir = Ensure(Path.GetFullPath(dir));
 
     public static string WebViewDir { get; } = OverrideDir != null
         ? Path.Combine(OverrideDir, "WebView2")
@@ -213,26 +228,59 @@ public sealed class AppSettings
     public string SftpEditor { get; set; } = "";
     /// <summary>앱 시작 화면 로그인 (GitHub · Google · Microsoft). Claude 는 바꿀 수 없다</summary>
     public LoginConfig Login { get; set; } = new();
+    /// <summary>화면 언어: "ko"(기본) · "en". null 이면 처음 실행 — 언어 선택 화면을 띄운다</summary>
+    public string? Language { get; set; }
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 }
 
-/// <summary>앱 설정 (settings.json). 변경 시 Changed 로 열린 터미널에 즉시 반영한다.</summary>
+/// <summary>
+/// 앱 설정 (settings.json). 변경 시 Changed 로 열린 터미널에 즉시 반영한다.
+/// - Global: 공통 폴더의 settings.json — 언어(Language)·로그인(Login) 은 항상 여기서 읽고 쓴다
+/// - Current: 지금 계정의 설정 (테마·글꼴·SFTP 등). 로그인을 쓰지 않으면 Global 과 같은 개체
+/// </summary>
 public static class SettingsStore
 {
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
+    private static string GlobalPath => Path.Combine(AppPaths.RootDir, "settings.json");
     private static string FilePath => Path.Combine(AppPaths.DataDir, "settings.json");
 
-    public static AppSettings Current { get; private set; } = Load();
+    public static AppSettings Global { get; private set; } = Load(GlobalPath);
+    public static AppSettings Current { get; private set; } = Global;
 
     public static event Action? Changed;
 
-    private static AppSettings Load() =>
-        SafeFile.Load(FilePath, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings());
+    private static AppSettings Load(string path) =>
+        SafeFile.Load(path, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings());
 
+    /// <summary>
+    /// AppPaths.UseDataDir 다음에 부른다: 그 계정의 settings.json 을 읽는다.
+    /// 처음이면 inheritGlobal(기존 데이터를 넘겨받는 소유자) 이면 공통 설정을, 아니면 기본값으로 시작.
+    /// </summary>
+    public static void UseProfile(bool inheritGlobal)
+    {
+        if (!AppPaths.UsingProfile) { Current = Global; return; }
+        if (File.Exists(FilePath)) { Current = Load(FilePath); return; }
+        Current = inheritGlobal
+            ? JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(Global)) ?? new AppSettings()
+            : new AppSettings();
+        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); } catch { }
+    }
+
+    /// <summary>지금 계정의 설정 변경 (테마·글꼴·SFTP·기본 포트 …)</summary>
     public static void Update(Action<AppSettings> change)
     {
         change(Current);
-        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, new JsonSerializerOptions { WriteIndented = true })); }
+        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
+        catch { }
+        Changed?.Invoke();
+    }
+
+    /// <summary>공통 설정 변경 (언어·로그인)</summary>
+    public static void UpdateGlobal(Action<AppSettings> change)
+    {
+        change(Global);
+        try { SafeFile.WriteAtomic(GlobalPath, JsonSerializer.Serialize(Global, WriteOptions)); }
         catch { }
         Changed?.Invoke();
     }

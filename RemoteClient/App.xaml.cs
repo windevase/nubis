@@ -14,15 +14,40 @@ public partial class App : Application
         CloudPaths.Apply();   // 사용자가 지정한 클라우드 인증 경로를 환경변수로 적용
 
         // 시작 화면 로그인 (설정한 경우). 로그인에 실패·취소하면 메인 창을 열지 않고 종료
-        if (!LoginWindow.EnsureAtStartup())
+        if (!LoginWindow.EnsureAtStartup(out var signedIn))
         {
             Shutdown();
             return;
         }
+
+        // 계정별 프로필: 로그인한 계정(또는 로그인을 껐을 때 소유자)의 폴더로 데이터 위치를 바꾼다.
+        // 소유자가 처음 로그인하면 로그인을 켜기 전 공통 폴더의 데이터를 넘겨받는다.
+        var cfg = SettingsStore.Global.Login;
+        if (Profiles.Choose(cfg, signedIn, Profiles.Exists) is { } key)
+        {
+            var dir = Profiles.Dir(key);
+            var owner = key == cfg.OwnerKey;
+            if (owner) Profiles.ClaimOwner(cfg, dir, AppPaths.RootDir, AppPaths.UsersDir);
+            AppPaths.UseDataDir(dir);
+            SettingsStore.UseProfile(inheritGlobal: owner);
+        }
+
         var main = new MainWindow();
         MainWindow = main;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
         main.Show();
+    }
+
+    /// <summary>앱을 다시 시작 (언어·로그인 설정을 바꾼 뒤). 같은 환경변수(NUBIS_DATA_DIR 등)로 새로 띄우고 지금 것은 끈다</summary>
+    public static void Restart()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (exe != null) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false });
+        }
+        catch { }
+        Current.Shutdown();
     }
 
     private static void OnUnhandled(object sender, DispatcherUnhandledExceptionEventArgs e)

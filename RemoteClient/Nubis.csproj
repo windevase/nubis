@@ -25,6 +25,8 @@
   <ItemGroup>
     <None Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" />
     <InternalsVisibleTo Include="Nubis.Tests" />
+    <!-- 화면 문구 영어 사전 (Core\Localization.cs). 리소스 이름: Lang.en.<파일>.json -->
+    <EmbeddedResource Include="Lang\en\*.json" LogicalName="Lang.en.%(Filename).json" />
     <Resource Include="Assets\nubis.ico" />
     <Resource Include="Assets\nubis-256.png" />
     <None Remove="Assets\nubis-512.png" />

@@ -93,7 +93,7 @@ public partial class MainWindow
         var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
         _lastActiveContext = null;
         UpdateActiveContext();
-        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath), new UTF8Encoding(false));
+        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath, AppPaths.RootDir), new UTF8Encoding(false));
 
         _claudeView = new LocalTerminalView(() =>
         {

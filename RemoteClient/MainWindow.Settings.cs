@@ -137,9 +137,15 @@ public partial class MainWindow
 
     // ----- 시작 화면 로그인 -----
 
+    /// <summary>지금 쓰는 프로필 이름 (로그인을 쓰지 않아 공통 폴더면 null)</summary>
+    private static string? CurrentProfileKey => AppPaths.UsingProfile ? Path.GetFileName(AppPaths.DataDir) : null;
+
+    /// <summary>로그인 설정은 소유자만 바꿀 수 있다 (다른 계정이 로그인을 꺼서 소유자 데이터를 보는 우회 방지)</summary>
+    private static bool CanEditLogin => CurrentProfileKey == null || CurrentProfileKey == SettingsStore.Global.Login.OwnerKey;
+
     private void LoadLoginSettings()
     {
-        var c = SettingsStore.Current.Login;
+        var c = SettingsStore.Global.Login;
         (c.Provider switch
         {
             LoginProviderKind.GitHub => LoginGitHub,
@@ -159,6 +165,9 @@ public partial class MainWindow
             ? $"현재: {LoginConfig.ProviderLabel(c.Provider)} 로그인 사용 중" + (st != null && st.Account.Length > 0 ? $" — 마지막 로그인 {st.Account} ({st.LastSuccessUtc.ToLocalTime():yyyy-MM-dd HH:mm})" : "") +
               "\n설정을 잘못해 들어갈 수 없으면 %APPDATA%\\Nubis\\settings.json 의 \"Login\" → \"Provider\" 를 \"None\" 으로 바꾸세요."
             : "현재: 사용 안 함";
+        if (CurrentProfileKey is { } key)
+            LoginStatusText.Text += $"\n프로필: {key}" + (key == c.OwnerKey ? " (소유자)" : " — 로그인 설정은 소유자 계정만 바꿀 수 있습니다");
+        LoginSaveButton.IsEnabled = CanEditLogin;
         UpdateLoginUi();
     }
 
@@ -194,14 +203,15 @@ public partial class MainWindow
 
     private void OnLoginSave(object sender, RoutedEventArgs e)
     {
-        var current = SettingsStore.Current.Login;
+        if (!CanEditLogin) { LoginStatusText.Text = "로그인 설정은 소유자 계정만 바꿀 수 있습니다."; return; }
+        var current = SettingsStore.Global.Login;
         var draft = current.Clone();
         draft.Provider = SelectedLoginProvider;
         if (draft.Provider == LoginProviderKind.None)
         {
-            if (current.Enabled && Dialog.Show(this, "시작 화면 로그인을 끌까요?\n앞으로는 로그인 없이 Nubis 가 열립니다.", "시작 화면 로그인",
+            if (current.Enabled && Dialog.Show(this, "시작 화면 로그인을 끌까요?\n앞으로는 로그인 없이 Nubis 가 열립니다 (소유자 프로필의 데이터를 그대로 씁니다).", "시작 화면 로그인",
                     MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { LoadLoginSettings(); return; }
-            SettingsStore.Update(s => s.Login = draft);
+            SettingsStore.UpdateGlobal(s => s.Login = draft);
             LoginState.Clear();
             AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, "사용 안 함", "변경");
             LoadLoginSettings();
@@ -220,12 +230,20 @@ public partial class MainWindow
         // 실제로 로그인해 허용되는지 확인한 뒤에만 저장 (잘못된 설정으로 앱에 못 들어오는 일 방지)
         var who = LoginWindow.Test(this, draft);
         if (who == null) { LoginStatusText.Text = "테스트 로그인에 성공하지 못해 저장하지 않았습니다."; return; }
-        SettingsStore.Update(s => s.Login = draft);
+        // 소유자 = 로그인을 설정한 계정. 소유자가 로그인 방식을 바꾸면 다음 실행 때 프로필을 새 이름으로 옮긴다
+        var firstSetup = draft.OwnerKey.Length == 0;
+        if (firstSetup) draft.OwnerKey = who.ProfileKey;
+        else if (draft.OwnerKey != who.ProfileKey) { draft.PreviousOwnerKey = draft.OwnerKey; draft.OwnerKey = who.ProfileKey; }
+        SettingsStore.UpdateGlobal(s => s.Login = draft);
         LoginSecretBox.Clear();
         AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, $"{LoginConfig.ProviderLabel(draft.Provider)} · 허용 {string.Join(", ", draft.AllowedAccounts)}" +
                        (draft.GitHubOrg.Length > 0 ? $" · Org {draft.GitHubOrg}" : ""), "테스트 로그인 성공·저장");
         LoadLoginSettings();
         LoginStatusText.Text = $"저장했습니다. {who.Account} 로 로그인을 확인했습니다. 다음 실행부터 로그인 화면이 나옵니다.\n" + LoginStatusText.Text;
+        var msg = $"저장했습니다. 다음 실행부터 로그인 화면이 나오고, 계정마다 호스트·Vault·설정이 따로 저장됩니다.\n" +
+                  (firstSetup || !AppPaths.UsingProfile ? $"지금 데이터는 {who.Account} (소유자) 의 프로필로 옮겨집니다.\n" : "") +
+                  "\n지금 다시 시작할까요?";
+        if (Dialog.Show(this, msg, "시작 화면 로그인", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) App.Restart();
     }
 
     private void OnSftpOptionClick(object sender, RoutedEventArgs e) =>

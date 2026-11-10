@@ -39,15 +39,28 @@ public partial class LoginWindow : Window
         Closed += (_, _) => _cts?.Cancel();
     }
 
-    /// <summary>앱 시작: 로그인이 필요 없거나(사용 안 함·유지 시간 안) 허용된 계정으로 로그인하면 true</summary>
-    public static bool EnsureAtStartup()
+    /// <summary>들어온 계정의 프로필 이름 (로그인·오프라인 허용으로 들어왔을 때)</summary>
+    private string? _profileKey;
+
+    /// <summary>
+    /// 앱 시작: 로그인이 필요 없거나(사용 안 함·유지 시간 안) 허용된 계정으로 로그인하면 true.
+    /// profileKey = 들어온 계정의 프로필 이름 (로그인을 쓰지 않으면 null)
+    /// </summary>
+    public static bool EnsureAtStartup(out string? profileKey)
     {
-        var cfg = SettingsStore.Current.Login;
+        profileKey = null;
+        var cfg = SettingsStore.Global.Login;
         if (!cfg.Enabled) return true;
         var state = LoginState.Load();
-        if (state != null && state.Within(cfg, TimeSpan.FromHours(cfg.RememberHours), DateTime.UtcNow)) return true;
+        if (state != null && state.Within(cfg, TimeSpan.FromHours(cfg.RememberHours), DateTime.UtcNow))
+        {
+            profileKey = state.ProfileKey;
+            return true;
+        }
         var w = new LoginWindow(cfg, test: false);
-        return w.ShowDialog() == true;
+        var ok = w.ShowDialog() == true;
+        profileKey = w._profileKey;
+        return ok && profileKey != null;
     }
 
     /// <summary>Settings 의 테스트 로그인: 허용된 계정으로 로그인하면 그 계정, 아니면 null</summary>
@@ -88,6 +101,7 @@ public partial class LoginWindow : Window
                 throw new LoginException($"허용되지 않은 계정입니다: {who.Account}" +
                                          (_cfg.GitHubOrg.Trim().Length > 0 && _cfg.Provider == LoginProviderKind.GitHub ? $" (Organization '{_cfg.GitHubOrg}' 멤버가 아님)" : ""));
             Result = who;
+            _profileKey = who.ProfileKey;
             try { LoginState.Save(who, _cfg); } catch { }
             AuditLog.Write("login", new[] { $"{LoginConfig.ProviderLabel(who.Provider)} {who.Account}" }, _test ? "테스트 로그인" : "앱 시작 로그인", "성공");
             DialogResult = true;
@@ -124,6 +138,7 @@ public partial class LoginWindow : Window
     private void OnOffline(object sender, RoutedEventArgs e)
     {
         AuditLog.Write("login", new[] { $"{LoginConfig.ProviderLabel(_cfg.Provider)} {_state?.Account}" }, "앱 시작 로그인", "오프라인 허용으로 진입");
+        _profileKey = _state?.ProfileKey;
         DialogResult = true;
     }
 
