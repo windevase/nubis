@@ -177,11 +177,11 @@ public partial class MainWindow
         LoginOfflineBox.Text = c.OfflineDays.ToString();
         var st = LoginState.Load();
         LoginStatusText.Text = c.Enabled
-            ? $"현재: {LoginConfig.ProviderLabel(c.Provider)} 로그인 사용 중" + (st != null && st.Account.Length > 0 ? $" — 마지막 로그인 {st.Account} ({st.LastSuccessUtc.ToLocalTime():yyyy-MM-dd HH:mm})" : "") +
-              "\n설정을 잘못해 들어갈 수 없으면 %APPDATA%\\Nubis\\settings.json 의 \"Login\" → \"Provider\" 를 \"None\" 으로 바꾸세요."
-            : "현재: 사용 안 함";
+            ? L.F("현재: {0} 로그인 사용 중", LoginConfig.ProviderLabel(c.Provider)) + (st != null && st.Account.Length > 0 ? L.F(" — 마지막 로그인 {0} ({1:yyyy-MM-dd HH:mm})", st.Account, st.LastSuccessUtc.ToLocalTime()) : "") +
+              "\n" + L.T("설정을 잘못해 들어갈 수 없으면 %APPDATA%\\Nubis\\settings.json 의 \"Login\" → \"Provider\" 를 \"None\" 으로 바꾸세요.")
+            : L.T("현재: 사용 안 함");
         if (CurrentProfileKey is { } key)
-            LoginStatusText.Text += $"\n프로필: {key}" + (key == c.OwnerKey ? " (소유자)" : " — 로그인 설정은 소유자 계정만 바꿀 수 있습니다");
+            LoginStatusText.Text += "\n" + (key == c.OwnerKey ? L.F("프로필: {0} (소유자)", key) : L.F("프로필: {0} — 로그인 설정은 소유자 계정만 바꿀 수 있습니다", key));
         LoginSaveButton.IsEnabled = CanEditLogin;
         UpdateLoginUi();
     }
@@ -202,29 +202,29 @@ public partial class MainWindow
         LoginSecretPanel.Visibility = p == LoginProviderKind.Google ? Visibility.Visible : Visibility.Collapsed;
         LoginTenantPanel.Visibility = p == LoginProviderKind.Microsoft ? Visibility.Visible : Visibility.Collapsed;
         LoginOrgPanel.Visibility = p == LoginProviderKind.GitHub ? Visibility.Visible : Visibility.Collapsed;
-        LoginSaveButton.Content = p == LoginProviderKind.None ? "저장 (로그인 끄기)" : "테스트 로그인 후 저장";
+        LoginSaveButton.Content = p == LoginProviderKind.None ? L.T("저장 (로그인 끄기)") : L.T("테스트 로그인 후 저장");
         LoginAllowedLabel.Text = p == LoginProviderKind.GitHub
-            ? "허용 계정 (GitHub 로그인 이름, 쉼표로 여러 개 — 예: octocat)"
-            : "허용 계정 (이메일, 쉼표로 여러 개. @회사.com 은 그 도메인 전체)";
+            ? L.T("허용 계정 (GitHub 로그인 이름, 쉼표로 여러 개 — 예: octocat)")
+            : L.T("허용 계정 (이메일, 쉼표로 여러 개. @회사.com 은 그 도메인 전체)");
         LoginAllowedBox.Tag = p == LoginProviderKind.GitHub ? "octocat" : "me@example.com, @example.com";
         LoginHelpText.Text = p switch
         {
-            LoginProviderKind.GitHub => "등록: github.com/settings/developers → OAuth Apps → New OAuth App (Homepage·Callback URL 은 아무 주소, 예: http://localhost) → 만든 뒤 'Enable Device Flow' 체크 → Client ID 를 아래에. Client Secret 은 필요 없습니다.",
-            LoginProviderKind.Google => "등록: Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 유형 'TV 및 입력 제한 기기' → Client ID 와 Secret 을 아래에 (이 유형의 Secret 은 기기에 넣어 쓰는 값입니다).",
-            LoginProviderKind.Microsoft => "등록: Entra 관리 센터 → 앱 등록 → 새 등록 → 인증 → '공용 클라이언트 흐름 허용' 을 예로 → 애플리케이션(클라이언트) ID 를 아래에. Secret 은 필요 없습니다.",
+            LoginProviderKind.GitHub => L.T("등록: github.com/settings/developers → OAuth Apps → New OAuth App (Homepage·Callback URL 은 아무 주소, 예: http://localhost) → 만든 뒤 'Enable Device Flow' 체크 → Client ID 를 아래에. Client Secret 은 필요 없습니다."),
+            LoginProviderKind.Google => L.T("등록: Google Cloud 콘솔 → API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기 → 유형 'TV 및 입력 제한 기기' → Client ID 와 Secret 을 아래에 (이 유형의 Secret 은 기기에 넣어 쓰는 값입니다)."),
+            LoginProviderKind.Microsoft => L.T("등록: Entra 관리 센터 → 앱 등록 → 새 등록 → 인증 → '공용 클라이언트 흐름 허용' 을 예로 → 애플리케이션(클라이언트) ID 를 아래에. Secret 은 필요 없습니다."),
             _ => "",
         };
     }
 
     private void OnLoginSave(object sender, RoutedEventArgs e)
     {
-        if (!CanEditLogin) { LoginStatusText.Text = "로그인 설정은 소유자 계정만 바꿀 수 있습니다."; return; }
+        if (!CanEditLogin) { LoginStatusText.Text = L.T("로그인 설정은 소유자 계정만 바꿀 수 있습니다."); return; }
         var current = SettingsStore.Global.Login;
         var draft = current.Clone();
         draft.Provider = SelectedLoginProvider;
         if (draft.Provider == LoginProviderKind.None)
         {
-            if (current.Enabled && Dialog.Show(this, "시작 화면 로그인을 끌까요?\n앞으로는 로그인 없이 Nubis 가 열립니다 (소유자 프로필의 데이터를 그대로 씁니다).", "시작 화면 로그인",
+            if (current.Enabled && Dialog.Show(this, L.T("시작 화면 로그인을 끌까요?\n앞으로는 로그인 없이 Nubis 가 열립니다 (소유자 프로필의 데이터를 그대로 씁니다)."), L.T("시작 화면 로그인"),
                     MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { LoadLoginSettings(); return; }
             SettingsStore.UpdateGlobal(s => s.Login = draft);
             LoginState.Clear();
@@ -244,7 +244,7 @@ public partial class MainWindow
 
         // 실제로 로그인해 허용되는지 확인한 뒤에만 저장 (잘못된 설정으로 앱에 못 들어오는 일 방지)
         var who = LoginWindow.Test(this, draft);
-        if (who == null) { LoginStatusText.Text = "테스트 로그인에 성공하지 못해 저장하지 않았습니다."; return; }
+        if (who == null) { LoginStatusText.Text = L.T("테스트 로그인에 성공하지 못해 저장하지 않았습니다."); return; }
         // 소유자 = 로그인을 설정한 계정. 소유자가 로그인 방식을 바꾸면 다음 실행 때 프로필을 새 이름으로 옮긴다
         var firstSetup = draft.OwnerKey.Length == 0;
         if (firstSetup) draft.OwnerKey = who.ProfileKey;
@@ -254,11 +254,11 @@ public partial class MainWindow
         AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, $"{LoginConfig.ProviderLabel(draft.Provider)} · 허용 {string.Join(", ", draft.AllowedAccounts)}" +
                        (draft.GitHubOrg.Length > 0 ? $" · Org {draft.GitHubOrg}" : ""), "테스트 로그인 성공·저장");
         LoadLoginSettings();
-        LoginStatusText.Text = $"저장했습니다. {who.Account} 로 로그인을 확인했습니다. 다음 실행부터 로그인 화면이 나옵니다.\n" + LoginStatusText.Text;
-        var msg = $"저장했습니다. 다음 실행부터 로그인 화면이 나오고, 계정마다 호스트·Vault·설정이 따로 저장됩니다.\n" +
-                  (firstSetup || !AppPaths.UsingProfile ? $"지금 데이터는 {who.Account} (소유자) 의 프로필로 옮겨집니다.\n" : "") +
-                  "\n지금 다시 시작할까요?";
-        if (Dialog.Show(this, msg, "시작 화면 로그인", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) App.Restart();
+        LoginStatusText.Text = L.F("저장했습니다. {0} 로 로그인을 확인했습니다. 다음 실행부터 로그인 화면이 나옵니다.", who.Account) + "\n" + LoginStatusText.Text;
+        var msg = L.T("저장했습니다. 다음 실행부터 로그인 화면이 나오고, 계정마다 호스트·Vault·설정이 따로 저장됩니다.") + "\n" +
+                  (firstSetup || !AppPaths.UsingProfile ? L.F("지금 데이터는 {0} (소유자) 의 프로필로 옮겨집니다.", who.Account) + "\n" : "") +
+                  "\n" + L.T("지금 다시 시작할까요?");
+        if (Dialog.Show(this, msg, L.T("시작 화면 로그인"), MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) App.Restart();
     }
 
     private void OnSftpOptionClick(object sender, RoutedEventArgs e) =>
@@ -277,14 +277,14 @@ public partial class MainWindow
     private void OnSftpEditorVsCode(object sender, RoutedEventArgs e)
     {
         var code = SftpPanel.FindVsCode();
-        if (code == null) { Dialog.Show(this, "VS Code(Code.exe)를 찾지 못했습니다. '찾기' 로 직접 지정하세요.", "파일 편집기"); return; }
+        if (code == null) { Dialog.Show(this, L.T("VS Code(Code.exe)를 찾지 못했습니다. '찾기' 로 직접 지정하세요."), L.T("파일 편집기")); return; }
         SftpEditorBox.Text = code;
         OnSftpEditorChanged(sender, e);
     }
 
     private void OnSftpEditorBrowse(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog { Title = "편집기 프로그램 선택", Filter = "프로그램 (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat|모든 파일|*.*" };
+        var dlg = new Microsoft.Win32.OpenFileDialog { Title = L.T("편집기 프로그램 선택"), Filter = L.T("프로그램 (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat|모든 파일|*.*") };
         if (dlg.ShowDialog(this) != true) return;
         SftpEditorBox.Text = dlg.FileName;
         OnSftpEditorChanged(sender, e);

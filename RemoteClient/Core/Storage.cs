@@ -132,9 +132,9 @@ public static class SafeFile
         {
             var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
             try { File.Copy(path, backup, overwrite: true); } catch { }
-            var why = ex is CryptographicException ? "이 PC·이 Windows 계정에서 만든 파일이 아니라 풀 수 없습니다" : ex.Message.Split('\n')[0];
+            var why = ex is CryptographicException ? L.T("이 PC·이 Windows 계정에서 만든 파일이 아니라 풀 수 없습니다") : ex.Message.Split('\n')[0];
             lock (LoadWarnings)
-                LoadWarnings.Add($"{Path.GetFileName(path)} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {backup} 에 보관했습니다.\n({why})");
+                LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why));
             return fallback();
         }
     }
@@ -152,7 +152,7 @@ public static class SafeFile
             var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
             try { File.Copy(path, backup, overwrite: true); } catch { }
             lock (LoadWarnings)
-                LoadWarnings.Add($"{Path.GetFileName(path)} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {backup} 에 보관했습니다.\n({ex.Message.Split('\n')[0]})");
+                LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, ex.Message.Split('\n')[0]));
             return fallback();
         }
     }

@@ -33,7 +33,7 @@ public partial class MainWindow
         var title = host.Protocol == Protocol.Ssh && !string.IsNullOrWhiteSpace(host.Username) && string.IsNullOrWhiteSpace(host.Label)
             ? $"{host.Username}@{host.Address}"
             : host.DisplayName;
-        if (viaPublic) title += " (공인)";
+        if (viaPublic) title = L.F("{0} (공인)", title);
         var tab = AddTab(new SessionTab { Id = _nextSessionId++, Title = title, Protocol = host.Protocol, View = view, Host = saved });
 
         if (_hosts.Contains(saved))
@@ -87,7 +87,7 @@ public partial class MainWindow
     private void OpenLocalTerminal()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var view = new LocalTerminalView(() => "powershell.exe -NoLogo", home, "PowerShell 이 종료되었습니다.");
+        var view = new LocalTerminalView(() => "powershell.exe -NoLogo", home, L.T("PowerShell 이 종료되었습니다."));
         AddTab(new SessionTab { Id = _nextSessionId++, Title = "PowerShell", Protocol = Protocol.Local, View = view });
     }
 

@@ -97,13 +97,13 @@ public sealed class HostEntry
             var parts = new List<string> { Protocol == Protocol.Ssh ? "ssh" : "rdp" };
             if (IsCloud)
             {
-                parts.Add(UsePublicIp && HasPublicIp ? $"{PublicIp} (공인)" : PrimaryAddress + (HasPublicIp ? " · EIP" : ""));
+                parts.Add(UsePublicIp && HasPublicIp ? L.F("{0} (공인)", PublicIp) : PrimaryAddress + (HasPublicIp ? " · EIP" : ""));
                 if (!string.IsNullOrWhiteSpace(Purpose)) parts.Add(Purpose);
                 if (IsStopped) parts.Add(CloudState!.ToLowerInvariant());
                 return string.Join(" · ", parts);
             }
             if (!string.IsNullOrWhiteSpace(Username)) parts.Add(Username);
-            var addr = EffectiveAddress + (UsePublicIp && HasPublicIp ? " (공인)" : "");
+            var addr = UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress;
             if (!string.IsNullOrWhiteSpace(Label)) parts.Add(Port == DefaultPort(Protocol) ? addr : $"{addr}:{Port}");
             return string.Join(", ", parts);
         }
@@ -111,10 +111,10 @@ public sealed class HostEntry
 
     [JsonIgnore]
     public string ToolTipText =>
-        $"{DisplayName}\n사설 {PrimaryAddress}" + (HasPublicIp ? $"   공인 {PublicIp}" : "") + $"   :{Port} ({ProtocolText})\n" +
-        $"접속 주소: {EffectiveAddress}{(UsePublicIp && HasPublicIp ? " (공인)" : "")}\n" +
+        $"{DisplayName}\n" + L.F("사설 {0}", PrimaryAddress) + (HasPublicIp ? "   " + L.F("공인 {0}", PublicIp) : "") + $"   :{Port} ({ProtocolText})\n" +
+        L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
-        "\n더블클릭하여 연결" + (HasPublicIp ? " · 우클릭으로 사설/공인 선택" : "");
+        "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
 
     /// <summary>
     /// 접속용 사본: 비어 있는 계정은 프로필 기본 계정으로 채우고, Address 를 실제 접속 주소로 바꾼다.
@@ -188,7 +188,7 @@ public sealed class HostGroup : INotifyPropertyChanged
         get
         {
             var running = Hosts.Count(h => !h.IsStopped);
-            return IsCloud && running != Hosts.Count ? $"{Hosts.Count}  (실행 {running})" : Hosts.Count.ToString();
+            return IsCloud && running != Hosts.Count ? L.F("{0}  (실행 {1})", Hosts.Count, running) : Hosts.Count.ToString();
         }
     }
 
@@ -224,16 +224,16 @@ public sealed class CloudSection : INotifyPropertyChanged
     public string Message { get => _message; set { _message = value; OnChanged(); } }
 
     // 인증 파일 경로 (기본 위치 또는 사용자가 고른 위치)
-    public string PathText => CloudPaths.Effective(Provider) + (IsCustomPath ? "" : "  (기본)");
+    public string PathText => CloudPaths.Effective(Provider) + (IsCustomPath ? "" : L.T("  (기본)"));
     public bool IsCustomPath => CloudPaths.Custom(Provider) != null;
-    public string PathKindText => CloudPaths.IsFolder(Provider) ? "폴더" : "파일";
+    public string PathKindText => CloudPaths.IsFolder(Provider) ? L.T("폴더") : L.T("파일");
     public void NotifyPath() { OnChanged(nameof(PathText)); OnChanged(nameof(IsCustomPath)); }
     public bool IsBusy { get => _busy; set { _busy = value; OnChanged(); OnChanged(nameof(AddButtonText)); } }
-    public string AddButtonText => IsBusy ? "찾는 중..." : Provider switch
+    public string AddButtonText => IsBusy ? L.T("찾는 중...") : Provider switch
     {
-        CloudProvider.Gcp => "프로젝트 추가",
-        CloudProvider.Azure => "구독 추가",
-        _ => "프로필 추가",
+        CloudProvider.Gcp => L.T("프로젝트 추가"),
+        CloudProvider.Azure => L.T("구독 추가"),
+        _ => L.T("프로필 추가"),
     };
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -22,7 +22,7 @@ public partial class MainWindow
     private void SaveProfiles()
     {
         try { CloudStore.Save(_profiles); }
-        catch (Exception ex) { Dialog.Show(this, $"클라우드 프로필 저장 실패: {ex.Message}", "Nubis"); }
+        catch (Exception ex) { Dialog.Show(this, L.F("클라우드 프로필 저장 실패: {0}", ex.Message), "Nubis"); }
     }
 
     private void UpdateProfileCounts()
@@ -62,7 +62,7 @@ public partial class MainWindow
     {
         if (_profiles.Count == 0) return;
         SyncAllButton.IsEnabled = false;
-        SyncAllButton.Content = "동기화 중...";
+        SyncAllButton.Content = L.T("동기화 중...");
         try
         {
             using var gate = new System.Threading.SemaphoreSlim(4);
@@ -75,7 +75,7 @@ public partial class MainWindow
         finally
         {
             SyncAllButton.IsEnabled = true;
-            SyncAllButton.Content = "전체 동기화";
+            SyncAllButton.Content = L.T("전체 동기화");
         }
     }
 
@@ -91,15 +91,15 @@ public partial class MainWindow
             var fetched = await Task.Run(() => provider.FetchAsync(p, System.Threading.CancellationToken.None));
             if (!_profiles.Contains(p)) return;   // 조회 중 제거됨
             var (added, updated, removed) = CloudSync.Apply(p, fetched.Items, _hosts, removeMissing: !fetched.IsPartial);
-            p.LastResult = added + removed > 0 ? $"추가 {added} · 제거 {removed}" : "변경 없음";
+            p.LastResult = added + removed > 0 ? L.F("추가 {0} · 제거 {1}", added, removed) : L.T("변경 없음");
             if (fetched.IsPartial)
-                p.StatusText = $"일부 조회 실패 {fetched.Errors.Count}건 — 이번엔 삭제하지 않음: {CloudProviders.FirstLine(fetched.Errors[0])}";
+                p.StatusText = L.F("일부 조회 실패 {0}건 — 이번엔 삭제하지 않음: {1}", fetched.Errors.Count, CloudProviders.FirstLine(fetched.Errors[0]));
             SaveHosts();
             SaveProfiles();
         }
         catch (Exception ex)
         {
-            p.StatusText = "실패: " + CloudProviders.FirstLine(ex.Message);
+            p.StatusText = L.F("실패: {0}", CloudProviders.FirstLine(ex.Message));
         }
         finally
         {
@@ -122,7 +122,7 @@ public partial class MainWindow
         }
         catch (Exception ex)
         {
-            section.Message = $"목록 조회 실패: {CloudProviders.FirstLine(ex.Message)}  (\"로그인\" 버튼으로 CLI 로그인 후 다시 시도)";
+            section.Message = L.F("목록 조회 실패: {0}  (\"로그인\" 버튼으로 CLI 로그인 후 다시 시도)", CloudProviders.FirstLine(ex.Message));
             return;
         }
         finally { section.IsBusy = false; }
@@ -131,12 +131,12 @@ public partial class MainWindow
         var fresh = candidates.Where(c => !existing.Contains(c.Name)).ToList();
         if (fresh.Count == 0)
         {
-            section.Message = candidates.Count == 0 ? "이 PC에서 찾은 프로필이 없습니다." : "모든 프로필이 이미 추가되어 있습니다.";
+            section.Message = candidates.Count == 0 ? L.T("이 PC에서 찾은 프로필이 없습니다.") : L.T("모든 프로필이 이미 추가되어 있습니다.");
             return;
         }
 
         var menu = new ContextMenu { PlacementTarget = button, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-        var all = new MenuItem { Header = $"모두 추가 ({fresh.Count})", FontWeight = FontWeights.SemiBold };
+        var all = new MenuItem { Header = L.F("모두 추가 ({0})", fresh.Count), FontWeight = FontWeights.SemiBold };
         all.Click += async (_, _) => await AddProfilesAsync(section, fresh);
         menu.Items.Add(all);
         foreach (var c in fresh)
@@ -196,8 +196,8 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.DataContext is not CloudProfile p) return;
         var count = _hosts.Count(h => h.CloudProfileId == p.Id);
-        if (Dialog.Show(this, $"[{p.ProviderText}] {p.GroupName} 프로필과 동기화된 호스트 {count}개를 제거할까요?\n(클라우드의 서버에는 아무 영향이 없습니다)",
-                "프로필 제거", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (Dialog.Show(this, L.F("[{0}] {1} 프로필과 동기화된 호스트 {2}개를 제거할까요?\n(클라우드의 서버에는 아무 영향이 없습니다)", p.ProviderText, p.GroupName, count),
+                L.T("프로필 제거"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
 
         _hosts.RemoveAll(h => h.CloudProfileId == p.Id);
         _profiles.Remove(p);
@@ -217,7 +217,7 @@ public partial class MainWindow
         {
             var dlg = new Microsoft.Win32.OpenFolderDialog
             {
-                Title = $"{section.Title} 인증 폴더 선택 ({(section.Provider == CloudProvider.Tencent ? "*.credential 파일이 있는 폴더" : "az CLI 설정 폴더")})",
+                Title = L.F("{0} 인증 폴더 선택 ({1})", section.Title, section.Provider == CloudProvider.Tencent ? L.T("*.credential 파일이 있는 폴더") : L.T("az CLI 설정 폴더")),
                 InitialDirectory = Directory.Exists(current) ? current : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
             };
             chosen = dlg.ShowDialog(this) == true ? dlg.FolderName : null;
@@ -226,8 +226,8 @@ public partial class MainWindow
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = $"{section.Title} 인증 파일 선택 ({(section.Provider == CloudProvider.Aws ? "AWS config" : "ADC JSON")})",
-                Filter = section.Provider == CloudProvider.Gcp ? "JSON (*.json)|*.json|모든 파일|*.*" : "모든 파일|*.*",
+                Title = L.F("{0} 인증 파일 선택 ({1})", section.Title, section.Provider == CloudProvider.Aws ? "AWS config" : "ADC JSON"),
+                Filter = section.Provider == CloudProvider.Gcp ? L.T("JSON (*.json)|*.json|모든 파일|*.*") : L.T("모든 파일|*.*"),
                 InitialDirectory = Path.GetDirectoryName(current) is { } d && Directory.Exists(d) ? d : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 FileName = Path.GetFileName(current),
             };
@@ -252,8 +252,8 @@ public partial class MainWindow
         CloudPaths.Apply();
         section.NotifyPath();
         section.Message = path == null
-            ? "기본 경로로 되돌렸습니다. 프로필 추가·동기화부터 적용됩니다."
-            : "경로를 바꿨습니다. 프로필 추가·동기화와 로그인 버튼에 바로 적용됩니다.";
+            ? L.T("기본 경로로 되돌렸습니다. 프로필 추가·동기화부터 적용됩니다.")
+            : L.T("경로를 바꿨습니다. 프로필 추가·동기화와 로그인 버튼에 바로 적용됩니다.");
     }
 
     /// <summary>CLI 로그인 명령을 새 콘솔 창에서 실행 (브라우저 인증은 사용자가 진행)</summary>
@@ -263,15 +263,15 @@ public partial class MainWindow
         var p = section.Profiles.FirstOrDefault();
         if (section.Provider == CloudProvider.Aws && p == null)
         {
-            section.Message = "먼저 프로필을 추가하세요. (같은 SSO 포털을 쓰는 프로필은 한 번 로그인으로 모두 사용 가능)";
+            section.Message = L.T("먼저 프로필을 추가하세요. (같은 SSO 포털을 쓰는 프로필은 한 번 로그인으로 모두 사용 가능)");
             return;
         }
         var cmd = CloudProviders.Get(section.Provider).LoginCommand(p);
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/k {cmd}") { UseShellExecute = true });
-            section.Message = $"새 창에서 '{cmd}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.";
+            section.Message = L.F("새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.", cmd);
         }
-        catch (Exception ex) { section.Message = $"실행 실패: {ex.Message}"; }
+        catch (Exception ex) { section.Message = L.F("실행 실패: {0}", ex.Message); }
     }
 }

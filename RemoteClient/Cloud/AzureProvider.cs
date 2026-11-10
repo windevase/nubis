@@ -32,7 +32,7 @@ public sealed class AzureProvider : ICloudProvider
     private const string Arm = "https://management.azure.com";
 
     public CloudProvider Kind => CloudProvider.Azure;
-    public string AuthHint => "az CLI 로그인 · az login";
+    public string AuthHint => L.T("az CLI 로그인 · az login");
     public string LoginCommand(CloudProfile? p) =>
         string.IsNullOrEmpty(p?.TenantId) ? "az login" : $"az login --tenant {p.TenantId}";
 
@@ -98,7 +98,7 @@ public sealed class AzureProvider : ICloudProvider
         try { token = await TokenAsync(p.TenantId, ct); }
         catch (Exception ex)
         {
-            throw new InvalidOperationException($"az 로그인이 필요합니다 ({LoginCommand(p)}) — {CloudProviders.FirstLine(ex.Message)}");
+            throw new InvalidOperationException(L.F("az 로그인이 필요합니다 ({0}) — {1}", LoginCommand(p), CloudProviders.FirstLine(ex.Message)));
         }
 
         var sub = $"{Arm}/subscriptions/{p.Name}";

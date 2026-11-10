@@ -73,13 +73,13 @@ public sealed class CloudProfile : INotifyPropertyChanged
     [JsonIgnore] public string StatusText { get => _status; set { _status = value; OnChanged(); } }
     [JsonIgnore] public int HostCount { get => _hostCount; set { _hostCount = value; OnChanged(); OnChanged(nameof(SummaryText)); } }
     [JsonIgnore] public int RunningCount { get => _runningCount; set { _runningCount = value; OnChanged(); OnChanged(nameof(SummaryText)); } }
-    [JsonIgnore] public string SyncButtonText => IsSyncing ? "동기화 중..." : "동기화";
+    [JsonIgnore] public string SyncButtonText => IsSyncing ? L.T("동기화 중...") : L.T("동기화");
     /// <summary>직전 동기화의 변경 요약 (예: "추가 3 · 제거 1")</summary>
     [JsonIgnore] public string LastResult { get; set; } = "";
     [JsonIgnore]
     public string SummaryText => LastSync == null
-        ? "아직 동기화하지 않음"
-        : $"{HostCount}대 (실행 {RunningCount})  ·  {LastSync:MM-dd HH:mm} 동기화" + (LastResult.Length > 0 ? $"  ·  {LastResult}" : "");
+        ? L.T("아직 동기화하지 않음")
+        : L.F("{0}대 (실행 {1})  ·  {2:MM-dd HH:mm} 동기화", HostCount, RunningCount, LastSync) + (LastResult.Length > 0 ? $"  ·  {LastResult}" : "");
 
     public void NotifySummary() => OnChanged(nameof(SummaryText));
 

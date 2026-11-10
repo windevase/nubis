@@ -31,7 +31,7 @@ public partial class MainWindow
         UpdateProtoUi();
 
         EdAddress.Text = h?.PrimaryAddress ?? "";
-        EdAddressLabel.Text = h?.IsCloud == true ? "주소 (사설 IP · 동기화로 갱신)" : "주소";
+        EdAddressLabel.Text = h?.IsCloud == true ? L.T("주소 (사설 IP · 동기화로 갱신)") : L.T("주소");
         EdPublicIp.Text = h?.PublicIp ?? "";
         EdUsePublic.IsChecked = h?.UsePublicIp == true;
         EdLabel.Text = h?.Label ?? "";
@@ -98,39 +98,39 @@ public partial class MainWindow
         {
             EdVaultGlyph.Text = v.Glyph;
             EdVaultName.Text = v.Name;
-            var methods = new List<string> { string.IsNullOrWhiteSpace(v.Username) ? "사용자명 없음" : $"사용자 {v.Username}" };
-            if (v.HasPassword) methods.Add("비밀번호");
-            if (v.HasKey) methods.Add(ssh ? $"{(v.KeyType.Length > 0 ? v.KeyType : "SSH")} 키" : "SSH 키 (RDP 에서는 안 씀)");
+            var methods = new List<string> { string.IsNullOrWhiteSpace(v.Username) ? L.T("사용자명 없음") : L.F("사용자 {0}", v.Username) };
+            if (v.HasPassword) methods.Add(L.T("비밀번호"));
+            if (v.HasKey) methods.Add(ssh ? L.F("{0} 키", v.KeyType.Length > 0 ? v.KeyType : "SSH") : L.T("SSH 키 (RDP 에서는 안 씀)"));
             EdVaultDetail.Text = string.Join(" · ", methods);
         }
         else if (missing)
         {
             EdVaultGlyph.Text = "";
-            EdVaultName.Text = "삭제된 Vault 계정";
-            EdVaultDetail.Text = "다른 계정을 고르거나 해제하세요.";
+            EdVaultName.Text = L.T("삭제된 Vault 계정");
+            EdVaultDetail.Text = L.T("다른 계정을 고르거나 해제하세요.");
         }
 
         VaultHint.Text = v == null
-            ? "여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다."
-            : "이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.";
+            ? L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.")
+            : L.T("이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.");
 
         // 직접 입력 칸: Vault 값을 쓰는지 바로 보이게
         var vaultUser = v != null && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : null;
-        EdUserLabel.Text = vaultUser != null ? "사용자명 (비워 두면 Vault)" : "사용자명";
-        EdUser.Tag = vaultUser != null ? $"Vault 사용자: {vaultUser}" : "예: ubuntu  /  DOMAIN\\user";
-        EdPasswordLabel.Text = v?.HasPassword == true ? "비밀번호 (비워 두면 Vault)" : "비밀번호";
+        EdUserLabel.Text = vaultUser != null ? L.T("사용자명 (비워 두면 Vault)") : L.T("사용자명");
+        EdUser.Tag = vaultUser != null ? L.F("Vault 사용자: {0}", vaultUser) : L.T("예: ubuntu  /  DOMAIN\\user");
+        EdPasswordLabel.Text = v?.HasPassword == true ? L.T("비밀번호 (비워 두면 Vault)") : L.T("비밀번호");
         PwHint.Text = v?.HasPassword == true
-            ? "비워 두면 Vault 계정의 비밀번호를 씁니다."
+            ? L.T("비워 두면 Vault 계정의 비밀번호를 씁니다.")
             : v?.HasKey == true && ssh
-                ? "Vault 키로 인증합니다. 키 인증이 안 되는 서버를 위해 비밀번호를 넣어 둘 수도 있습니다."
+                ? L.T("Vault 키로 인증합니다. 키 인증이 안 되는 서버를 위해 비밀번호를 넣어 둘 수도 있습니다.")
                 : v != null && !ssh
-                    ? "이 Vault 계정에는 비밀번호가 없어 RDP 접속 때 비밀번호를 묻습니다."
-                    : "비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.";
+                    ? L.T("이 Vault 계정에는 비밀번호가 없어 RDP 접속 때 비밀번호를 묻습니다.")
+                    : L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
 
-        EdKeyLabel.Text = v?.HasKey == true ? "개인키 파일 (비워 두면 Vault 키)" : "개인키 파일 (선택)";
+        EdKeyLabel.Text = v?.HasKey == true ? L.T("개인키 파일 (비워 두면 Vault 키)") : L.T("개인키 파일 (선택)");
         KeyHint.Text = v?.HasKey == true
-            ? "Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요."
-            : "키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.";
+            ? L.T("Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요.")
+            : L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
     }
 
     private void OnPickVault(object sender, RoutedEventArgs e)
@@ -149,8 +149,8 @@ public partial class MainWindow
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "SSH 개인키 선택",
-            Filter = "모든 파일|*.*|PuTTY 키 (*.ppk)|*.ppk|PEM (*.pem)|*.pem",
+            Title = L.T("SSH 개인키 선택"),
+            Filter = L.T("모든 파일|*.*|PuTTY 키 (*.ppk)|*.ppk|PEM (*.pem)|*.pem"),
             InitialDirectory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"),
         };
         if (dlg.ShowDialog(this) == true) EdKey.Text = dlg.FileName;

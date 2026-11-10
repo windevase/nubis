@@ -71,13 +71,13 @@ public partial class MainWindow
         RebuildRows();
         // 보이는 그룹이 없으면 안내 (검색 중이면 검색 결과 없음)
         EmptyState.Visibility = groups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyTitle.Text = searching ? "검색 결과가 없습니다" : _profiles.Count > 0 ? "동기화된 서버가 없습니다" : "등록된 호스트가 없습니다";
+        EmptyTitle.Text = searching ? L.T("검색 결과가 없습니다") : _profiles.Count > 0 ? L.T("동기화된 서버가 없습니다") : L.T("등록된 호스트가 없습니다");
         EmptyHint.Text = searching
-            ? "Enter 를 누르면 입력한 user@host 로 바로 접속합니다."
+            ? L.T("Enter 를 누르면 입력한 user@host 로 바로 접속합니다.")
             : _profiles.Count > 0
-                ? "Cloud 페이지에서 프로필을 동기화하거나, NEW HOST 로 서버를 추가하세요."
-                : "NEW HOST 로 SSH / RDP 서버를 추가하거나, Cloud 에서 클라우드 계정의 서버를 가져오세요.";
-        CountText.Text = q.Length > 0 ? $"{groups.Sum(g => g.Hosts.Count)} / {_hosts.Count}개" : $"{_hosts.Count}개 호스트";
+                ? L.T("Cloud 페이지에서 프로필을 동기화하거나, NEW HOST 로 서버를 추가하세요.")
+                : L.T("NEW HOST 로 SSH / RDP 서버를 추가하거나, Cloud 에서 클라우드 계정의 서버를 가져오세요.");
+        CountText.Text = q.Length > 0 ? L.F("{0} / {1}개", groups.Sum(g => g.Hosts.Count), _hosts.Count) : L.F("{0}개 호스트", _hosts.Count);
     }
 
     private List<HostGroup> _groups = new();
@@ -123,7 +123,7 @@ public partial class MainWindow
     private void SaveHosts()
     {
         try { HostStore.Save(_hosts); }
-        catch (Exception ex) { Dialog.Show(this, $"호스트 목록 저장 실패: {ex.Message}", "Nubis"); }
+        catch (Exception ex) { Dialog.Show(this, L.F("호스트 목록 저장 실패: {0}", ex.Message), "Nubis"); }
     }
 
     private DispatcherTimer? _searchTimer;
@@ -167,7 +167,7 @@ public partial class MainWindow
         if (!looksLikeAddress && matches.Count == 1) { Connect(matches[0]); return; }
         if (!m.Success)
         {
-            Dialog.Show(this, "user@host[:port] 또는 rdp host[:port] 형식으로 입력하세요.", "빠른 접속");
+            Dialog.Show(this, L.T("user@host[:port] 또는 rdp host[:port] 형식으로 입력하세요."), L.T("빠른 접속"));
             return;
         }
 
@@ -213,8 +213,8 @@ public partial class MainWindow
                 "private" => h.HasPublicIp && h.UsePublicIp ? Visibility.Visible : Visibility.Collapsed,
                 _ => Visibility.Visible,
             };
-            if ((item.Tag as string) == "public") item.Header = $"공인 IP로 연결 ({h.PublicIp})";
-            if ((item.Tag as string) == "private") item.Header = $"사설 IP로 연결 ({h.PrimaryAddress})";
+            if ((item.Tag as string) == "public") item.Header = L.F("공인 IP로 연결 ({0})", h.PublicIp);
+            if ((item.Tag as string) == "private") item.Header = L.F("사설 IP로 연결 ({0})", h.PrimaryAddress);
         }
     }
     private void OnMenuEdit(object sender, RoutedEventArgs e) { if (HostOf(sender) is { } h) OpenEditor(h); }
@@ -224,7 +224,7 @@ public partial class MainWindow
         if (HostOf(sender) is not { } h) return;
         var copy = h.Clone();
         copy.Id = Guid.NewGuid();
-        copy.Label = (string.IsNullOrWhiteSpace(h.Label) ? h.Address : h.Label) + " (복사본)";
+        copy.Label = L.F("{0} (복사본)", string.IsNullOrWhiteSpace(h.Label) ? h.Address : h.Label);
         copy.LastConnected = null;
         if (h.IsCloud)
         {
@@ -249,9 +249,9 @@ public partial class MainWindow
     {
         var profile = h.IsCloud ? _profiles.FirstOrDefault(p => p.Id == h.CloudProfileId) : null;
         var msg = profile != null
-            ? $"'{h.DisplayName}' 을(를) 목록에서 지울까요?\n클라우드의 서버는 그대로이며, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.\n(프로필 설정에서 숨김을 해제할 수 있습니다)"
-            : $"'{h.DisplayName}' 호스트를 삭제할까요?";
-        if (Dialog.Show(this, msg, "삭제 확인", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            ? L.F("'{0}' 을(를) 목록에서 지울까요?\n클라우드의 서버는 그대로이며, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.\n(프로필 설정에서 숨김을 해제할 수 있습니다)", h.DisplayName)
+            : L.F("'{0}' 호스트를 삭제할까요?", h.DisplayName);
+        if (Dialog.Show(this, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         RemoveHosts(new[] { h });
     }
 

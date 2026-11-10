@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         UpdateProfileCounts();
         TabsList.ItemsSource = _tabs;
         FooterText.Text = $"v{typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
-        FooterText.ToolTip = $"데이터 폴더: {AppPaths.DataDir}";
+        FooterText.ToolTip = L.F("데이터 폴더: {0}", AppPaths.DataDir);
 
         StateChanged += (_, _) => ApplyWindowState();
         Closing += OnWindowClosing;
@@ -56,7 +56,7 @@ public partial class MainWindow : Window
         {
             // 설정 파일을 읽지 못한 경우 (원본은 .corrupt 사본으로 보관됨)
             if (SafeFile.LoadWarnings.Count > 0)
-                Dialog.Show(this, string.Join("\n\n", SafeFile.LoadWarnings), "설정 파일을 읽지 못했습니다",
+                Dialog.Show(this, string.Join("\n\n", SafeFile.LoadWarnings), L.T("설정 파일을 읽지 못했습니다"),
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             ConnectFromArgs();
         };
@@ -76,7 +76,7 @@ public partial class MainWindow : Window
             var h = _hosts.FirstOrDefault(x => x.Id.ToString().Equals(key, StringComparison.OrdinalIgnoreCase))
                     ?? _hosts.FirstOrDefault(x => x.DisplayName.Equals(key, StringComparison.OrdinalIgnoreCase));
             if (h != null) Connect(h);
-            else Dialog.Show(this, $"'{key}' 호스트를 찾을 수 없습니다.", "Nubis");
+            else Dialog.Show(this, L.F("'{0}' 호스트를 찾을 수 없습니다.", key), "Nubis");
         }
     }
 
@@ -127,7 +127,7 @@ public partial class MainWindow : Window
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
         var live = _tabs.Count(t => t.Status != SessionStatus.Disconnected);
-        if (live > 0 && Dialog.Show(this, $"연결 중인 세션 {live}개가 종료됩니다. 닫을까요?", "Nubis",
+        if (live > 0 && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             e.Cancel = true;

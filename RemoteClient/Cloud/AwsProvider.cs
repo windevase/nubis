@@ -30,7 +30,7 @@ namespace Nubis;
 public sealed class AwsProvider : ICloudProvider
 {
     public CloudProvider Kind => CloudProvider.Aws;
-    public string AuthHint => "~/.aws/config 프로필 · SSO 는 aws sso login 필요";
+    public string AuthHint => L.T("~/.aws/config 프로필 · SSO 는 aws sso login 필요");
     public string LoginCommand(CloudProfile? p) => $"aws sso login --profile {p?.Name ?? "default"}";
 
     public Task<List<CloudCandidate>> DiscoverAsync(CancellationToken ct)
@@ -54,7 +54,7 @@ public sealed class AwsProvider : ICloudProvider
     {
         var chain = new CredentialProfileStoreChain();
         if (!chain.TryGetAWSCredentials(p.Name, out var creds))
-            throw new InvalidOperationException($"AWS 프로필 '{p.Name}' 을 찾을 수 없습니다.");
+            throw new InvalidOperationException(L.F("AWS 프로필 '{0}' 을 찾을 수 없습니다.", p.Name));
 
         List<string> regions;
         try
@@ -67,7 +67,7 @@ public sealed class AwsProvider : ICloudProvider
                                    ex.Message.Contains("token", StringComparison.OrdinalIgnoreCase) ||
                                    ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"SSO 로그인이 필요합니다 (aws sso login --profile {p.Name}) — {CloudProviders.FirstLine(ex.Message)}");
+            throw new InvalidOperationException(L.F("SSO 로그인이 필요합니다 (aws sso login --profile {0}) — {1}", p.Name, CloudProviders.FirstLine(ex.Message)));
         }
 
         var (items, errors) = await CloudProviders.ParallelCollect(regions, 10, async region =>

@@ -70,7 +70,7 @@ public partial class App : Application
         }
         catch { /* 로그 실패는 무시 */ }
 
-        Dialog.Show(e.Exception.Message, "Nubis 오류", MessageBoxButton.OK, MessageBoxImage.Error);
+        Dialog.Show(e.Exception.Message, L.T("Nubis 오류"), MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }
 }

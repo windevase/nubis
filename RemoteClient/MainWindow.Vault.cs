@@ -38,7 +38,7 @@ public partial class MainWindow
     private void SaveVault(VaultEntry entry)
     {
         try { VaultStore.Upsert(entry); }
-        catch (Exception ex) { Dialog.Show(this, $"Vault 저장 실패: {ex.Message}", "Vault"); }
+        catch (Exception ex) { Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault"); }
     }
 
     private void OnVaultEdit(object sender, RoutedEventArgs e)
@@ -57,15 +57,15 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
         var users = _hosts.Where(h => h.VaultId == entry.Id).ToList();
-        var msg = $"Vault 계정 '{entry.Name}' ({entry.MethodsText}) 를 삭제할까요?" +
+        var msg = L.F("Vault 계정 '{0}' ({1}) 를 삭제할까요?", entry.Name, entry.MethodsText) +
                   (users.Count > 0
-                      ? $"\n\n이 계정을 쓰는 호스트 {users.Count}개는 연결이 해제되어, 호스트에 직접 적은 값이 없으면 다음 접속 때 계정을 묻습니다:\n" +
+                      ? "\n\n" + L.F("이 계정을 쓰는 호스트 {0}개는 연결이 해제되어, 호스트에 직접 적은 값이 없으면 다음 접속 때 계정을 묻습니다:", users.Count) + "\n" +
                         string.Join("\n", users.Take(10).Select(h => "  " + h.DisplayName)) + (users.Count > 10 ? "\n  ..." : "")
                       : "");
-        if (Dialog.Show(this, msg, "Vault 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (Dialog.Show(this, msg, L.T("Vault 삭제"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         foreach (var h in users) h.VaultId = null;
         try { VaultStore.Remove(entry.Id); }
-        catch (Exception ex) { Dialog.Show(this, $"Vault 저장 실패: {ex.Message}", "Vault"); }
+        catch (Exception ex) { Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault"); }
         if (users.Count > 0) { SaveHosts(); RefreshHosts(); }
         RefreshVault();
     }
@@ -76,7 +76,7 @@ public partial class MainWindow
         try
         {
             Clipboard.SetText($"{pub} {entry.Name.Replace(' ', '_')}");
-            Dialog.Show(this, "공개키를 복사했습니다.\n서버의 ~/.ssh/authorized_keys 에 한 줄로 붙여넣으세요.", "Vault");
+            Dialog.Show(this, L.T("공개키를 복사했습니다.\n서버의 ~/.ssh/authorized_keys 에 한 줄로 붙여넣으세요."), "Vault");
         }
         catch { }
     }

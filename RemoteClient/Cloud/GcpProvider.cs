@@ -79,7 +79,7 @@ public sealed class GcpProvider : ICloudProvider
             try { r = await CloudProviders.GetJsonAsync(url, token, ct, quota); }
             catch (HttpRequestException ex) when (ex.Message.Contains("has not been used") || ex.Message.Contains("disabled"))
             {
-                throw new InvalidOperationException("이 프로젝트는 Compute Engine API 를 사용하지 않습니다.");
+                throw new InvalidOperationException(L.T("이 프로젝트는 Compute Engine API 를 사용하지 않습니다."));
             }
 
             if (r.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Object)

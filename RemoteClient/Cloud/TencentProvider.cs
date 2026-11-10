@@ -33,7 +33,7 @@ public sealed class TencentProvider : ICloudProvider
     private const string Version = "2017-03-12";
 
     public CloudProvider Kind => CloudProvider.Tencent;
-    public string AuthHint => "~/.tccli/<프로필>.credential (tccli configure)";
+    public string AuthHint => L.T("~/.tccli/<프로필>.credential (tccli configure)");
     public string LoginCommand(CloudProfile? p) => $"tccli configure --profile {p?.Name ?? "default"}";
 
     private static string TccliDir => CloudPaths.Effective(CloudProvider.Tencent);
@@ -54,7 +54,7 @@ public sealed class TencentProvider : ICloudProvider
     public async Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct)
     {
         var file = Path.Combine(TccliDir, p.Name + ".credential");
-        if (!File.Exists(file)) throw new InvalidOperationException($"{file} 이 없습니다 (tccli configure --profile {p.Name}).");
+        if (!File.Exists(file)) throw new InvalidOperationException(L.F("{0} 이 없습니다 (tccli configure --profile {1}).", file, p.Name));
         var cred = JsonDocument.Parse(await File.ReadAllTextAsync(file, ct)).RootElement;
         var id = cred.Str("secretId");
         var key = cred.Str("secretKey");
