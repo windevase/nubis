@@ -10,6 +10,8 @@
 
 > **언어:** 앱 화면은 한국어와 영어를 지원한다 — 처음 실행할 때 고르고(한국어 기본), Settings → 언어에서 언제든 바꿀 수 있다. Claude 패널도 같은 언어로 답한다.
 
+> **사용자 가이드:** 설정 방법, 모든 기능과 설정의 동작 — [docs/guide.ko.md](docs/guide.ko.md)
+
 ## 주요 기능
 
 - **앱 안의 Claude 에게 말로 시킨다** — 오른쪽 Claude 패널(공식 Claude Code CLI)이 내장 MCP 서버로 Nubis 를 직접 다룬다

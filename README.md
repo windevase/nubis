@@ -10,6 +10,8 @@
 
 > **Languages:** the app UI is available in Korean and English — pick one on first launch (Korean is the default) and switch any time in Settings → Language. The Claude panel answers in the same language.
 
+> **User guide:** setup, every feature and every setting explained — [docs/guide.md](docs/guide.md)
+
 ## Highlights
 
 - **Just ask the built-in Claude** — the Claude panel on the right runs the official Claude Code CLI and drives Nubis through a built-in MCP server
