@@ -214,11 +214,3 @@ The **+** button in the title bar (or `Ctrl+Shift+T`) opens a local PowerShell t
 [MIT License](LICENSE) — free to use, modify and distribute for personal or commercial purposes (keep the copyright notice and license text).
 
 Open-source components and theme sources are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-## Known limitations
-
-- While the RDP screen has focus, `Ctrl+Tab` goes to the remote machine (click a tab to switch)
-- No port forwarding, jump hosts or RDP gateway yet
-- Once the data files are encrypted, older versions (0.1.2 or earlier) cannot read them — do not go back to an old exe after running the new version
-- WinRM (running commands on Windows servers) has not been fully verified against real servers yet
-- Because the data folder was renamed, the Claude panel asks once more to trust its working folder
