@@ -91,7 +91,9 @@ public partial class MainWindow
         WriteClaudeMd();
         // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
         var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
-        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir), new UTF8Encoding(false));
+        _lastActiveContext = null;
+        UpdateActiveContext();
+        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath), new UTF8Encoding(false));
 
         _claudeView = new LocalTerminalView(() =>
         {
@@ -105,6 +107,59 @@ public partial class MainWindow
                 : $"cmd.exe /d /s /c \"\"{exe}\" {args}\"";
         }, ClaudeWorkDir, "Claude Code 가 종료되었습니다.");
         ClaudeHost.Content = _claudeView;
+    }
+
+    // =================== 현재 화면 알려주기 (UserPromptSubmit hook) ===================
+    // 사용자가 탭을 바꿔도 Claude 는 알 수 없으므로, 앱이 현재 탭 정보를 파일에 써 두고
+    // Claude 패널의 UserPromptSubmit hook 이 메시지를 보낼 때마다 그 내용을 질문에 붙인다.
+
+    private static string ActiveContextPath => Path.Combine(ClaudeWorkDir, ClaudeGuard.ActiveContextFile);
+    private string? _lastActiveContext;
+
+    /// <summary>현재 탭 정보를 파일에 쓴다 (탭 선택·닫기·연결 상태 변경 때 호출)</summary>
+    private void UpdateActiveContext()
+    {
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(UpdateActiveContext); return; }
+        var text = ActiveContextText(_tabs.FirstOrDefault(t => t.IsSelected), _tabs.Count);
+        if (text == _lastActiveContext) return;
+        try
+        {
+            File.WriteAllText(ActiveContextPath, text, new UTF8Encoding(false));
+            _lastActiveContext = text;
+        }
+        catch { }
+    }
+
+    public static string StatusText(SessionStatus s) => s switch
+    {
+        SessionStatus.Connected => "연결됨",
+        SessionStatus.Connecting => "연결 중",
+        _ => "끊김",
+    };
+
+    /// <summary>hook 이 질문에 붙일 문구. 비밀 값(계정·비밀번호)은 넣지 않는다.</summary>
+    public static string ActiveContextText(SessionTab? tab, int openTabs) =>
+        tab == null
+            ? ActiveContextText(null, "", Protocol.Local, null, 0, SessionStatus.Disconnected, openTabs)
+            : ActiveContextText(tab.Id, tab.Title, tab.Protocol, tab.Host?.Address, tab.Host?.Port ?? 0, tab.Status, openTabs);
+
+    public static string ActiveContextText(int? id, string title, Protocol protocol, string? address, int port, SessionStatus status, int openTabs)
+    {
+        if (id == null)
+            return $"[Nubis 현재 화면] 사용자는 세션 탭이 아닌 호스트 목록(홈) 화면을 보고 있습니다. 열린 세션 탭 {openTabs}개 (list_sessions 로 확인).";
+        var kind = protocol switch
+        {
+            Protocol.Ssh => "SSH 터미널",
+            Protocol.Rdp => "RDP 원격 데스크톱",
+            _ => "로컬 PowerShell",
+        };
+        var host = address != null ? $" · {address}:{port}" : "";
+        var how = protocol == Protocol.Rdp ? "capture_screen" : "read_terminal / get_selection / capture_screen";
+        // 탭 제목은 호스트 이름에서 오므로 줄바꿈·따옴표를 정리해 한 줄을 유지
+        var safeTitle = title.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
+        return $"[Nubis 현재 화면] 사용자가 지금 보고 있는 탭: session_id={id} · \"{safeTitle}\" · {kind}{host} · {StatusText(status)}. " +
+               $"'이 화면 / 지금 터미널 / 이 에러' 는 이 탭을 뜻합니다. 화면 내용은 {how} 를 session_id={id} 로 호출해 확인하세요 " +
+               $"(이전 대화의 session_id 를 그대로 쓰지 마세요). 열린 세션 탭 {openTabs}개.";
     }
 
     private void ShutdownClaude()
@@ -140,8 +195,15 @@ public partial class MainWindow
         "- 여러 서버 점검은 run_command 로 병렬 실행합니다(리눅스는 SSH, Windows 는 WinRM PowerShell). OS 가 다르면 나눠서 호출하세요. 실행 전에 앱이 사용자에게 승인을 받습니다. " +
         "가능하면 읽기 전용 명령을 쓰고, 변경 작업은 사용자가 명시적으로 요청했을 때만 하세요.\n" +
         "- 사용자가 '이 화면', '지금 터미널', '이 에러' 라고 하면 read_terminal 이나 get_selection 으로 현재 탭 내용을 먼저 확인하세요. RDP(Windows 원격 데스크톱) 화면은 capture_screen 으로 이미지를 받아 보세요.\n" +
+        "- 사용자는 대화 중에 탭을 자주 바꿉니다. 메시지마다 붙는 '[Nubis 현재 화면]' 줄이 그 메시지를 보낸 순간 사용자가 보고 있던 탭입니다. 이전에 쓰던 session_id 대신 그 줄의 session_id 를 쓰세요.\n" +
+        "- 호스트 등록·수정·삭제는 add_host / update_host / delete_host 로 합니다(앱이 승인을 받음). 계정은 비밀번호 대신 list_vault 의 Vault 계정을 vault 로 연결하세요.\n" +
+        "- 접속이 안 된다고 하면 먼저 test_connection 으로 DNS·포트·SSH 배너를 확인하세요.\n" +
+        "- send_to_terminal 로 명령을 보낸 뒤에는 wait_for_output 으로 끝날 때까지(또는 원하는 문자열이 나올 때까지) 기다렸다가 결과를 보세요.\n" +
+        "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
+        "- 클라우드 서버 목록이 오래됐으면 cloud_sync 로 다시 가져오세요.\n" +
+        "- 앱 설정(테마·글꼴·구문 강조·기본 포트 등)을 바꿔 달라고 하면 get_settings 로 확인한 뒤 update_settings 로 바꾸세요. settings.json 을 직접 고치지 마세요(앱이 덮어씁니다).\n" +
         "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +
-        "- Nubis 데이터 파일(hosts.json, cloud_profiles.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +
+        "- Nubis 데이터 파일(hosts.json, cloud_profiles.json, vault.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +
         "- 답변은 한국어로 하세요.";
 
     private static void WriteClaudeMd()
@@ -362,6 +424,23 @@ public partial class MainWindow
                        $"local={_tabs.Count(t => t.Protocol == Protocol.Local)} hosts={_hosts.Count}";
             }));
 
+        foreach (var t in ExtraTools()) yield return t;
+
+        yield return new McpTool("get_settings",
+            "Nubis 앱 설정(터미널 테마·글꼴·구문 강조·기본 포트·보안 옵션)의 현재 값과 바꿀 수 있는 값 범위를 보여준다.",
+            Schema(new { }),
+            _ => OnUi(() => SettingsCatalog.Describe(SettingsStore.Current)));
+
+        yield return new McpTool("update_settings",
+            "Nubis 앱 설정을 바꾼다. changes 에 {\"키\": 값} 형식 (키는 get_settings 참고, 여러 개 한 번에 가능). " +
+            "화면 설정은 바로 적용되고, 보안 설정(RdpCertWarning, SshHostKeyPrompt, AutoApproveReadOnly)은 사용자 승인 창을 거친다. " +
+            "AutoApproveReadOnly 는 끄기만 가능하다. 값이 하나라도 잘못되면 아무것도 바꾸지 않는다.",
+            Schema(new
+            {
+                changes = new { type = "object", description = "예: {\"TerminalTheme\": \"dracula\", \"FontSize\": 15}", additionalProperties = true },
+            }, "changes"),
+            a => OnUi(() => UpdateSettingsFromClaude(a)));
+
         yield return new McpTool("capture_screen",
             "세션 탭 화면을 캡처해 이미지로 반환한다. RDP(Windows 원격 데스크톱) 화면을 볼 때 사용 — 에러 창, 설치 화면, 서비스 관리자 등. " +
             "SSH 터미널 내용은 read_terminal 이 더 정확하다. session_id 생략 시 현재 탭. 대상 탭이 가려져 있으면 그 탭으로 전환한 뒤 캡처한다.",
@@ -414,6 +493,43 @@ public partial class MainWindow
                 SelectTab(tab);
                 return "입력했습니다. read_terminal 로 결과를 확인하세요.";
             }));
+    }
+
+    // =================== 설정 변경 (update_settings) ===================
+
+    private string UpdateSettingsFromClaude(JsonElement a)
+    {
+        var changesArg = a.ValueKind == JsonValueKind.Object && a.TryGetProperty("changes", out var c) ? c : default;
+        List<SettingsCatalog.Change> plan;
+        try { plan = SettingsCatalog.Plan(SettingsStore.Current, changesArg); }
+        catch (ArgumentException ex) { throw new McpToolException(ex.Message); }
+        if (plan.Count == 0) return "이미 요청한 값과 같아 바뀐 설정이 없습니다.";
+
+        var lines = plan.Select(p => p.Text).ToList();
+        var command = string.Join("\n", lines);
+        if (plan.Any(p => p.Def.Security) &&
+            !ApprovalDialog.Ask(this, "Claude 가 보안 설정 변경을 요청합니다",
+                "아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다.", new[] { "Nubis 설정" }, command))
+        {
+            AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
+            throw new McpToolException("사용자가 설정 변경을 거부했습니다.");
+        }
+
+        // 기본 포트는 클라우드 호스트 포트도 함께 바꾸는 경로로, 나머지는 한 번에 저장
+        var ports = plan.Where(p => SettingsCatalog.PortKeys.Contains(p.Def.Key)).ToList();
+        var others = plan.Except(ports).ToList();
+        if (others.Count > 0) SettingsStore.Update(s => { foreach (var p in others) p.Def.Set(s, p.New); });
+        var note = "";
+        if (ports.Count > 0)
+        {
+            int Port(string key, Protocol proto) => ports.FirstOrDefault(p => p.Def.Key == key)?.New as int? ?? HostEntry.PreferredPort(proto);
+            var moved = ApplyDefaultPorts(Port(nameof(AppSettings.DefaultSshPort), Protocol.Ssh), Port(nameof(AppSettings.DefaultRdpPort), Protocol.Rdp));
+            if (moved > 0) note = $"\n클라우드 호스트 {moved}개의 포트도 새 기본 포트로 바꿨습니다.";
+        }
+        if (SettingsPage.Visibility == Visibility.Visible) RefreshSettingsPage();
+        AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, plan.Any(p => p.Def.Security) ? "승인·변경" : "변경");
+        if (plan.Any(p => p.Def.Key == nameof(AppSettings.TerminalGpu))) note += "\nGPU 가속은 앱을 다시 시작해야 적용됩니다.";
+        return "설정을 바꿨습니다:\n" + command + note;
     }
 
     // =================== 화면 캡처 (capture_screen) ===================

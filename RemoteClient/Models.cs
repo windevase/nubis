@@ -23,7 +23,31 @@ public sealed class HostEntry
     public string? ProtectedPassword { get; set; }
     /// <summary>SSH 개인키 파일 경로</summary>
     public string? KeyPath { get; set; }
+    /// <summary>Vault 계정 (사용자명·비밀번호·SSH 키). 호스트에 직접 적은 값이 있으면 그 값이 우선</summary>
+    public Guid? VaultId { get; set; }
+    // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
     public DateTime? LastConnected { get; set; }
+
+    // ----- 접속용 사본에만 채워지는 값 (VaultStore.Apply). 저장하지 않는다 -----
+    /// <summary>Vault 에서 꺼낸 개인키 내용</summary>
+    [JsonIgnore] public string? KeyMaterial { get; set; }
+    /// <summary>Vault 에서 꺼낸 키 암호 (없으면 비밀번호를 키 암호로 시도)</summary>
+    [JsonIgnore] public string? KeyPassphrase { get; set; }
+    /// <summary>키 인증 수단이 있는지 (파일 또는 Vault 키)</summary>
+    [JsonIgnore] public bool HasKey => !string.IsNullOrWhiteSpace(KeyPath) || !string.IsNullOrEmpty(KeyMaterial);
+    [JsonIgnore] public bool UsesVault => VaultId != null;
+
+    /// <summary>예전 형식(VaultPasswordId/VaultKeyId)을 VaultId 로. 바뀌었으면 true</summary>
+    public bool MigrateLegacyVault()
+    {
+        if (VaultPasswordId == null && VaultKeyId == null) return false;
+        VaultId ??= VaultPasswordId ?? VaultKeyId;
+        VaultPasswordId = null;
+        VaultKeyId = null;
+        return true;
+    }
 
     // ----- 클라우드 동기화로 등록된 호스트 -----
     /// <summary>소속 클라우드 프로필 (null 이면 직접 등록한 호스트)</summary>
@@ -106,11 +130,15 @@ public sealed class HostEntry
         return c;
     }
 
-    /// <summary>클라우드 호스트는 비어 있는 계정을 프로필 기본 계정으로 채운 사본을 돌려준다</summary>
+    /// <summary>
+    /// 접속용 계정을 채운 사본: Vault 항목을 쓰면 그 값을 먼저 채우고(호스트 설정이 우선),
+    /// 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
+    /// </summary>
     public HostEntry WithDefaults(CloudProfile? p)
     {
-        if (p == null || (!string.IsNullOrEmpty(Username) && !string.IsNullOrEmpty(ProtectedPassword))) return this;
-        var c = Clone();
+        var c = UsesVault ? VaultStore.Apply(Clone()) : this;
+        if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
+        if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;
         if (string.IsNullOrEmpty(c.ProtectedPassword)) c.ProtectedPassword = p.ProtectedDefaultPassword;
         return c;

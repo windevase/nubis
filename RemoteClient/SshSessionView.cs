@@ -37,6 +37,9 @@ public sealed class SshSessionView : UserControl, ISessionView
     private readonly GridSplitter _splitter;
     private SftpPanel? _sftp;
     private double _sftpWidth = 400;
+    private bool _sftpAutoTried;
+    /// <summary>셸이 OSC 7 로 마지막에 알려준 현재 폴더</summary>
+    private string? _lastCwd;
 
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
     public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
@@ -69,6 +72,19 @@ public sealed class SshSessionView : UserControl, ISessionView
         _term.Ready += () => { try { _shell?.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { } };
         _term.Resized += (c, r) => { try { _shell?.ChangeWindowSize(c, r, 0, 0); } catch { } };
         _term.Input += OnInput;
+        _term.CwdChanged += cwd =>
+        {
+            _lastCwd = cwd;
+            if (SettingsStore.Current.SftpFollowTerminal && _sftp is { IsVisible: true }) _ = _sftp.FollowAsync(cwd);
+        };
+    }
+
+    /// <summary>터미널 현재 폴더: OSC 7 로 받은 값, 없으면 화면 마지막 프롬프트에서 읽기</summary>
+    private async System.Threading.Tasks.Task<string?> TerminalCwdAsync()
+    {
+        if (_lastCwd != null) return _lastCwd;
+        var screen = await _term.ReadBufferAsync(5);
+        return XtermView.PromptPath(screen, _sftp?.Home ?? "/");
     }
 
     private FrameworkElement BuildToolStrip()
@@ -106,7 +122,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         {
             if (_sftp == null)
             {
-                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null);
+                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync);
                 _sftp.CloseRequested += () => ToggleSftp(false);
                 Grid.SetColumn(_sftp, 1);
                 ((Grid)Content).Children.Add(_sftp);
@@ -160,7 +176,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         var save = false;
 
         // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
-        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && string.IsNullOrWhiteSpace(_host.KeyPath)))
+        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey))
         {
             var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", user, _saveCredentials != null);
             if (cred == null)
@@ -227,7 +243,12 @@ public sealed class SshSessionView : UserControl, ISessionView
                 _host.Password = password;
                 Dispatcher.Invoke(() => _saveCredentials?.Invoke(user, password));
             }
-            Dispatcher.Invoke(() => { if (IsVisible) _term.FocusTerminal(); });
+            Dispatcher.Invoke(() =>
+            {
+                // 처음 로그인했을 때 SFTP 패널 자동 열기 (사용자가 닫은 뒤 재연결할 때는 다시 열지 않음)
+                if (!_sftpAutoTried && SettingsStore.Current.SftpAutoOpen) { _sftpAutoTried = true; ToggleSftp(true); }
+                if (IsVisible) _term.FocusTerminal();
+            });
         }
         catch (OperationCanceledException) when (_closed || gen != _gen)
         {

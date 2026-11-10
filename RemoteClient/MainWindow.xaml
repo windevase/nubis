@@ -201,6 +201,8 @@
                                          GroupName="nav" IsChecked="True" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavCloud" Style="{StaticResource NavItem}" Tag="&#xE753;" Content="Cloud"
                                          GroupName="nav" Checked="OnNavChanged"/>
+                            <RadioButton x:Name="NavVault" Style="{StaticResource NavItem}" Tag="&#xE8D7;" Content="Vault"
+                                         GroupName="nav" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavKnown" Style="{StaticResource NavItem}" Tag="&#xE72E;" Content="Known Hosts"
                                          GroupName="nav" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Tag="&#xE713;" Content="Settings"
@@ -337,6 +339,65 @@
                                        Foreground="{StaticResource SubText}" HorizontalAlignment="Center"/>
                         </StackPanel>
                     </Grid>
+                </Grid>
+
+                <!-- Vault 페이지 -->
+                <Grid x:Name="VaultPage" Grid.Column="1" Visibility="Collapsed" Margin="28,24,28,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid>
+                        <StackPanel Margin="0,0,160,0">
+                            <TextBlock Text="Vault" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock Text="여러 호스트가 함께 쓰는 로그인 계정(사용자명 + 비밀번호 / SSH 키)입니다. 호스트 편집의 '로그인 계정' 에서 고르면, 여기서 값을 바꿀 때 그 호스트들에 모두 적용됩니다. Windows DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀립니다."
+                                       Foreground="{StaticResource SubText}" Margin="0,6,0,18" TextWrapping="Wrap"/>
+                        </StackPanel>
+                        <Button Style="{StaticResource PrimaryButton}" Content="계정 추가" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Click="OnVaultAdd"/>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock x:Name="VaultEmpty" Text="아직 저장된 계정이 없습니다." Foreground="{StaticResource SubText}" Margin="0,8,0,0"/>
+                            <ItemsControl x:Name="VaultList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="16,12" Margin="0,0,0,8">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="34"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="18"
+                                                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"/>
+                                                        <Border Background="{StaticResource InputBg}" CornerRadius="5" Padding="6,1" Margin="8,0,0,0"
+                                                                VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding MethodsText}" FontSize="10.5" Foreground="{StaticResource SubText}"/>
+                                                        </Border>
+                                                        <TextBlock Text="{Binding UsedByText}" FontSize="11" Foreground="{StaticResource SubText}"
+                                                                   Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                    <TextBlock Text="{Binding Detail}" Foreground="{StaticResource SubText}" FontSize="12"
+                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Button Style="{StaticResource GhostButton}" Content="공개키 복사" Margin="0,0,8,0"
+                                                            Visibility="{Binding CopyVisibility}" Click="OnVaultCopyPublic"
+                                                            ToolTip="서버의 ~/.ssh/authorized_keys 에 붙여넣을 공개키"/>
+                                                    <Button Style="{StaticResource GhostButton}" Content="수정" Margin="0,0,8,0" Click="OnVaultEdit"/>
+                                                    <Button Style="{StaticResource DangerButton}" Content="삭제" Tag="#2A1A22" Click="OnVaultDelete"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
                 </Grid>
 
                 <!-- Known Hosts 페이지 -->
@@ -595,6 +656,33 @@
                             </TextBlock>
                         </CheckBox>
 
+                        <TextBlock Text="SFTP" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
+                        <CheckBox x:Name="SftpAutoOpenBox" Click="OnSftpOptionClick" Margin="0,0,0,10">
+                            <TextBlock>
+                                <Run Text="SSH 접속 시 SFTP 패널 자동 열기"/>
+                                <Run Text="  로그인에 성공하면 왼쪽에 원격 파일 목록을 붙인다" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <CheckBox x:Name="SftpFollowBox" Click="OnSftpOptionClick">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="터미널 폴더 따라가기"/>
+                                <Run Text="  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (셸이 현재 폴더를 알려줄 때 — OSC 7). 안 되면 패널의 터미널 버튼으로 이동" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <TextBlock Text="파일 편집기" Margin="0,16,0,4"/>
+                        <TextBlock Text="SFTP 파일을 더블클릭하면 이 프로그램으로 열고, 저장할 때마다 서버에 자동으로 올린다. 비우면 Windows 기본 프로그램"
+                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="SftpEditorBox" Tag="Windows 기본 프로그램" LostFocus="OnSftpEditorChanged"/>
+                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="VS Code" Margin="8,0,0,0" Height="38" Click="OnSftpEditorVsCode"/>
+                            <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="찾기" Margin="8,0,0,0" Height="38" Click="OnSftpEditorBrowse"/>
+                        </Grid>
+
                         <TextBlock Text="기본 포트" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
                         <TextBlock Text="새로 추가하는 호스트와 클라우드 동기화로 만들어지는 서버에 쓰는 포트. 프로필 설정에서 포트를 따로 지정한 프로필은 그 포트를 쓴다" Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
                         <StackPanel Orientation="Horizontal">
@@ -698,17 +786,50 @@
                                     <TextBlock Text="그룹" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="EdGroup" Tag="예: Production, Staging, Web"/>
 
-                                    <TextBlock Text="사용자명" Style="{StaticResource FieldLabel}"/>
+                                    <!-- 로그인: Vault 계정(선택) + 직접 입력(비우면 Vault 값) -->
+                                    <TextBlock Text="로그인 계정" Style="{StaticResource FieldLabel}"/>
+                                    <Border x:Name="VaultCard" Background="{StaticResource CardBg}" CornerRadius="8" Padding="12,10"
+                                            BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="26"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock x:Name="EdVaultGlyph" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}"
+                                                       FontSize="15" VerticalAlignment="Center"/>
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock x:Name="EdVaultName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock x:Name="EdVaultDetail" FontSize="11.5" Foreground="{StaticResource SubText}" Margin="0,2,0,0"
+                                                           TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                                                <Button Style="{StaticResource GhostButton}" Content="변경" Padding="10,4" FontSize="12" Margin="0,0,6,0"
+                                                        Click="OnPickVault"/>
+                                                <Button Style="{StaticResource GhostButton}" Content="해제" Padding="10,4" FontSize="12"
+                                                        Click="OnClearVault" ToolTip="Vault 계정을 쓰지 않고 아래에 직접 입력한 값만 사용"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <Button x:Name="VaultPickButton" Style="{StaticResource GhostButton}" Height="38" HorizontalAlignment="Stretch"
+                                            Click="OnPickVault">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                            <TextBlock Text="Vault 계정 선택  (선택 사항)" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <TextBlock x:Name="VaultHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+
+                                    <TextBlock x:Name="EdUserLabel" Text="사용자명" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="EdUser" Tag="예: ubuntu  /  DOMAIN\user"/>
 
-                                    <TextBlock Text="비밀번호" Style="{StaticResource FieldLabel}"/>
+                                    <TextBlock x:Name="EdPasswordLabel" Text="비밀번호" Style="{StaticResource FieldLabel}"/>
                                     <PasswordBox x:Name="EdPassword"/>
-                                    <TextBlock Text="비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다."
-                                               FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="PwHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
 
                                     <StackPanel x:Name="KeyPanel">
-                                        <TextBlock Text="개인키 (선택)" Style="{StaticResource FieldLabel}"/>
-                                        <Grid>
+                                        <TextBlock x:Name="EdKeyLabel" Text="개인키 파일 (선택)" Style="{StaticResource FieldLabel}"/>
+                                        <Grid x:Name="KeyFileRow">
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
@@ -717,8 +838,7 @@
                                             <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="찾기" Margin="8,0,0,0"
                                                     Height="38" Click="OnBrowseKey"/>
                                         </Grid>
-                                        <TextBlock Text="키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다."
-                                                   FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="KeyHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>

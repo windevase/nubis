@@ -15,13 +15,7 @@ public static class SshAuth
     public static ConnectionInfo Build(HostEntry host, string user, string password, int timeoutSec = 15)
     {
         var methods = new List<AuthenticationMethod>();
-        if (!string.IsNullOrWhiteSpace(host.KeyPath))
-        {
-            PrivateKeyFile key;
-            try { key = new PrivateKeyFile(host.KeyPath); }
-            catch (SshPassPhraseNullOrEmptyException) { key = new PrivateKeyFile(host.KeyPath, password); }
-            methods.Add(new PrivateKeyAuthenticationMethod(user, key));
-        }
+        if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
         if (!string.IsNullOrEmpty(password))
         {
             methods.Add(new PasswordAuthenticationMethod(user, password));
@@ -34,6 +28,24 @@ public static class SshAuth
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
         return new ConnectionInfo(host.Address, host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
+    }
+
+    /// <summary>
+    /// 개인키: Vault 키 내용이 있으면 그것, 없으면 키 파일. 키에 암호가 걸려 있으면
+    /// Vault 에 저장한 키 암호 → (없으면) 비밀번호 순으로 쓴다.
+    /// </summary>
+    private static PrivateKeyFile? LoadKey(HostEntry host, string password)
+    {
+        if (!string.IsNullOrEmpty(host.KeyMaterial))
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(host.KeyMaterial);
+            var pass = !string.IsNullOrEmpty(host.KeyPassphrase) ? host.KeyPassphrase : password;
+            try { return new PrivateKeyFile(new System.IO.MemoryStream(bytes)); }
+            catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(new System.IO.MemoryStream(bytes), pass); }
+        }
+        if (string.IsNullOrWhiteSpace(host.KeyPath)) return null;
+        try { return new PrivateKeyFile(host.KeyPath); }
+        catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(host.KeyPath, password); }
     }
 
     public static string HostKeyId(HostEntry h) => $"{h.Address}:{h.Port}";
@@ -79,7 +91,7 @@ public static class SshExec
         var sw = Stopwatch.StartNew();
         try
         {
-            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && string.IsNullOrWhiteSpace(h.KeyPath)))
+            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
                 return new ExecResult(h, false, null, "", "저장된 계정 정보가 없습니다 (호스트 또는 클라우드 프로필 설정에 계정 저장 필요)", sw.ElapsedMilliseconds);
 
             // 시도 순서: 사설 IP → 공인 IP. 연결이 안 될 때만 다음 주소로 (인증 실패·호스트키 불일치는 바로 중단)
@@ -127,6 +139,38 @@ public static class SshExec
         {
             return new ExecResult(h, false, null, "", ex.Message, sw.ElapsedMilliseconds);
         }
+    }
+
+    /// <summary>
+    /// 비대화형 SFTP 연결 (Claude sftp_* 도구용). 사설 → 공인 주소 순으로, 연결 실패일 때만 다음 주소.
+    /// 인증 실패·호스트키 불일치는 바로 중단한다. 실패하면 사유를 담은 InvalidOperationException.
+    /// </summary>
+    public static SftpClient OpenSftp(HostEntry h, int timeoutSec = 15)
+    {
+        if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
+            throw new InvalidOperationException("저장된 계정 정보가 없습니다 (호스트·Vault·클라우드 프로필 설정에 계정 저장 필요)");
+        var errors = new List<string>();
+        foreach (var addr in h.AddressCandidates())
+        {
+            var target = h.Clone();
+            target.Address = addr;
+            var c = new SftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec));
+            string? hostKeyError = null;
+            c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
+            try
+            {
+                c.Connect();
+                return c;
+            }
+            catch (Exception ex)
+            {
+                c.Dispose();
+                if (hostKeyError != null) throw new InvalidOperationException($"{addr}: {hostKeyError}");
+                if (ex is SshAuthenticationException) throw new InvalidOperationException($"{addr}: 인증 실패 — {ex.Message}");
+                errors.Add($"{addr} {ex.Message}");
+            }
+        }
+        throw new InvalidOperationException("SFTP 연결 실패 — " + string.Join(" / ", errors));
     }
 
     private static string Trim(string? s)

@@ -21,10 +21,11 @@
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Style="{StaticResource IconButton}" Content="&#xE74A;" Click="OnUp" ToolTip="상위 폴더 (Backspace)"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE80F;" Click="OnHome" ToolTip="홈 폴더"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE756;" Click="OnTerminalCwd" ToolTip="터미널의 현재 폴더로 이동"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE72C;" Click="OnRefresh" ToolTip="새로고침 (F5)"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE8F4;" Click="OnNewFolder" ToolTip="새 폴더"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE898;" Click="OnUploadClick" ToolTip="업로드 (탐색기에서 끌어다 놓아도 됩니다)"/>
-                    <Button Style="{StaticResource IconButton}" Content="&#xE896;" Click="OnDownloadClick" ToolTip="선택 항목 다운로드"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE896;" Click="OnDownloadClick" ToolTip="선택 항목 다운로드 (탐색기로 끌어다 놓아도 됩니다)"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="9" Click="OnClose" ToolTip="닫기"/>
                 </StackPanel>
             </Grid>
@@ -46,16 +47,18 @@
             <TextBlock Grid.Column="2" Text="수정한 날짜" Foreground="{StaticResource SubText}" FontSize="11.5" Margin="12,0,0,0"/>
         </Grid>
 
-        <!-- 파일 목록 (끌어다 놓아 업로드) -->
+        <!-- 파일 목록 (끌어다 놓아 업로드 · 탐색기로 끌어내 다운로드) -->
         <Grid Grid.Row="3">
             <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}" SelectionMode="Extended"
                      AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" DragLeave="OnDragLeave"
+                     PreviewMouseLeftButtonDown="OnListMouseDown" PreviewMouseMove="OnListMouseMove" PreviewMouseLeftButtonUp="OnListMouseUp"
                      MouseDoubleClick="OnItemDoubleClick" KeyDown="OnListKeyDown"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="열기" Click="OnOpenItem"/>
+                        <MenuItem Header="편집 (저장하면 서버에 반영)" Click="OnOpenItem"/>
+                        <MenuItem Header="읽기 전용 사본 열기" Click="OnOpenCopy"/>
                         <MenuItem Header="다운로드..." Click="OnDownloadClick"/>
                         <MenuItem Header="이름 변경" Click="OnRename"/>
                         <MenuItem Header="삭제" Click="OnDelete"/>

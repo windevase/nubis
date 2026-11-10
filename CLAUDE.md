@@ -36,6 +36,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 | `SshExec.cs` / `WinRm.cs` | 여러 서버 비대화형 명령 실행 (SSH / WinRM 직접 구현: 5986 HTTPS → 5985 HTTP+NTLM 암호화) |
 | `Cloud.cs` | 클라우드 프로필, 제공자 4종(AWS SDK, Tencent TC3 직접 서명, GCP·Azure REST), `CloudSync.Apply` 병합, `CloudPaths` |
 | `Models.cs` / `Storage.cs` | 호스트 모델, JSON 저장(`SafeFile`), DPAPI(`Secret`), known_hosts, 설정 |
+| `Vault.cs` | Vault 계정(사용자명 + 비밀번호/SSH 키, `vault.json`). 호스트는 `VaultId` 하나로 참조하고, `WithDefaults` 가 접속용 사본에만 값을 채운다 — 호스트에 직접 적은 값 우선(`KeyMaterial`·`KeyPassphrase` 는 `[JsonIgnore]`). 예전 분리형(`Kind`/`ProtectedSecret`, `VaultPasswordId`/`VaultKeyId`)은 읽을 때 변환 |
 | `*Dialog.xaml` | 앱 테마 대화상자. **`MessageBox.Show` 대신 `Dialog.Show`** (같은 인자 순서) |
 | `tools\IconGen` | 앱 아이콘을 WPF 로 그려 `Assets\nubis.ico/png` 생성 |
 
@@ -43,7 +44,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 
 - 사용자 데이터: `%APPDATA%\Nubis\` (`hosts.json`, `cloud_profiles.json`, `known_hosts.json`, `settings.json`, `claude\`, `claude_audit.log`). 저장소(`E:\remote client`)에는 데이터가 없다.
 - 캐시: `%LOCALAPPDATA%\Nubis\WebView2\`
-- `NUBIS_DATA_DIR` 환경변수로 데이터 폴더를 바꿀 수 있다 → **테스트는 반드시 이걸로 별도 폴더에서** 한다.
+- `NUBIS_DATA_DIR` 환경변수로 데이터 폴더를 바꿀 수 있다 → **테스트는 반드시 이걸로 별도 폴더에서** 한다. xUnit 은 `VaultTests.cs` 의 `[ModuleInitializer]` 가 임시 폴더로 지정한다.
 - 구 폴더 `%APPDATA%\RemoteClient` 는 시작 시 자동 이전.
 
 ## 반드시 지킬 것

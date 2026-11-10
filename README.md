@@ -14,6 +14,7 @@
 | SSH | [SSH.NET](https://github.com/sshnet/SSH.NET) + WebView2 위의 [xterm.js](https://xtermjs.org/) |
 | RDP | Windows 내장 RDP ActiveX(`mstscax.dll`, mstsc 와 같은 엔진)를 `WindowsFormsHost` 로 임베드 |
 | 저장 | `%APPDATA%\Nubis\hosts.json`. 비밀번호는 Windows DPAPI(현재 사용자)로 암호화 |
+| Vault | `%APPDATA%\Nubis\vault.json`. 여러 호스트가 함께 쓰는 비밀번호·SSH 개인키(+키 암호)를 DPAPI 로 암호화해 저장 |
 | 호스트키 | `%APPDATA%\Nubis\known_hosts.json` (SHA256 지문). 처음 접속은 확인 없이 저장(Settings 에서 확인 창 켜기 가능), 키가 바뀌면 항상 경고 |
 | SFTP | SSH.NET SftpClient (터미널과 같은 계정으로 별도 연결) |
 | 이전 데이터 | 처음 실행 시 `%APPDATA%\RemoteClient` 를 `%APPDATA%\Nubis` 로 자동 이전 (옮기지 못하면 빠진 파일만 복사) |
@@ -39,6 +40,8 @@ RemoteClient/            (프로젝트: Nubis.csproj)
   TerminalThemes.cs      터미널 색 테마 11종 (ANSI 16색 팔레트)
   Cloud.cs               클라우드 프로필 모델, AWS/Tencent/GCP/Azure 조회, 동기화 병합
   ProfileDialog.xaml     클라우드 프로필 설정 (기본 계정·포트·주소 방식)
+  Vault.cs               Vault 항목(비밀번호·SSH 키) 모델·저장, 접속용 사본에 값 채우기
+  VaultEntryDialog.xaml  Vault 항목 추가·수정 / VaultPickerDialog.xaml 호스트 편집에서 항목 선택
   Models.cs / Storage.cs 호스트 모델, JSON 저장, DPAPI, known_hosts, 설정(settings.json)
   wwwroot/               terminal.html + xterm.js 5.5 (오프라인 번들)
   Assets/                nubis.ico, nubis-256.png
@@ -71,6 +74,13 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 - **RDP 설정**: mstsc 기본 설정 파일(`문서\Default.rdp`)을 그대로 따른다 — 연결 품질(자동 감지), 색 깊이, 화면 효과, 클립보드·프린터·드라이브·스마트카드 리디렉션, 소리, Windows 키 전달, 자동 재연결. 파일이 없으면 mstsc 기본값. 서버 인증서 경고만 Nubis 설정(기본: 확인할 수 없으면 경고. 자체 서명 인증서 환경이면 Settings 에서 꺼서 바로 접속)을 따른다
 - **바로가기**: `Nubis.exe --connect "호스트이름"` 으로 시작하면서 바로 접속
 - **Cloud**: 클라우드 계정의 서버를 프로필 그룹으로 가져온다 (아래 참고)
+- **Vault**: 여러 서버가 함께 쓰는 로그인 계정을 한 곳에 저장해 두고 호스트에서 골라 쓴다
+  - Vault 계정 = 사용자명 + 비밀번호 및/또는 SSH 개인키(+키 암호). 사이드바 *Vault* → "계정 추가" (키는 파일에서 가져오거나 내용 붙여넣기, OpenSSH·PuTTY .ppk·PEM). 저장할 때 키를 읽어 보고 공개키를 만들어 둔다 → "공개키 복사" 로 서버 `~/.ssh/authorized_keys` 에 등록
+  - 호스트 편집 *로그인 계정* 에서 Vault 계정을 고르면 카드에 "사용자 root · 비밀번호 · ssh-ed25519 키" 처럼 무엇으로 로그인하는지 표시. 아래 사용자명·비밀번호·키 파일 칸은 그대로 쓸 수 있고, **비워 두면 Vault 값, 적으면 그 값이 우선**
+  - RDP 는 Vault 계정의 사용자명·비밀번호만 쓴다 (키는 무시)
+  - Vault 계정의 값을 바꾸면 그 계정을 쓰는 모든 호스트에 적용
+  - Vault 비밀번호로 접속하던 호스트에서 인증이 실패해 새 비밀번호를 입력·저장하면 그 Vault 계정이 갱신된다
+  - 계정을 지우면 쓰던 호스트에서 연결이 해제된다 (삭제 전 목록 표시)
 - **Settings**: 터미널 테마(다크 9종 + 라이트 2종), 글꼴, 글꼴 크기. 열려 있는 터미널에 즉시 반영
   - *구문 강조*: IP 주소(CIDR·포트 포함), 숫자(단위 포함), 상태 키워드(error/warn/ok 및 한글 오류·경고·성공)에 색을 덧입힘. 출력 데이터는 변경하지 않고, 서버가 색을 지정한 글자와 vim·htop 같은 전체 화면 프로그램은 제외
   - *터미널 GPU 가속*: 기본 꺼짐 (WebView2 메모리 약 70MB 절약). 대량 출력이 잦으면 켠다 — 앱 재시작 후 적용
@@ -108,6 +118,7 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 - 이 PC 의 `claude` CLI 를 로컬 터미널(ConPTY)로 실행 — 로그인·모델·슬래시 명령 등 CLI 기능 그대로 (처음엔 `/login`)
 - 앱이 내장 MCP 서버(`127.0.0.1`, 실행마다 새 토큰)를 열고 `--mcp-config` 로 자동 연결
 - 작업 폴더: `%APPDATA%\Nubis\claude` (여기 `CLAUDE.md` 는 자유롭게 수정 가능)
+- **지금 보고 있는 탭을 자동으로 알려줌**: 탭을 바꾸거나 연결 상태가 바뀔 때마다 앱이 `claude\active-session.txt` 에 현재 탭(session_id·제목·SSH/RDP·주소·상태, 계정 정보 없음)을 써 두고, Claude Code 의 `UserPromptSubmit` hook 이 메시지를 보낼 때마다 그 한 줄을 질문에 붙인다. 그래서 탭을 옮긴 뒤 "이 에러 뭐야?" 라고만 해도 Claude 가 그 탭을 본다
 
 | MCP 도구 | 기능 | 승인 |
 |---|---|---|
@@ -118,13 +129,21 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 | `capture_screen` | 탭 화면을 이미지로 캡처 (RDP 화면을 Claude 가 직접 봄). 가려진 탭은 그 탭으로 전환 후 캡처 | - |
 | `close_session` | 탭 닫기 | - |
 | `diagnostics` | 앱 메모리·핸들·스레드 수 (누수 점검용) | - |
+| `list_vault` | Vault 계정 목록 (이름·사용자명·로그인 방식만, 비밀 값 없음) | - |
+| `add_host` / `update_host` / `delete_host` | "10.0.1.5 를 web-01 로 Production 에 추가하고 운영 root 계정 연결" — 비밀번호는 못 넣고 Vault 계정 연결만. 클라우드 호스트는 주소·그룹 변경 불가 | **앱 승인 창** (항상 — 주소·Vault 를 바꿔 계정이 다른 서버로 가는 것 방지) |
+| `test_connection` | 접속 안 될 때: 주소별(사설→공인) DNS, TCP 포트, SSH 배너, RDP 호스트는 WinRM 5986/5985 (로그인 안 함) | - |
+| `wait_for_output` | 터미널에 특정 문자열이 나오거나 출력이 멈출 때까지 기다린 뒤 결과 반환 (`send_to_terminal` 다음에) | - |
+| `sftp_list` / `sftp_read` | 원격 폴더 목록·텍스트 파일 읽기 (로그 끝부분 `tail`, 바이너리 거부) | `run_command` 와 같음 (읽기 전용 자동 승인 설정 따름) |
+| `sftp_download` / `sftp_upload` | 다운로드는 `다운로드\Nubis\<호스트>` 로만(덮어쓰지 않음), 업로드는 Nubis 데이터 폴더·`~/.ssh`·개인키 파일 거부 | **앱 승인 창** (항상) |
+| `cloud_sync` | 클라우드 프로필 서버 목록 다시 가져오기 (조회 API 만) | - |
+| `get_settings` / `update_settings` | "테마 dracula 로, 글꼴 16" 처럼 앱 설정 조회·변경 (테마·글꼴·구문 강조·GPU·기본 포트) | 보안 설정(RDP 인증서 경고·호스트키 확인 창·자동 승인)만 **앱 승인 창**. 자동 승인은 Claude 가 켤 수 없고 끄기만 가능 |
 | `run_command` | 여러 서버 병렬 실행 — 리눅스 SSH / Windows WinRM(PowerShell·cmd) | **앱 승인 창** (설정 시 읽기 전용 명령은 생략) |
 | `send_to_terminal` | 열린 터미널에 입력 | **앱 승인 창** (항상) |
 
 - 승인 창: 대상 서버·명령 전체 표시, 위험 명령(rm -rf, reboot, Stop-Service 등) 경고, 뜬 직후 1.5초간 실행 버튼 잠금, Esc = 거부
 - **읽기 전용 명령 자동 승인** (Settings → Claude, 기본 꺼짐): `run_command` 중 조회 명령만 승인 창 없이 실행. 허용 목록 방식 — 리눅스 `ls/cat/grep/df/ps/ss/journalctl`, `systemctl status`, `docker ps`, `kubectl get` 등 / PowerShell `Get-*`·`Select-/Where-/Sort-/Format-*`·`Test-*` / cmd·공통 `ipconfig`, `sc query`, `reg query`, `netstat`, `tasklist` 등. 파일로 출력(`>`), 명령 치환(`$( )`, 백틱), 메서드·.NET 호출, `Invoke-*`, 목록에 없는 명령·쓰기 옵션(`systemctl restart`, `find -delete`, `ipconfig /release` …)이 하나라도 있으면 승인 창. 위험 명령은 항상 승인. 자동 실행도 감사 로그에 "자동 승인(읽기 전용)" 으로 남음
 - 모든 요청은 `%APPDATA%\Nubis\claude_audit.log` 에 기록 (패널 헤더의 문서 아이콘)
-- **저장된 계정 보호**: 패널의 Claude 는 계정·암호가 든 `hosts.json`·`cloud_profiles.json` 을 읽을 수 없다 (Read 도구, 그 파일 이름이 들어간 셸 명령, DPAPI 복호화 명령을 `claude --settings` 거부 규칙으로 차단). 감사 로그·MCP 설정은 수정 불가. 같은 Windows 계정에서 도는 프로그램이라 완전한 격리는 아니며, 암호 자체는 DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀린다
+- **저장된 계정 보호**: 패널의 Claude 는 계정·암호·키가 든 `hosts.json`·`cloud_profiles.json`·`vault.json` 을 읽을 수 없다 (Read 도구, 그 파일 이름이 들어간 셸 명령, DPAPI 복호화 명령을 `claude --settings` 거부 규칙으로 차단). 감사 로그·MCP 설정·`settings.json` 은 수정 불가 (앱 설정은 `update_settings` 의 검증·승인을 거쳐서만 바뀜). 같은 Windows 계정에서 도는 프로그램이라 완전한 격리는 아니며, 암호 자체는 DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀린다
 - `group:Production` 처럼 그룹 전체 지정 가능, 중지된 서버는 자동 제외
 
 ### WinRM (Windows 서버 명령 실행)
@@ -137,11 +156,20 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 
 ## SFTP 파일 전송
 
-SSH 탭 왼쪽 도구 막대의 폴더 버튼으로 SFTP 패널을 연다 (경계선을 끌어 폭 조절).
+SSH 로그인에 성공하면 왼쪽에 SFTP 패널이 자동으로 붙는다 (Settings → SFTP 에서 끌 수 있음. 도구 막대의 폴더 버튼으로 열고 닫기, 경계선을 끌어 폭 조절).
+
+- **편집 → 저장하면 서버에 반영**: 파일 더블클릭(또는 우클릭 "편집")으로 편집기에서 열고, 저장할 때마다 내용이 바뀌었으면 같은 경로로 자동 업로드 (패널 아래에 "저장됨 → 서버에 올림" 표시). 편집기는 Settings → SFTP 에서 지정 (비우면 Windows 기본 프로그램, "VS Code" 버튼으로 바로 지정). VS Code 로 열면 그 창의 Claude Code 로 고친 내용도 저장하는 순간 서버에 올라간다
+  - 편집하는 동안 서버의 파일이 바뀌었으면(수정 시각·크기) 덮어쓸지 묻는다 (아니요 = 이번 저장은 올리지 않음)
+  - 같은 파일을 다시 열면 받은 사본을 그대로 연다 (편집 중인 내용 유지). 탭을 닫으면 감시를 멈춘다
+  - 우클릭 "읽기 전용 사본 열기" = 예전처럼 임시 폴더로 받아 열기만
+- **터미널 폴더 따라가기**: 셸이 현재 폴더를 알려주면(OSC 7) 터미널에서 `cd` 할 때 패널도 그 폴더로. 알려주지 않는 셸은 패널의 터미널 아이콘 버튼으로 이동 (프롬프트 `user@host:/경로$` 에서 읽음)
+  - 서버에서 OSC 7 켜기 (bash): `~/.bashrc` 에 `PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"'`
 
 - 탐색: 경로 직접 입력, 폴더 더블클릭, 상위(Backspace)·홈·새로고침(F5)
-- **업로드**: 탐색기에서 파일·폴더를 끌어다 놓기 (폴더는 하위까지) 또는 업로드 버튼. 이미 있으면 덮어쓰기 확인
-- **다운로드**: 선택 후 다운로드 버튼 → 폴더 선택 (기본: 다운로드 폴더). 파일 더블클릭 = 임시 폴더로 받아 기본 프로그램으로 열기
+- **업로드**: 탐색기에서 파일·폴더를 끌어다 놓기 (폴더는 하위까지) 또는 업로드 버튼. 목록의 폴더 행 위에 놓으면 그 폴더로 올린다. 이미 있으면 덮어쓰기 확인
+- **다운로드**: 선택한 항목을 탐색기(바탕화면 등)로 끌어내기, 또는 다운로드 버튼 → 폴더 선택 (기본: 다운로드 폴더). 파일 더블클릭 = 임시 폴더로 받아 기본 프로그램으로 열기
+  - 끌어내기는 마우스를 놓는 순간 받기 시작한다 (진행률·취소는 SFTP 패널 아래에 표시, 받는 동안 탐색기는 기다린다)
+  - 다른 SSH 탭의 SFTP 패널로 끌어다 놓으면 서버 간 복사 (이 PC 임시 폴더를 거친다)
 - 우클릭: 열기·다운로드·이름 변경(F2)·삭제(Delete, 폴더는 하위까지)·새 폴더·경로 복사
 - 전송 진행률 표시, 취소 가능
 - 인증: 터미널 세션이 로그인에 성공한 계정을 그대로 사용
@@ -160,5 +188,4 @@ SSH 탭 왼쪽 도구 막대의 폴더 버튼으로 SFTP 패널을 연다 (경�
 
 - RDP 화면에 포커스가 있으면 `Ctrl+Tab` 은 원격으로 전달된다 (탭 클릭으로 전환)
 - 포트 포워딩, 점프 호스트, RDP 게이트웨이는 아직 없음
-- SFTP 패널 → 탐색기로 끌어내기(drag-out)는 미지원 (다운로드 버튼 사용)
 - 데이터 폴더 이름이 바뀌어 Claude 패널 작업 폴더 신뢰 확인이 한 번 더 뜬다

@@ -471,6 +471,17 @@ public class SftpPathTests
     [InlineData(1536, "1.5 KB")]
     [InlineData(5L * 1024 * 1024, "5 MB")]
     public void 크기_표시(long bytes, string expected) => Assert.Equal(expected, SftpPanel.HumanSize(bytes));
+
+    [Fact]
+    public void 끌어내기_대상_경로는_안전한_이름이고_겹치지_않는다()
+    {
+        var dir = @"C:\tmp\drag";
+        var result = SftpPanel.DragTargets(new[] { "a:b.log", "a_b.log", "A_B.log", "..", "logs" }, dir);
+        Assert.Equal(new[]
+        {
+            @"C:\tmp\drag\a_b.log", @"C:\tmp\drag\a_b (1).log", @"C:\tmp\drag\A_B (2).log", @"C:\tmp\drag\_", @"C:\tmp\drag\logs",
+        }, result);
+    }
 }
 
 public class RdpDefaultsTests
@@ -558,5 +569,47 @@ public class ClaudeGuardTests
         Assert.DoesNotContain("Read(//c/Users/a/AppData/Roaming/Nubis/claude_audit.log*)", rules);
         using var doc = System.Text.Json.JsonDocument.Parse(ClaudeGuard.BuildSettingsJson(@"C:\Users\a\AppData\Roaming\Nubis"));
         Assert.Equal(rules.Count, doc.RootElement.GetProperty("permissions").GetProperty("deny").GetArrayLength());
+    }
+
+    [Fact]
+    public void 현재_화면_hook_은_UserPromptSubmit_으로_파일을_출력한다()
+    {
+        var json = ClaudeGuard.BuildSettingsJson(@"C:\Users\a\AppData\Roaming\Nubis", @"C:\Users\a\AppData\Roaming\Nubis\claude\active-session.txt");
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var hook = doc.RootElement.GetProperty("hooks").GetProperty("UserPromptSubmit")[0].GetProperty("hooks")[0];
+        Assert.Equal("command", hook.GetProperty("type").GetString());
+        var cmd = hook.GetProperty("command").GetString()!;
+        Assert.StartsWith("powershell.exe ", cmd);
+        Assert.Contains("'C:/Users/a/AppData/Roaming/Nubis/claude/active-session.txt'", cmd);   // 백슬래시 대신 슬래시
+        Assert.DoesNotContain("\\", cmd);
+        Assert.DoesNotContain("$", cmd);   // bash 큰따옴표 안에서 변수로 해석되지 않게
+        Assert.Contains("UTF8", cmd);
+        // 파일 경로의 작은따옴표는 PowerShell 문자열 규칙대로 두 번
+        Assert.Contains("'C:/it''s/active-session.txt'", ClaudeGuard.ContextHookCommand(@"C:\it's\active-session.txt"));
+        // Claude 가 현재 화면 파일을 고쳐 쓰지 못하게
+        Assert.Contains("Edit(//c/Users/a/AppData/Roaming/Nubis/claude/active-session.txt)", ClaudeGuard.DenyRules(@"C:\Users\a\AppData\Roaming\Nubis"));
+    }
+
+    [Fact]
+    public void 현재_화면_문구는_탭_정보를_한_줄로_담는다()
+    {
+        var ssh = MainWindow.ActiveContextText(5, "웹서버-01\n\"x\"", Protocol.Ssh, "10.0.1.5", 22, SessionStatus.Connected, 3);
+        Assert.StartsWith("[Nubis 현재 화면]", ssh);
+        Assert.Contains("session_id=5", ssh);
+        Assert.Contains("\"웹서버-01 'x'\"", ssh);
+        Assert.Contains("10.0.1.5:22", ssh);
+        Assert.Contains("연결됨", ssh);
+        Assert.Contains("read_terminal", ssh);
+        Assert.DoesNotContain("\n", ssh);
+
+        var rdp = MainWindow.ActiveContextText(7, "win-01", Protocol.Rdp, "10.0.2.7", 3389, SessionStatus.Disconnected, 1);
+        Assert.Contains("RDP", rdp);
+        Assert.Contains("capture_screen", rdp);
+        Assert.DoesNotContain("read_terminal", rdp);
+        Assert.Contains("끊김", rdp);
+
+        var home = MainWindow.ActiveContextText(null, "", Protocol.Local, null, 0, SessionStatus.Disconnected, 2);
+        Assert.Contains("홈", home);
+        Assert.DoesNotContain("session_id=", home);
     }
 }

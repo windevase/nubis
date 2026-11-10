@@ -1,0 +1,74 @@
+<Window x:Class="Nubis.VaultPickerDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Vault 선택" Width="460" Height="460" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <DockPanel Margin="24,22,24,22">
+            <TextBlock x:Name="TitleText" DockPanel.Dock="Top" FontSize="17" FontWeight="SemiBold"/>
+            <TextBlock x:Name="SubText" DockPanel.Dock="Top" Foreground="{StaticResource SubText}" Margin="0,6,0,12" TextWrapping="Wrap"/>
+
+            <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
+                <Button Content="새로 만들기" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnCreate"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="취소" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
+                    <Button Content="선택" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid>
+                <ListBox x:Name="EntryList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="OnItemDoubleClick">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="bd" Background="{StaticResource CardBg}" CornerRadius="8" Padding="12,9" Margin="0,0,0,6"
+                                                BorderThickness="1" BorderBrush="Transparent">
+                                            <ContentPresenter/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="26"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Glyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}"
+                                           VerticalAlignment="Center"/>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock Text="{Binding Name, Mode=OneTime}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Detail, Mode=OneTime}" Foreground="{StaticResource SubText}" FontSize="11.5"
+                                               Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock x:Name="EmptyText" Text="저장된 계정이 없습니다. '새로 만들기' 로 추가하세요." Foreground="{StaticResource SubText}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed"/>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>

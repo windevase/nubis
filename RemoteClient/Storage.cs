@@ -118,8 +118,14 @@ public static class HostStore
         Converters = { new JsonStringEnumConverter() },
     };
 
-    public static List<HostEntry> Load() =>
-        SafeFile.Load(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>());
+    public static List<HostEntry> Load()
+    {
+        var hosts = SafeFile.Load(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>());
+        var migrated = false;
+        foreach (var h in hosts) migrated |= h.MigrateLegacyVault();
+        if (migrated) { try { Save(hosts); } catch { } }
+        return hosts;
+    }
 
     public static void Save(IEnumerable<HostEntry> hosts) =>
         SafeFile.WriteAtomic(AppPaths.HostsFile, JsonSerializer.Serialize(hosts, Options));
@@ -147,6 +153,12 @@ public sealed class AppSettings
     /// <summary>새 호스트·새 클라우드 프로필에 넣을 기본 포트 (서버들이 비표준 포트를 쓰는 환경이면 바꿔 둔다)</summary>
     public int DefaultSshPort { get; set; } = 22;
     public int DefaultRdpPort { get; set; } = 3389;
+    /// <summary>SSH 로그인에 성공하면 SFTP 패널을 자동으로 연다</summary>
+    public bool SftpAutoOpen { get; set; } = true;
+    /// <summary>터미널에서 cd 하면 SFTP 패널도 그 폴더로 (셸이 OSC 7 로 현재 경로를 알려줄 때)</summary>
+    public bool SftpFollowTerminal { get; set; } = true;
+    /// <summary>SFTP 파일 편집에 쓸 프로그램 (비우면 Windows 기본 프로그램). Claude 는 바꿀 수 없다</summary>
+    public string SftpEditor { get; set; } = "";
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 }

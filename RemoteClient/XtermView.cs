@@ -31,6 +31,40 @@ public sealed class XtermView : UserControl
     /// <summary>사용자 키 입력 (UTF-16 문자열)</summary>
     public event Action<string>? Input;
     public event Action<uint, uint>? Resized;
+    /// <summary>셸이 OSC 7 로 알려준 현재 폴더 (원격 경로)</summary>
+    public event Action<string>? CwdChanged;
+
+    /// <summary>"file://host/home/a%20b" → "/home/a b". 형식이 아니면 null</summary>
+    public static string? ParseOsc7(string data)
+    {
+        if (!data.StartsWith("file://", StringComparison.OrdinalIgnoreCase)) return null;
+        var rest = data[7..];
+        var slash = rest.IndexOf('/');
+        if (slash < 0) return null;
+        try { return Uri.UnescapeDataString(rest[slash..]); }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 프롬프트에서 현재 폴더 읽기 (OSC 7 이 없을 때): "user@host:~/app$ " / "root@web:/etc# " 형식.
+    /// ~ 는 home 으로 바꾼다. 경로를 알 수 없는 프롬프트(예: "[user@host app]$")면 null.
+    /// </summary>
+    public static string? PromptPath(string screen, string home)
+    {
+        var lines = screen.Replace("\r", "").Split('\n');
+        for (var i = lines.Length - 1; i >= 0 && i >= lines.Length - 5; i--)
+        {
+            var line = lines[i].TrimEnd();
+            if (line.Length == 0) continue;
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"^(?:\([^)]*\)\s*)?[^@\s]+@[^:\s]+:(?<p>~[^\s]*|/[^\s]*)\s*[$#]$");
+            if (!m.Success) return null;
+            var p = m.Groups["p"].Value;
+            if (p == "~") return home;
+            if (p.StartsWith("~/")) return home.TrimEnd('/') + p[1..];
+            return p;
+        }
+        return null;
+    }
 
     /// <summary>터미널에 포커스가 있어도 앱이 처리해야 하는 단축키 (nexttab, prevtab, claude, localterm)</summary>
     public static event Action<string>? Hotkey;
@@ -144,6 +178,10 @@ public sealed class XtermView : UserControl
 
             case "hotkey":
                 Hotkey?.Invoke(m.GetProperty("k").GetString() ?? "");
+                break;
+
+            case "cwd":
+                if (ParseOsc7(m.GetProperty("d").GetString() ?? "") is { } cwd) CwdChanged?.Invoke(cwd);
                 break;
         }
     }

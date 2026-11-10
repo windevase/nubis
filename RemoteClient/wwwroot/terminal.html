@@ -39,6 +39,8 @@
   const post = m => window.chrome.webview.postMessage(m);
 
   term.onData(d => post({ t: 'in', d }));
+  // 셸이 알려주는 현재 폴더 (OSC 7: ESC ] 7 ; file://host/path BEL) → SFTP 패널이 따라감
+  term.parser.registerOscHandler(7, data => { post({ t: 'cwd', d: data }); return true; });
   term.onResize(({ cols, rows }) => post({ t: 'resize', cols, rows }));
   new ResizeObserver(() => { try { fit.fit(); } catch (e) { } }).observe(el);
 

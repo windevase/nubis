@@ -315,12 +315,24 @@ public partial class MainWindow : Window
             ? $"'{h.DisplayName}' 을(를) 목록에서 지울까요?\n클라우드의 서버는 그대로이며, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.\n(프로필 설정에서 숨김을 해제할 수 있습니다)"
             : $"'{h.DisplayName}' 호스트를 삭제할까요?";
         if (Dialog.Show(this, msg, "삭제 확인", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        if (profile != null && h.CloudInstanceId != null && !profile.HiddenInstances.Contains(h.CloudInstanceId))
+        RemoveHosts(new[] { h });
+    }
+
+    /// <summary>확인 없이 삭제 (확인은 호출하는 쪽에서). 클라우드 호스트는 다음 동기화에서도 다시 나타나지 않게 숨긴다</summary>
+    private void RemoveHosts(IEnumerable<HostEntry> hosts)
+    {
+        var profilesChanged = false;
+        foreach (var h in hosts.ToList())
         {
-            profile.HiddenInstances.Add(h.CloudInstanceId);
-            SaveProfiles();
+            var profile = h.IsCloud ? _profiles.FirstOrDefault(p => p.Id == h.CloudProfileId) : null;
+            if (profile != null && h.CloudInstanceId != null && !profile.HiddenInstances.Contains(h.CloudInstanceId))
+            {
+                profile.HiddenInstances.Add(h.CloudInstanceId);
+                profilesChanged = true;
+            }
+            _hosts.Remove(h);
         }
-        _hosts.Remove(h);
+        if (profilesChanged) SaveProfiles();
         SaveHosts();
         UpdateProfileCounts();
         RefreshHosts();
@@ -332,16 +344,83 @@ public partial class MainWindow : Window
 
     private void OnNavChanged(object sender, RoutedEventArgs e)
     {
-        if (HostsPage == null || SettingsPage == null || CloudPage == null) return;   // InitializeComponent 중
+        if (HostsPage == null || SettingsPage == null || CloudPage == null || VaultPage == null) return;   // InitializeComponent 중
         var known = NavKnown.IsChecked == true;
         var settings = NavSettings.IsChecked == true;
         var cloud = NavCloud.IsChecked == true;
-        HostsPage.Visibility = !known && !settings && !cloud ? Visibility.Visible : Visibility.Collapsed;
+        var vault = NavVault.IsChecked == true;
+        HostsPage.Visibility = !known && !settings && !cloud && !vault ? Visibility.Visible : Visibility.Collapsed;
         KnownPage.Visibility = known ? Visibility.Visible : Visibility.Collapsed;
         CloudPage.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+        VaultPage.Visibility = vault ? Visibility.Visible : Visibility.Collapsed;
         if (known) RefreshKnownHosts();
         if (settings) RefreshSettingsPage();
+        if (vault) RefreshVault();
+    }
+
+    // =================== Vault ===================
+
+    private void RefreshVault()
+    {
+        var entries = VaultStore.All();
+        foreach (var v in entries)
+            v.UsedBy = _hosts.Count(h => h.VaultId == v.Id);
+        VaultList.ItemsSource = entries;
+        VaultEmpty.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnVaultAdd(object sender, RoutedEventArgs e)
+    {
+        if (VaultEntryDialog.Create(this) is not { } entry) return;
+        SaveVault(entry);
+        RefreshVault();
+    }
+
+    private void SaveVault(VaultEntry entry)
+    {
+        try { VaultStore.Upsert(entry); }
+        catch (Exception ex) { Dialog.Show(this, $"Vault 저장 실패: {ex.Message}", "Vault"); }
+    }
+
+    private void OnVaultEdit(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
+        // 대화상자에서 취소해도 원본이 바뀌지 않게 사본을 고친 뒤 반영
+        var copy = VaultStore.Get(entry.Id);
+        if (copy == null) { RefreshVault(); return; }
+        var backup = (copy.Name, copy.Username, copy.Note, copy.ProtectedPassword, copy.ProtectedKey, copy.ProtectedPassphrase, copy.PublicKey);
+        if (VaultEntryDialog.Edit(this, copy)) SaveVault(copy);
+        else (copy.Name, copy.Username, copy.Note, copy.ProtectedPassword, copy.ProtectedKey, copy.ProtectedPassphrase, copy.PublicKey) = backup;
+        RefreshVault();
+    }
+
+    private void OnVaultDelete(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
+        var users = _hosts.Where(h => h.VaultId == entry.Id).ToList();
+        var msg = $"Vault 계정 '{entry.Name}' ({entry.MethodsText}) 를 삭제할까요?" +
+                  (users.Count > 0
+                      ? $"\n\n이 계정을 쓰는 호스트 {users.Count}개는 연결이 해제되어, 호스트에 직접 적은 값이 없으면 다음 접속 때 계정을 묻습니다:\n" +
+                        string.Join("\n", users.Take(10).Select(h => "  " + h.DisplayName)) + (users.Count > 10 ? "\n  ..." : "")
+                      : "");
+        if (Dialog.Show(this, msg, "Vault 삭제", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        foreach (var h in users) h.VaultId = null;
+        try { VaultStore.Remove(entry.Id); }
+        catch (Exception ex) { Dialog.Show(this, $"Vault 저장 실패: {ex.Message}", "Vault"); }
+        if (users.Count > 0) { SaveHosts(); RefreshHosts(); }
+        RefreshVault();
+    }
+
+    private void OnVaultCopyPublic(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not VaultEntry { PublicKey: { Length: > 0 } pub } entry) return;
+        try
+        {
+            Clipboard.SetText($"{pub} {entry.Name.Replace(' ', '_')}");
+            Dialog.Show(this, "공개키를 복사했습니다.\n서버의 ~/.ssh/authorized_keys 에 한 줄로 붙여넣으세요.", "Vault");
+        }
+        catch { }
     }
 
     // =================== 설정 ===================
@@ -367,6 +446,9 @@ public partial class MainWindow : Window
         RdpCertBox.IsChecked = s.RdpCertWarning;
         SshKeyPromptBox.IsChecked = s.SshHostKeyPrompt;
         AutoReadOnlyBox.IsChecked = s.AutoApproveReadOnly;
+        SftpAutoOpenBox.IsChecked = s.SftpAutoOpen;
+        SftpFollowBox.IsChecked = s.SftpFollowTerminal;
+        SftpEditorBox.Text = s.SftpEditor;
         DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
         DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
         FontSizeText.Text = $"{s.FontSize}px";
@@ -432,8 +514,17 @@ public partial class MainWindow : Window
         var rdp = int.TryParse(DefRdpPortBox.Text.Trim(), out var b) && b is >= 1 and <= 65535 ? b : HostEntry.DefaultPort(Protocol.Rdp);
         DefSshPortBox.Text = ssh.ToString();
         DefRdpPortBox.Text = rdp.ToString();
+        ApplyDefaultPorts(ssh, rdp);
+    }
+
+    /// <summary>
+    /// 기본 포트 변경. 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중 이전 기본 포트를 쓰던 것도 함께 바꾼다.
+    /// 바뀐 호스트 수를 돌려준다.
+    /// </summary>
+    private int ApplyDefaultPorts(int ssh, int rdp)
+    {
         var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
-        if (oldSsh == ssh && oldRdp == rdp) return;
+        if (oldSsh == ssh && oldRdp == rdp) return 0;
         SettingsStore.Update(x => { x.DefaultSshPort = ssh; x.DefaultRdpPort = rdp; });
 
         // 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중, 이전 기본 포트를 쓰던 것도 함께 변경
@@ -446,6 +537,36 @@ public partial class MainWindow : Window
                 if (p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp) { h.Port = rdp; changed++; }
             }
         if (changed > 0) { SaveHosts(); RefreshHosts(); }
+        return changed;
+    }
+
+    private void OnSftpOptionClick(object sender, RoutedEventArgs e) =>
+        SettingsStore.Update(s =>
+        {
+            s.SftpAutoOpen = SftpAutoOpenBox.IsChecked == true;
+            s.SftpFollowTerminal = SftpFollowBox.IsChecked == true;
+        });
+
+    private void OnSftpEditorChanged(object sender, RoutedEventArgs e)
+    {
+        var v = SftpEditorBox.Text.Trim().Trim('"');
+        if (v != SettingsStore.Current.SftpEditor) SettingsStore.Update(s => s.SftpEditor = v);
+    }
+
+    private void OnSftpEditorVsCode(object sender, RoutedEventArgs e)
+    {
+        var code = SftpPanel.FindVsCode();
+        if (code == null) { Dialog.Show(this, "VS Code(Code.exe)를 찾지 못했습니다. '찾기' 로 직접 지정하세요.", "파일 편집기"); return; }
+        SftpEditorBox.Text = code;
+        OnSftpEditorChanged(sender, e);
+    }
+
+    private void OnSftpEditorBrowse(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog { Title = "편집기 프로그램 선택", Filter = "프로그램 (*.exe;*.cmd;*.bat)|*.exe;*.cmd;*.bat|모든 파일|*.*" };
+        if (dlg.ShowDialog(this) != true) return;
+        SftpEditorBox.Text = dlg.FileName;
+        OnSftpEditorChanged(sender, e);
     }
 
     private void OnAutoReadOnlyClick(object sender, RoutedEventArgs e) =>
@@ -500,6 +621,8 @@ public partial class MainWindow : Window
         EdUser.Text = h?.Username ?? "";
         EdPassword.Password = h?.Password ?? "";
         EdKey.Text = h?.KeyPath ?? "";
+        _edVaultId = h?.VaultId;
+        UpdateAuthUi();
 
         NavHosts.IsChecked = true;
         EditorLayer.Visibility = Visibility.Visible;
@@ -531,8 +654,78 @@ public partial class MainWindow : Window
         UpdateProtoUi();
     }
 
-    private void UpdateProtoUi() =>
+    private void UpdateProtoUi()
+    {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAuthUi();
+    }
+
+    // 편집 중인 Vault 계정 (저장 전까지는 호스트에 반영하지 않음)
+    private Guid? _edVaultId;
+
+    /// <summary>
+    /// 로그인 영역: Vault 계정을 골랐으면 카드로 보여주고(무엇으로 로그인하는지),
+    /// 아래 사용자명·비밀번호·키 파일 칸은 "비워 두면 Vault 값" 으로 안내한다.
+    /// </summary>
+    private void UpdateAuthUi()
+    {
+        if (VaultCard == null || KeyFileRow == null) return;   // InitializeComponent 중
+        var ssh = ProtoSsh.IsChecked == true;
+        var v = VaultStore.Get(_edVaultId);
+        var missing = _edVaultId != null && v == null;
+
+        VaultCard.Visibility = _edVaultId != null ? Visibility.Visible : Visibility.Collapsed;
+        VaultPickButton.Visibility = _edVaultId == null ? Visibility.Visible : Visibility.Collapsed;
+        if (v != null)
+        {
+            EdVaultGlyph.Text = v.Glyph;
+            EdVaultName.Text = v.Name;
+            var methods = new List<string> { string.IsNullOrWhiteSpace(v.Username) ? "사용자명 없음" : $"사용자 {v.Username}" };
+            if (v.HasPassword) methods.Add("비밀번호");
+            if (v.HasKey) methods.Add(ssh ? $"{(v.KeyType.Length > 0 ? v.KeyType : "SSH")} 키" : "SSH 키 (RDP 에서는 안 씀)");
+            EdVaultDetail.Text = string.Join(" · ", methods);
+        }
+        else if (missing)
+        {
+            EdVaultGlyph.Text = "";
+            EdVaultName.Text = "삭제된 Vault 계정";
+            EdVaultDetail.Text = "다른 계정을 고르거나 해제하세요.";
+        }
+
+        VaultHint.Text = v == null
+            ? "여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다."
+            : "이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.";
+
+        // 직접 입력 칸: Vault 값을 쓰는지 바로 보이게
+        var vaultUser = v != null && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : null;
+        EdUserLabel.Text = vaultUser != null ? "사용자명 (비워 두면 Vault)" : "사용자명";
+        EdUser.Tag = vaultUser != null ? $"Vault 사용자: {vaultUser}" : "예: ubuntu  /  DOMAIN\\user";
+        EdPasswordLabel.Text = v?.HasPassword == true ? "비밀번호 (비워 두면 Vault)" : "비밀번호";
+        PwHint.Text = v?.HasPassword == true
+            ? "비워 두면 Vault 계정의 비밀번호를 씁니다."
+            : v?.HasKey == true && ssh
+                ? "Vault 키로 인증합니다. 키 인증이 안 되는 서버를 위해 비밀번호를 넣어 둘 수도 있습니다."
+                : v != null && !ssh
+                    ? "이 Vault 계정에는 비밀번호가 없어 RDP 접속 때 비밀번호를 묻습니다."
+                    : "비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.";
+
+        EdKeyLabel.Text = v?.HasKey == true ? "개인키 파일 (비워 두면 Vault 키)" : "개인키 파일 (선택)";
+        KeyHint.Text = v?.HasKey == true
+            ? "Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요."
+            : "키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.";
+    }
+
+    private void OnPickVault(object sender, RoutedEventArgs e)
+    {
+        var proto = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
+        if (VaultPickerDialog.Pick(this, _edVaultId, proto) is { } id) { _edVaultId = id; UpdateAuthUi(); }
+    }
+
+    private void OnClearVault(object sender, RoutedEventArgs e)
+    {
+        _edVaultId = null;
+        UpdateAuthUi();
+    }
 
     private void OnBrowseKey(object sender, RoutedEventArgs e)
     {
@@ -561,9 +754,14 @@ public partial class MainWindow : Window
         h.Port = port;
         h.Label = EdLabel.Text.Trim();
         h.Group = EdGroup.Text.Trim();
+        // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다
+        if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
+        var ssh = ProtoSsh.IsChecked == true;
+
+        h.VaultId = _edVaultId;
         h.Username = EdUser.Text.Trim();
         h.Password = EdPassword.Password;
-        h.KeyPath = h.Protocol == Protocol.Ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
+        h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
 
         if (_editing == null) _hosts.Add(h);
         SaveHosts();
@@ -859,9 +1057,7 @@ public partial class MainWindow : Window
         var host = saved.ForConnection(_profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId), usePublic);
         var viaPublic = saved.HasPublicIp && host.Address == saved.PublicIp && saved.PublicIp != saved.PrimaryAddress;
         // 접속 때 입력한 계정 저장 (목록에 있는 호스트만. 빠른 접속은 저장 안 함)
-        Action<string, string>? save = _hosts.Contains(saved)
-            ? (u, p) => { saved.Username = u; saved.Password = p; SaveHosts(); RefreshHosts(); }
-            : null;
+        Action<string, string>? save = _hosts.Contains(saved) ? (u, p) => SaveEnteredCredentials(saved, u, p) : null;
         FrameworkElement view = host.Protocol == Protocol.Ssh ? new SshSessionView(host, save) : new RdpSessionView(host, save);
         var title = host.Protocol == Protocol.Ssh && !string.IsNullOrWhiteSpace(host.Username) && string.IsNullOrWhiteSpace(host.Label)
             ? $"{host.Username}@{host.Address}"
@@ -877,12 +1073,38 @@ public partial class MainWindow : Window
         return tab;
     }
 
+    /// <summary>
+    /// 접속 때 입력해 로그인에 성공한 계정을 저장. 호스트가 Vault 계정의 비밀번호를 쓰고 있었으면(호스트에 직접 적은
+    /// 비밀번호가 없고 Vault 계정에 비밀번호가 있음) 그 Vault 계정의 비밀번호를 바꾼다 — 서버 비밀번호가 바뀐 경우로,
+    /// 같은 계정을 쓰는 다른 호스트에도 적용된다. 사용자명이 Vault 와 같으면 호스트에는 비워 둔다(계속 Vault 를 따름).
+    /// </summary>
+    private void SaveEnteredCredentials(HostEntry saved, string user, string password)
+    {
+        if (VaultStore.Get(saved.VaultId) is { HasPassword: true } entry && string.IsNullOrEmpty(saved.ProtectedPassword))
+        {
+            entry.Password = password;
+            SaveVault(entry);
+            saved.Username = user == entry.Username && string.IsNullOrWhiteSpace(saved.Username) ? "" : user;
+        }
+        else
+        {
+            saved.Username = user;
+            saved.Password = password;
+        }
+        SaveHosts();
+        RefreshHosts();
+    }
+
     private HostEntry WithProfileDefaults(HostEntry h) =>
         h.WithDefaults(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId));
 
     private SessionTab AddTab(SessionTab tab)
     {
-        tab.Session.StatusChanged += s => tab.Status = s;
+        tab.Session.StatusChanged += s =>
+        {
+            tab.Status = s;
+            if (tab.IsSelected) UpdateActiveContext();
+        };
         _tabs.Add(tab);
         SessionsHost.Children.Add(tab.View);
         SelectTab(tab);
@@ -933,6 +1155,7 @@ public partial class MainWindow : Window
         SessionsHost.Visibility = Visibility.Visible;
         HomeTab.Background = Brushes.Transparent;
         Dispatcher.BeginInvoke(() => tab.Session.FocusSession(), DispatcherPriority.Input);
+        UpdateActiveContext();
     }
 
     private void SelectHome()
@@ -941,6 +1164,7 @@ public partial class MainWindow : Window
         SessionsHost.Visibility = Visibility.Collapsed;
         HomeView.Visibility = Visibility.Visible;
         HomeTab.Background = (Brush)FindResource("CardBg");
+        UpdateActiveContext();
     }
 
     private void CloseTab(SessionTab tab)
@@ -951,7 +1175,7 @@ public partial class MainWindow : Window
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
 
-        if (!wasSelected) return;
+        if (!wasSelected) { UpdateActiveContext(); return; }
         if (_tabs.Count == 0) SelectHome();
         else SelectTab(_tabs[Math.Min(idx, _tabs.Count - 1)]);
     }
