@@ -101,6 +101,8 @@ public partial class MainWindow
             if (exe == null)
                 return "cmd.exe /d /k echo " + L.T("Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code");
             var args = $"--mcp-config \"{configPath}\" --settings \"{guardPath}\" --allowedTools mcp__{McpServer.ServerName}";
+            // 시작하기의 "Claude 에게 묻기": 첫 질문으로 대화를 시작한다 (한 번만)
+            if (_pendingClaudePrompt is { Length: > 0 } first) { args += $" \"{SafePromptArg(first)}\""; _pendingClaudePrompt = null; }
             // npm 설치본은 claude.cmd 라 cmd 를 거쳐 실행
             return exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 ? $"\"{exe}\" {args}"
@@ -206,6 +208,7 @@ public partial class MainWindow
         "- send_to_terminal 로 명령을 보낸 뒤에는 wait_for_output 으로 끝날 때까지(또는 원하는 문자열이 나올 때까지) 기다렸다가 결과를 보세요.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
         "- 클라우드 서버 목록이 오래됐으면 cloud_sync 로 다시 가져오세요.\n" +
+        "- 설정 안내를 부탁받으면 get_setup_status 로 상태를 먼저 보고, open_app_page 로 해당 화면을 열어 사용자와 같은 화면을 보며 한 단계씩 안내하세요. 시작 화면 로그인(SSO) 값은 Claude 가 바꿀 수 없으니 사용자가 직접 입력·저장하도록 안내합니다.\n" +
         "- 앱 설정(테마·글꼴·구문 강조·기본 포트 등)을 바꿔 달라고 하면 get_settings 로 확인한 뒤 update_settings 로 바꾸세요. settings.json 을 직접 고치지 마세요(앱이 덮어씁니다).\n" +
         "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +
         "- Nubis 데이터 파일(hosts.json, cloud_profiles.json, vault.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +

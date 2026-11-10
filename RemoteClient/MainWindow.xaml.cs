@@ -59,6 +59,7 @@ public partial class MainWindow : Window
                 Dialog.Show(this, string.Join("\n\n", SafeFile.LoadWarnings), L.T("설정 파일을 읽지 못했습니다"),
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             ConnectFromArgs();
+            ShowOnboardingIfFirstRun();
         };
         XtermView.Hotkey += OnTerminalHotkey;
     }

@@ -567,6 +567,8 @@
                                 <RadioButton x:Name="LangEnglish" Style="{StaticResource Segment}" Content="English" GroupName="lang" Click="OnLanguageClick"/>
                             </UniformGrid>
                         </Border>
+                        <Button Style="{StaticResource GhostButton}" Content="{l:Tr '시작하기 안내 다시 보기'}" HorizontalAlignment="Left" Margin="0,12,0,0"
+                                Click="OnShowOnboarding"/>
 
                         <TextBlock Text="{l:Tr '터미널 테마'}" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,4"/>
                         <TextBlock Text="{l:Tr '선택하면 열려 있는 SSH 터미널에도 바로 적용됩니다.'}" Foreground="{StaticResource SubText}" Margin="0,0,0,14"/>

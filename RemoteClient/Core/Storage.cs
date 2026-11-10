@@ -226,6 +226,8 @@ public sealed class AppSettings
     public bool SftpFollowTerminal { get; set; } = true;
     /// <summary>SFTP 파일 편집에 쓸 프로그램 (비우면 Windows 기본 프로그램). Claude 는 바꿀 수 없다</summary>
     public string SftpEditor { get; set; } = "";
+    /// <summary>시작하기 안내를 이미 보여줬는지 (계정별 프로필마다 처음 한 번)</summary>
+    public bool OnboardingShown { get; set; }
     /// <summary>앱 시작 화면 로그인 (GitHub · Google · Microsoft). Claude 는 바꿀 수 없다</summary>
     public LoginConfig Login { get; set; } = new();
     /// <summary>화면 언어: "ko"(기본) · "en". null 이면 처음 실행 — 언어 선택 화면을 띄운다</summary>
