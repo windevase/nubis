@@ -533,3 +533,30 @@ public class ThemeTests
         Assert.Equal(TerminalThemes.DefaultId, TerminalThemes.Get("없는-테마").Id);
     }
 }
+
+public class ClaudeGuardTests
+{
+    [Fact]
+    public void 윈도우_경로를_권한_규칙_형식으로_바꾼다()
+    {
+        Assert.Equal("//c/Users/a/AppData/Roaming/Nubis", ClaudeGuard.ToRulePath(@"C:\Users\a\AppData\Roaming\Nubis\"));
+        Assert.Equal("//e/data", ClaudeGuard.ToRulePath(@"E:\data"));
+        Assert.Null(ClaudeGuard.ToRulePath(@"\\server\share\nubis"));
+    }
+
+    [Fact]
+    public void 계정_파일은_읽기와_셸_접근을_모두_막는다()
+    {
+        var rules = ClaudeGuard.DenyRules(@"C:\Users\a\AppData\Roaming\Nubis");
+        Assert.Contains("Read(//c/Users/a/AppData/Roaming/Nubis/hosts.json*)", rules);
+        Assert.Contains("Read(//c/Users/a/AppData/Roaming/Nubis/cloud_profiles.json*)", rules);
+        Assert.Contains("PowerShell(*hosts.json*)", rules);
+        Assert.Contains("Bash(*cloud_profiles.json*)", rules);
+        Assert.Contains("PowerShell(*ProtectedData*)", rules);
+        Assert.Contains("Edit(//c/Users/a/AppData/Roaming/Nubis/claude_audit.log*)", rules);
+        // 감사 로그 읽기는 허용 (사용자가 Claude 에게 기록 확인을 시킬 수 있음)
+        Assert.DoesNotContain("Read(//c/Users/a/AppData/Roaming/Nubis/claude_audit.log*)", rules);
+        using var doc = System.Text.Json.JsonDocument.Parse(ClaudeGuard.BuildSettingsJson(@"C:\Users\a\AppData\Roaming\Nubis"));
+        Assert.Equal(rules.Count, doc.RootElement.GetProperty("permissions").GetProperty("deny").GetArrayLength());
+    }
+}

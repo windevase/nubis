@@ -124,6 +124,7 @@ WebView2 런타임은 Windows 10/11 에 기본 포함되어 있다.
 - 승인 창: 대상 서버·명령 전체 표시, 위험 명령(rm -rf, reboot, Stop-Service 등) 경고, 뜬 직후 1.5초간 실행 버튼 잠금, Esc = 거부
 - **읽기 전용 명령 자동 승인** (Settings → Claude, 기본 꺼짐): `run_command` 중 조회 명령만 승인 창 없이 실행. 허용 목록 방식 — 리눅스 `ls/cat/grep/df/ps/ss/journalctl`, `systemctl status`, `docker ps`, `kubectl get` 등 / PowerShell `Get-*`·`Select-/Where-/Sort-/Format-*`·`Test-*` / cmd·공통 `ipconfig`, `sc query`, `reg query`, `netstat`, `tasklist` 등. 파일로 출력(`>`), 명령 치환(`$( )`, 백틱), 메서드·.NET 호출, `Invoke-*`, 목록에 없는 명령·쓰기 옵션(`systemctl restart`, `find -delete`, `ipconfig /release` …)이 하나라도 있으면 승인 창. 위험 명령은 항상 승인. 자동 실행도 감사 로그에 "자동 승인(읽기 전용)" 으로 남음
 - 모든 요청은 `%APPDATA%\Nubis\claude_audit.log` 에 기록 (패널 헤더의 문서 아이콘)
+- **저장된 계정 보호**: 패널의 Claude 는 계정·암호가 든 `hosts.json`·`cloud_profiles.json` 을 읽을 수 없다 (Read 도구, 그 파일 이름이 들어간 셸 명령, DPAPI 복호화 명령을 `claude --settings` 거부 규칙으로 차단). 감사 로그·MCP 설정은 수정 불가. 같은 Windows 계정에서 도는 프로그램이라 완전한 격리는 아니며, 암호 자체는 DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀린다
 - `group:Production` 처럼 그룹 전체 지정 가능, 중지된 서버는 자동 제외
 
 ### WinRM (Windows 서버 명령 실행)

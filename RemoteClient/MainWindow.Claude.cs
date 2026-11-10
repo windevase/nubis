@@ -89,13 +89,16 @@ public partial class MainWindow
         _mcp ??= new McpServer(BuildTools(), McpInstructions);
         var configPath = _mcp.WriteClientConfig(Path.Combine(ClaudeWorkDir, "mcp-config.json"));
         WriteClaudeMd();
+        // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
+        var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
+        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir), new UTF8Encoding(false));
 
         _claudeView = new LocalTerminalView(() =>
         {
             var exe = FindClaude();
             if (exe == null)
                 return "cmd.exe /d /k echo Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code";
-            var args = $"--mcp-config \"{configPath}\" --allowedTools mcp__{McpServer.ServerName}";
+            var args = $"--mcp-config \"{configPath}\" --settings \"{guardPath}\" --allowedTools mcp__{McpServer.ServerName}";
             // npm 설치본은 claude.cmd 라 cmd 를 거쳐 실행
             return exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 ? $"\"{exe}\" {args}"
@@ -138,6 +141,7 @@ public partial class MainWindow
         "가능하면 읽기 전용 명령을 쓰고, 변경 작업은 사용자가 명시적으로 요청했을 때만 하세요.\n" +
         "- 사용자가 '이 화면', '지금 터미널', '이 에러' 라고 하면 read_terminal 이나 get_selection 으로 현재 탭 내용을 먼저 확인하세요. RDP(Windows 원격 데스크톱) 화면은 capture_screen 으로 이미지를 받아 보세요.\n" +
         "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +
+        "- Nubis 데이터 파일(hosts.json, cloud_profiles.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +
         "- 답변은 한국어로 하세요.";
 
     private static void WriteClaudeMd()

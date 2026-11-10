@@ -30,6 +30,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 | `XtermView.cs` + `wwwroot\terminal.html` | WebView2 위 xterm.js 공통 화면 (테마·구문 강조·출력 묶음·버퍼 읽기·단축키) |
 | `SshSessionView.cs` / `SftpPanel.xaml` | SSH 탭 (SSH.NET ShellStream) + 왼쪽 SFTP 패널 |
 | `RdpSessionView.cs` / `RdpAxHost.cs` / `RdpDefaults.cs` | RDP 탭 (Windows 내장 mstscax ActiveX, `Default.rdp` 값 적용). 컨트롤은 `RdpAxHost.Acquire/Release` 풀로 재사용 — 인스턴스를 해제할 때마다 핸들·스레드가 남는 mstscax 누수 회피 |
+| `ClaudeGuard.cs` | Claude 패널 권한 거부 규칙(`<데이터>\claude\nubis-permissions.json`, 실행마다 다시 씀) — 계정 파일 읽기·셸 접근·DPAPI 복호화 차단 |
 | `ReadOnlyCommands.cs` | run_command 읽기 전용 판별 (설정 `AutoApproveReadOnly` 일 때 승인 생략). 허용 목록 방식, 애매하면 false |
 | `LocalTerminalView.cs` / `ConPty.cs` | 로컬 PowerShell 탭·Claude 패널 (ConPTY, 자식 환경변수 정리 `ChildEnvironment`) |
 | `SshExec.cs` / `WinRm.cs` | 여러 서버 비대화형 명령 실행 (SSH / WinRM 직접 구현: 5986 HTTPS → 5985 HTTP+NTLM 암호화) |
@@ -50,7 +51,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 - **사용자 데이터를 건드리지 않는다.** `%APPDATA%\Nubis\hosts.json` 등을 테스트용으로 덮어쓰거나 지우지 않는다 (예전에 그렇게 해서 사용자가 동기화한 호스트가 지워진 적이 있다). 테스트 데이터는 `NUBIS_DATA_DIR` 의 임시 폴더에.
 - **사용자의 Nubis 프로세스를 이름으로 종료하지 않는다.** 직접 띄운 프로세스만 PID 로 종료.
 - `Secret` 의 DPAPI entropy 문자열 `"RemoteClient.v1"` 은 바꾸지 않는다 (바꾸면 저장된 비밀번호를 못 푼다).
-- 원격 서버에 영향을 주는 동작(Claude 의 `run_command`, `send_to_terminal`)은 **`ApprovalDialog` 승인 + `AuditLog` 기록**을 거쳐야 한다. 새 실행 경로를 추가할 때도 같다. 예외는 사용자가 켠 `AutoApproveReadOnly` 의 읽기 전용 명령뿐이며, 이때도 감사 로그는 남긴다. `ReadOnlyCommands` 허용 목록을 넓힐 때는 쓰기 가능한 하위 명령·옵션을 막고 `ReadOnlyCommandTests` 에 반례를 추가한다. 비밀번호는 MCP 결과·로그에 절대 넣지 않는다.
+- 원격 서버에 영향을 주는 동작(Claude 의 `run_command`, `send_to_terminal`)은 **`ApprovalDialog` 승인 + `AuditLog` 기록**을 거쳐야 한다. 새 실행 경로를 추가할 때도 같다. 예외는 사용자가 켠 `AutoApproveReadOnly` 의 읽기 전용 명령뿐이며, 이때도 감사 로그는 남긴다. `ReadOnlyCommands` 허용 목록을 넓힐 때는 쓰기 가능한 하위 명령·옵션을 막고 `ReadOnlyCommandTests` 에 반례를 추가한다. 비밀번호는 MCP 결과·로그에 절대 넣지 않는다. 계정이 저장되는 파일을 새로 만들면 `ClaudeGuard.SecretFiles` 에도 추가한다.
 - 호스트키: 처음 보는 서버는 accept-new (대화형 접속은 Settings `SshHostKeyPrompt` 를 켜면 확인 창, 비대화형 run_command·SFTP 는 `SshAuth.VerifyAcceptNew`). **저장된 키와 다르면 항상 경고/거부** — 이 경고는 없애지 않는다. 사용자가 거부한 키는 `REJECTED` 표시로 남아 자동 신뢰되지 않는다.
 - 클라우드 동기화: 일부 리전/영역 조회가 실패하면(`CloudFetchResult.IsPartial`) **삭제하지 않는다**. 사용자가 바꾼 프로토콜·포트·계정·`UsePublicIp` 는 유지, 이름·주소·상태만 갱신.
 - 명령 실행 재시도: 연결 실패만 다음 포트·주소(사설→공인)로. **인증 실패·셸 생성 이후 오류는 재시도하지 않는다** (계정 잠금·중복 실행 방지).
