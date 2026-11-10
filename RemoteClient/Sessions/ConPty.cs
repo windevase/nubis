@@ -77,7 +77,7 @@ public sealed class PseudoConsoleProcess : IDisposable
         if (!CreatePipe(out _outputRead, out var outputWrite, IntPtr.Zero, 0)) throw new Win32Exception();
 
         var hr = CreatePseudoConsole(new COORD { X = cols, Y = rows }, inputRead, outputWrite, 0, out _hpc);
-        if (hr != 0) throw new Win32Exception(hr, "CreatePseudoConsole 실패");
+        if (hr != 0) throw new Win32Exception(hr, L.T("CreatePseudoConsole 실패"));
         // 의사 콘솔이 복제해 가졌으므로 이쪽 끝은 닫는다
         inputRead.Dispose();
         outputWrite.Dispose();
@@ -98,7 +98,7 @@ public sealed class PseudoConsoleProcess : IDisposable
             {
                 if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false,
                         EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, env, workingDir, ref si, out var pi))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), $"프로세스 실행 실패: {commandLine}");
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), L.F("프로세스 실행 실패: {0}", commandLine));
                 _hProcess = pi.hProcess;
                 _hThread = pi.hThread;
                 // 하위 프로세스까지 정리하기 위한 Process 객체 (이미 끝났으면 null — 종료 대기는 핸들로 함)

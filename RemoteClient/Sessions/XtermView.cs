@@ -109,7 +109,7 @@ public sealed class XtermView : UserControl
             _env = null;
             Content = new TextBlock
             {
-                Text = $"터미널 화면(WebView2)을 초기화하지 못했습니다.\n{ex.Message}\n\nMicrosoft Edge WebView2 런타임 설치 여부를 확인한 뒤 탭을 다시 여세요.",
+                Text = L.F("터미널 화면(WebView2)을 초기화하지 못했습니다.\n{0}\n\nMicrosoft Edge WebView2 런타임 설치 여부를 확인한 뒤 탭을 다시 여세요.", ex.Message),
                 Foreground = (Brush)Application.Current.Resources["SubText"],
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(24),

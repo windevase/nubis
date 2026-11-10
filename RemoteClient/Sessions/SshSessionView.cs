@@ -105,7 +105,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             Width = 30,
             Height = 30,
             Margin = new Thickness(0, 6, 0, 0),
-            ToolTip = "SFTP 파일 (업로드·다운로드)",
+            ToolTip = L.T("SFTP 파일 (업로드·다운로드)"),
         };
         sftpButton.Click += (_, _) => ToggleSftp();
         var panel = new StackPanel();
@@ -188,7 +188,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", user, _saveCredentials != null);
             if (cred == null)
             {
-                _term.Info("인증 정보 입력이 취소되었습니다. Enter 키를 누르면 다시 시도합니다.", "33");
+                _term.Info(L.T("인증 정보 입력이 취소되었습니다. Enter 키를 누르면 다시 시도합니다."), "33");
                 _connecting = false;
                 SetStatus(SessionStatus.Disconnected);
                 return;
@@ -265,8 +265,8 @@ public sealed class SshSessionView : UserControl, ISessionView
         {
             // 저장된 비밀번호가 바뀐 경우 등: 다음 시도에서 계정을 다시 묻는다
             _askCredentials = true;
-            _term.Info($"인증 실패: {ex.Message}", "31");
-            _term.Info("Enter 키를 누르면 계정을 다시 입력합니다.");
+            _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
+            _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
         }
@@ -276,14 +276,14 @@ public sealed class SshSessionView : UserControl, ISessionView
             _retriedAfterHostKey = true;
             _connecting = false;
             DisposeSsh();
-            _term.Info($"({ex.Message.Split('\n')[0]}) 호스트키를 저장했으니 다시 연결합니다...");
+            _term.Info(L.F("({0}) 호스트키를 저장했으니 다시 연결합니다...", ex.Message.Split('\n')[0]));
             _ = ConnectAsync();
             return;
         }
         catch (Exception ex)
         {
-            _term.Info($"연결 실패: {ex.Message}", "31");
-            _term.Info("Enter 키를 누르면 다시 연결합니다.");
+            _term.Info(L.F("연결 실패: {0}", ex.Message), "31");
+            _term.Info(L.T("Enter 키를 누르면 다시 연결합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
         }
@@ -307,7 +307,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         if (known == null && !SettingsStore.Current.SshHostKeyPrompt)
         {
             KnownHostStore.Set(key, fp);
-            _term.Info($"새 호스트키 저장: {key} {fp}");
+            _term.Info(L.F("새 호스트키 저장: {0} {1}", key, fp));
             e.CanTrust = true;
             return;
         }
@@ -315,12 +315,12 @@ public sealed class SshSessionView : UserControl, ISessionView
         if (known != null && KnownHostStore.IsRejected(known)) known = null;
 
         var (title, msg, detail, icon) = known == null
-            ? ("처음 접속하는 서버입니다",
-               $"{_host.DisplayName} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.",
+            ? (L.T("처음 접속하는 서버입니다"),
+               L.F("{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.", _host.DisplayName),
                $"{key}\n{fp}", MessageBoxImage.Question)
-            : ("호스트키가 바뀌었습니다",
-               "저장된 값과 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 새 키로 교체하고 접속할까요?",
-               $"{key}\n저장된 값: {known}\n현재 값:   {fp}", MessageBoxImage.Warning);
+            : (L.T("호스트키가 바뀌었습니다"),
+               L.T("저장된 값과 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 새 키로 교체하고 접속할까요?"),
+               L.F("{0}\n저장된 값: {1}\n현재 값:   {2}", key, known, fp), MessageBoxImage.Warning);
 
         var ok = Dispatcher.Invoke(() =>
             Dialog.Show(Window.GetWindow(this), msg, title, MessageBoxButton.YesNo, icon, detail) == MessageBoxResult.Yes);
@@ -347,8 +347,8 @@ public sealed class SshSessionView : UserControl, ISessionView
         if (_status == SessionStatus.Disconnected || _closed) return;
         SetStatus(SessionStatus.Disconnected);
         _term.Write("\r\n");
-        if (reason != null) _term.Info($"오류: {reason}", "31");
-        _term.Info("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다.", "33");
+        if (reason != null) _term.Info(L.F("오류: {0}", reason), "31");
+        _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다."), "33");
     }
 
     private void DisposeSsh()

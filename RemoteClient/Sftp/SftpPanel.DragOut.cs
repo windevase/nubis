@@ -95,7 +95,7 @@ public partial class SftpPanel
     {
         if (_busy) return false;
         Directory.CreateDirectory(dir);
-        var task = DownloadCoreAsync(items.Zip(targets, (i, t) => (i, t)).ToList(), dir, "끌어다 놓은 위치");
+        var task = DownloadCoreAsync(items.Zip(targets, (i, t) => (i, t)).ToList(), dir, L.T("끌어다 놓은 위치"));
         var frame = new DispatcherFrame();
         task.ContinueWith(_ => Dispatcher.BeginInvoke(() => frame.Continue = false), TaskScheduler.Default);
         Dispatcher.PushFrame(frame);

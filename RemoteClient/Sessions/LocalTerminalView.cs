@@ -20,11 +20,11 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     public SessionStatus Status => _status;
 
     /// <param name="commandLine">실행할 명령줄 (재시작할 때마다 다시 계산)</param>
-    public LocalTerminalView(Func<string> commandLine, string workingDir, string exitHint = "프로세스가 종료되었습니다.")
+    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null)
     {
         _commandLine = commandLine;
         _workingDir = workingDir;
-        _exitHint = exitHint;
+        _exitHint = exitHint ?? L.T("프로세스가 종료되었습니다.");
         Content = _term;
         _term.Ready += Start;
         _term.Resized += (c, r) => _pty?.Resize((short)c, (short)r);
@@ -46,7 +46,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
             if (_closed || _pty != pty) return;
             SetStatus(SessionStatus.Disconnected);
             _term.Write("\r\n");
-            _term.Info($"{_exitHint} (종료 코드 {code})  Enter 키를 누르면 다시 시작합니다.", "33");
+            _term.Info(L.F("{0} (종료 코드 {1})  Enter 키를 누르면 다시 시작합니다.", _exitHint, code), "33");
         });
         try
         {
@@ -58,7 +58,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
         catch (Exception ex)
         {
             pty.Dispose();
-            _term.Info($"실행 실패: {ex.Message}", "31");
+            _term.Info(L.F("실행 실패: {0}", ex.Message), "31");
             SetStatus(SessionStatus.Disconnected);
         }
     }

@@ -50,7 +50,7 @@ public partial class SftpPanel
         if (_edits.TryGetValue(item.FullName, out var existing) && File.Exists(existing.Local)) { OpenInEditor(existing.Local); return; }
         if (_busy) return;
         if (item.Size > 50L * 1024 * 1024 &&
-            Dialog.Show(Window.GetWindow(this)!, $"{HumanSize(item.Size)} 파일입니다. 받아서 편집할까요?", "편집",
+            Dialog.Show(Window.GetWindow(this)!, L.F("{0} 파일입니다. 받아서 편집할까요?", HumanSize(item.Size)), L.T("편집"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         try
         {
@@ -61,7 +61,7 @@ public partial class SftpPanel
             Directory.CreateDirectory(dir);
             var local = Path.Combine(dir, SafeLocalName(item.Name));
 
-            var ct = BeginTransfer($"편집용으로 받는 중: {item.Name}", item.Size);
+            var ct = BeginTransfer(L.F("편집용으로 받는 중: {0}", item.Name), item.Size);
             var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress((long)r.TotalBytesDownloaded, item.Size));
             await using (var fs = File.Create(local))
                 await c.DownloadFileAsync(item.FullName, fs, progress, ct);
@@ -70,11 +70,11 @@ public partial class SftpPanel
             var s = new EditSession { Remote = item.FullName, Local = local, RemoteMtime = attr.LastWriteTimeUtc, RemoteSize = attr.Size, Hash = HashFile(local) };
             Watch(s);
             _edits[item.FullName] = s;
-            EndTransfer($"편집 중: {item.Name} — 저장하면 서버에 자동으로 올립니다");
+            EndTransfer(L.F("편집 중: {0} — 저장하면 서버에 자동으로 올립니다", item.Name));
             OpenInEditor(local);
         }
-        catch (OperationCanceledException) { EndTransfer("편집 열기를 취소했습니다."); }
-        catch (Exception ex) { EndTransfer($"편집 열기 실패: {ex.Message}"); }
+        catch (OperationCanceledException) { EndTransfer(L.T("편집 열기를 취소했습니다.")); }
+        catch (Exception ex) { EndTransfer(L.F("편집 열기 실패: {0}", ex.Message)); }
     }
 
     private void Watch(EditSession s)
@@ -124,12 +124,12 @@ public partial class SftpPanel
             var attr = await Task.Run(() => c.Exists(s.Remote) ? c.GetAttributes(s.Remote) : null);
             if (attr != null && (attr.LastWriteTimeUtc != s.RemoteMtime || attr.Size != s.RemoteSize) &&
                 Dialog.Show(Window.GetWindow(this)!,
-                    $"편집을 시작한 뒤 서버의 파일이 바뀌었습니다.\n\n{s.Remote}\n서버: {attr.LastWriteTime:yyyy-MM-dd HH:mm:ss} · {HumanSize(attr.Size)}\n\n" +
-                    "내가 편집한 내용으로 덮어쓸까요? (아니요를 누르면 이번 저장은 올리지 않습니다)",
-                    "편집 충돌", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    L.F("편집을 시작한 뒤 서버의 파일이 바뀌었습니다.\n\n{0}\n서버: {1:yyyy-MM-dd HH:mm:ss} · {2}\n\n내가 편집한 내용으로 덮어쓸까요? (아니요를 누르면 이번 저장은 올리지 않습니다)",
+                        s.Remote, attr.LastWriteTime, HumanSize(attr.Size)),
+                    L.T("편집 충돌"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 s.Hash = hash;   // 같은 내용으로 다시 묻지 않음
-                ShowStatus($"올리지 않음: {name} (서버 파일이 바뀌어 있음)");
+                ShowStatus(L.F("올리지 않음: {0} (서버 파일이 바뀌어 있음)", name));
                 return;
             }
             using (var up = new MemoryStream(data))
@@ -138,10 +138,10 @@ public partial class SftpPanel
             s.RemoteMtime = after.LastWriteTimeUtc;
             s.RemoteSize = after.Size;
             s.Hash = hash;
-            ShowStatus($"저장됨 → 서버에 올림: {name}  ({DateTime.Now:HH:mm:ss}, {HumanSize(data.Length)})");
+            ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)));
             if (ParentPath(s.Remote) == _cwd && !_busy) await NavigateAsync(_cwd);   // 목록의 크기·시각 갱신
         }
-        catch (Exception ex) { ShowStatus($"자동 업로드 실패: {name} — {ex.Message} (다시 저장하면 재시도)"); }
+        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message)); }
         finally { s.Uploading = false; }
     }
 
@@ -169,7 +169,7 @@ public partial class SftpPanel
         catch (System.ComponentModel.Win32Exception)
         {
             try { Process.Start(new ProcessStartInfo("notepad.exe", $"\"{local}\"") { UseShellExecute = true }); }
-            catch (Exception ex) { ShowStatus($"편집기를 열지 못했습니다: {ex.Message}"); }
+            catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message)); }
         }
     }
 

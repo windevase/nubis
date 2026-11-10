@@ -29,7 +29,7 @@ public sealed class RdpAxHost : AxHost
     }
 
     /// <summary>IMsRdpClient (IDispatch) — Server, AdvancedSettings9, Connect() 등</summary>
-    public dynamic Ocx => GetOcx() ?? throw new InvalidOperationException("RDP 컨트롤이 아직 생성되지 않았습니다.");
+    public dynamic Ocx => GetOcx() ?? throw new InvalidOperationException(L.T("RDP 컨트롤이 아직 생성되지 않았습니다."));
 
     protected override void CreateSink()
     {

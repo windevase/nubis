@@ -33,7 +33,7 @@ public sealed class SftpItem
     public Brush GlyphBrush => IsDir ? DirBrush : FileBrush;
     public string SizeText => IsDir ? "" : SftpPanel.HumanSize(Size);
     public string ModifiedText => Modified == default ? "" : Modified.ToString("yyyy-MM-dd HH:mm");
-    public string ToolTipText => $"{FullName}\n{Perms}  {(IsDir ? "폴더" : SftpPanel.HumanSize(Size))}";
+    public string ToolTipText => $"{FullName}\n{Perms}  {(IsDir ? L.T("폴더") : SftpPanel.HumanSize(Size))}";
 }
 
 /// <summary>
@@ -77,7 +77,7 @@ public partial class SftpPanel : UserControl
         var p = _getTerminalCwd == null ? null : await _getTerminalCwd();
         if (string.IsNullOrEmpty(p))
         {
-            ShowStatus("터미널 현재 폴더를 알 수 없습니다. 프롬프트가 user@host:/경로$ 형식이 아니고, 셸이 현재 폴더를 알려주지 않습니다(OSC 7).");
+            ShowStatus(L.T("터미널 현재 폴더를 알 수 없습니다. 프롬프트가 user@host:/경로$ 형식이 아니고, 셸이 현재 폴더를 알려주지 않습니다(OSC 7)."));
             return;
         }
         await NavigateAsync(p);
@@ -99,7 +99,7 @@ public partial class SftpPanel : UserControl
     private async Task<SftpClient> ClientAsync()
     {
         if (_client is { IsConnected: true }) return _client;
-        var auth = _getAuth() ?? throw new InvalidOperationException("터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요.");
+        var auth = _getAuth() ?? throw new InvalidOperationException(L.T("터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요."));
         _client?.Dispose();
         var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password));
         string? keyError = null;
@@ -134,12 +134,12 @@ public partial class SftpPanel : UserControl
             _cwd = path;
             PathBox.Text = path;
             FileList.ItemsSource = items;
-            ShowMessage(items.Count == 0 ? "빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다." : null);
+            ShowMessage(items.Count == 0 ? L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다.") : null);
         }
         catch (Exception ex)
         {
             PathBox.Text = _cwd;
-            ShowMessage($"열 수 없습니다: {ex.Message}");
+            ShowMessage(L.F("열 수 없습니다: {0}", ex.Message));
         }
     }
 
@@ -214,7 +214,7 @@ public partial class SftpPanel : UserControl
 
     private async void OnNewFolder(object sender, RoutedEventArgs e)
     {
-        var name = PromptDialog.Ask(Window.GetWindow(this), "새 폴더", $"{_cwd} 에 만들 폴더 이름");
+        var name = PromptDialog.Ask(Window.GetWindow(this), L.T("새 폴더"), L.F("{0} 에 만들 폴더 이름", _cwd));
         if (string.IsNullOrEmpty(name)) return;
         try
         {
@@ -222,13 +222,13 @@ public partial class SftpPanel : UserControl
             await Task.Run(() => c.CreateDirectory(Combine(_cwd, name)));
             await NavigateAsync(_cwd);
         }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, "새 폴더"); }
+        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("새 폴더")); }
     }
 
     private async void OnRename(object sender, RoutedEventArgs e)
     {
         if (FileList.SelectedItem is not SftpItem item) return;
-        var name = PromptDialog.Ask(Window.GetWindow(this), "이름 변경", item.FullName, item.Name);
+        var name = PromptDialog.Ask(Window.GetWindow(this), L.T("이름 변경"), item.FullName, item.Name);
         if (string.IsNullOrEmpty(name) || name == item.Name) return;
         try
         {
@@ -236,7 +236,7 @@ public partial class SftpPanel : UserControl
             await Task.Run(() => c.RenameFile(item.FullName, Combine(ParentPath(item.FullName), name)));
             await NavigateAsync(_cwd);
         }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, "이름 변경"); }
+        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("이름 변경")); }
     }
 
     private async void OnDelete(object sender, RoutedEventArgs e)
@@ -244,16 +244,16 @@ public partial class SftpPanel : UserControl
         var items = Selected();
         if (items.Count == 0 || _busy) return;
         var dirs = items.Count(i => i.IsDir);
-        var msg = $"{items.Count}개 항목을 서버에서 삭제할까요?" + (dirs > 0 ? $"\n(폴더 {dirs}개는 안의 내용까지 모두 삭제)" : "") +
+        var msg = L.F("{0}개 항목을 서버에서 삭제할까요?", items.Count) + (dirs > 0 ? L.F("\n(폴더 {0}개는 안의 내용까지 모두 삭제)", dirs) : "") +
                   "\n\n" + string.Join("\n", items.Take(10).Select(i => i.FullName)) + (items.Count > 10 ? "\n..." : "");
-        if (Dialog.Show(Window.GetWindow(this)!, msg, "삭제 확인", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (Dialog.Show(Window.GetWindow(this)!, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         try
         {
             var c = await ClientAsync();
-            BeginTransfer("삭제 중...", 0);
+            BeginTransfer(L.T("삭제 중..."), 0);
             await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink); });
         }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, "삭제"); }
+        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("삭제")); }
         finally { EndTransfer(null); }
         await NavigateAsync(_cwd);
     }

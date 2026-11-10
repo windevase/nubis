@@ -80,7 +80,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
         var reconnect = _reconnectButton = new Button
         {
-            Content = "다시 연결",
+            Content = L.T("다시 연결"),
             Style = (Style)Application.Current.Resources["PrimaryButton"],
             HorizontalAlignment = HorizontalAlignment.Center,
             Padding = new Thickness(22, 9, 22, 9),
@@ -153,7 +153,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
                 {
                     _user = null;
                     SetStatus(SessionStatus.Disconnected);
-                    ShowOverlay("연결 취소됨", "인증 정보 입력이 취소되었습니다.");
+                    ShowOverlay(L.T("연결 취소됨"), L.T("인증 정보 입력이 취소되었습니다."));
                     return;
                 }
                 _user = cred.Value.User;
@@ -163,7 +163,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         }
 
         // 연결 중에는 ActiveX 의 흰 화면 대신 어두운 안내 화면을 보여주고, OnConnected 때 컨트롤을 드러낸다
-        ShowOverlay($"{_host.DisplayName} 에 연결 중...", $"{_host.Address}:{_host.Port}", showReconnect: false);
+        ShowOverlay(L.F("{0} 에 연결 중...", _host.DisplayName), $"{_host.Address}:{_host.Port}", showReconnect: false);
         SetStatus(SessionStatus.Connecting);
         _loggedIn = false;
 
@@ -184,7 +184,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             // mstsc 기본 설정(문서\Default.rdp)을 그대로 따른다
             var d = RdpDefaults.Load();
             ocx.ColorDepth = d.ColorDepth;
-            ocx.ConnectingText = $"{_host.DisplayName} 에 연결 중...";
+            ocx.ConnectingText = L.F("{0} 에 연결 중...", _host.DisplayName);
 
             var adv = ocx.AdvancedSettings9;
             adv.RDPPort = _host.Port;
@@ -212,7 +212,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         catch (Exception ex)
         {
             SetStatus(SessionStatus.Disconnected);
-            ShowOverlay("연결 실패", ex.Message);
+            ShowOverlay(L.T("연결 실패"), ex.Message);
         }
     }
 
@@ -235,7 +235,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         SetStatus(SessionStatus.Disconnected);
 
         string text;
-        if (reason < 0) text = $"RDP 컨트롤 오류 (코드 {-reason})";
+        if (reason < 0) text = L.F("RDP 컨트롤 오류 (코드 {0})", -reason);
         else
         {
             try
@@ -244,13 +244,13 @@ public sealed class RdpSessionView : UserControl, ISessionView
                 text = (string)ocx.GetErrorDescription((uint)reason, (uint)ocx.ExtendedDisconnectReason);
             }
             catch { text = ""; }
-            if (string.IsNullOrWhiteSpace(text)) text = $"연결이 끊어졌습니다. (사유 코드 {reason})";
-            else text += $"\n(사유 코드 {reason})";
+            if (string.IsNullOrWhiteSpace(text)) text = L.F("연결이 끊어졌습니다. (사유 코드 {0})", reason);
+            else text += L.F("\n(사유 코드 {0})", reason);
         }
         // 비밀번호 오류 등으로 끊긴 경우 다음 연결 때 다시 묻도록
         if (reason is 2055 or 2567 or 2823 or 3335 or 3591) _user = null;
 
-        ShowOverlay($"{_host.DisplayName} 연결 종료", text);
+        ShowOverlay(L.F("{0} 연결 종료", _host.DisplayName), text);
     }
 
     public System.Threading.Tasks.Task<string?> ReadTerminalAsync(int lines) => System.Threading.Tasks.Task.FromResult<string?>(null);

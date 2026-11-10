@@ -33,7 +33,7 @@ public partial class SftpPanel
         e.Effects = ok ? DragDropEffects.Copy : DragDropEffects.None;
         if (ok)
         {
-            DropHintText.Text = $"{DropTarget(e)} 에 업로드";
+            DropHintText.Text = L.F("{0} 에 업로드", DropTarget(e));
             DropHint.Visibility = Visibility.Visible;
         }
         else DropHint.Visibility = Visibility.Collapsed;
@@ -53,7 +53,7 @@ public partial class SftpPanel
 
     private async void OnUploadClick(object sender, RoutedEventArgs e)
     {
-        var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = $"{_cwd} 에 업로드할 파일" };
+        var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = L.F("{0} 에 업로드할 파일", _cwd) };
         if (dlg.ShowDialog(Window.GetWindow(this)) == true) await UploadAsync(dlg.FileNames, _cwd);
     }
 
@@ -84,16 +84,16 @@ public partial class SftpPanel
 
             var existing = await Task.Run(() => localPaths.Select(p => Combine(target, Path.GetFileName(p.TrimEnd('\\')))).Where(c.Exists).ToList());
             if (existing.Count > 0 && Dialog.Show(Window.GetWindow(this)!,
-                    $"이미 있는 항목 {existing.Count}개를 덮어쓸까요?\n\n" + string.Join("\n", existing.Take(10)),
-                    "업로드", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                    L.F("이미 있는 항목 {0}개를 덮어쓸까요?\n\n", existing.Count) + string.Join("\n", existing.Take(10)),
+                    L.T("업로드"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
 
             var total = files.Sum(f => f.Size);
             long done = 0;
-            var ct = BeginTransfer($"업로드 준비 ({files.Count}개, {HumanSize(total)})", total);
+            var ct = BeginTransfer(L.F("업로드 준비 ({0}개, {1})", files.Count, HumanSize(total)), total);
             await Task.Run(() => { foreach (var d in dirs) if (!c.Exists(d)) c.CreateDirectory(d); }, ct);
             foreach (var (local, remote, size) in files)
             {
-                TransferText.Text = $"업로드 {Path.GetFileName(local)}  ({HumanSize(done)} / {HumanSize(total)})";
+                TransferText.Text = L.F("업로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
                 var baseDone = done;
                 var progress = new Progress<Renci.SshNet.UploadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesUploaded, total));
                 await using (var fs = File.OpenRead(local))
@@ -101,10 +101,10 @@ public partial class SftpPanel
                 done += size;
                 SetProgress(done, total);
             }
-            EndTransfer($"업로드 완료: {files.Count}개 ({HumanSize(total)}) → {target}");
+            EndTransfer(L.F("업로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), target));
         }
-        catch (OperationCanceledException) { EndTransfer("업로드를 취소했습니다."); }
-        catch (Exception ex) { EndTransfer($"업로드 실패: {ex.Message}"); }
+        catch (OperationCanceledException) { EndTransfer(L.T("업로드를 취소했습니다.")); }
+        catch (Exception ex) { EndTransfer(L.F("업로드 실패: {0}", ex.Message)); }
         await NavigateAsync(_cwd);
     }
 
@@ -115,7 +115,7 @@ public partial class SftpPanel
         var items = Selected();
         if (items.Count == 0 || _busy) return;
         var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
-        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "다운로드할 폴더 선택", InitialDirectory = downloads };
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = L.T("다운로드할 폴더 선택"), InitialDirectory = downloads };
         if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
         await DownloadAsync(items, dlg.FolderName, openWhenDone: false);
     }
@@ -136,7 +136,7 @@ public partial class SftpPanel
     private async Task OpenFileAsync(SftpItem item)
     {
         if (item.Size > 200L * 1024 * 1024 &&
-            Dialog.Show(Window.GetWindow(this)!, $"{HumanSize(item.Size)} 파일입니다. 받아서 열까요?", "열기",
+            Dialog.Show(Window.GetWindow(this)!, L.F("{0} 파일입니다. 받아서 열까요?", HumanSize(item.Size)), L.T("열기"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         var host = _getAuth()?.Host.Address ?? "sftp";
         var dir = Path.Combine(Path.GetTempPath(), "Nubis", "sftp", host, Guid.NewGuid().ToString("N")[..8]);
@@ -166,7 +166,7 @@ public partial class SftpPanel
         try
         {
             var c = await ClientAsync();
-            var ct = BeginTransfer("다운로드 목록 확인 중...", 0);
+            var ct = BeginTransfer(L.T("다운로드 목록 확인 중..."), 0);
 
             var files = new List<(string Remote, string Local, long Size)>();
             var dirs = new List<string>();
@@ -179,14 +179,14 @@ public partial class SftpPanel
             var root = Path.GetFullPath(localDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (files.Any(f => !Path.GetFullPath(f.Local).StartsWith(root, StringComparison.OrdinalIgnoreCase)) ||
                 dirs.Any(d => !Path.GetFullPath(d).StartsWith(root, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException("허용되지 않는 파일 이름이 있어 다운로드를 중단했습니다.");
+                throw new InvalidOperationException(L.T("허용되지 않는 파일 이름이 있어 다운로드를 중단했습니다."));
 
             var total = files.Sum(f => f.Size);
             long done = 0;
             foreach (var d in dirs) Directory.CreateDirectory(d);
             foreach (var (remote, local, size) in files)
             {
-                TransferText.Text = $"다운로드 {Path.GetFileName(local)}  ({HumanSize(done)} / {HumanSize(total)})";
+                TransferText.Text = L.F("다운로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
                 var baseDone = done;
                 var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesDownloaded, total));
                 await using (var fs = File.Create(local))
@@ -195,11 +195,11 @@ public partial class SftpPanel
                 SetProgress(done, total);
             }
 
-            EndTransfer($"다운로드 완료: {files.Count}개 ({HumanSize(total)}) → {destLabel}");
+            EndTransfer(L.F("다운로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), destLabel));
             return files.Select(f => f.Local).ToList();
         }
-        catch (OperationCanceledException) { EndTransfer("다운로드를 취소했습니다."); }
-        catch (Exception ex) { EndTransfer($"다운로드 실패: {ex.Message}"); }
+        catch (OperationCanceledException) { EndTransfer(L.T("다운로드를 취소했습니다.")); }
+        catch (Exception ex) { EndTransfer(L.F("다운로드 실패: {0}", ex.Message)); }
         return null;
     }
 }
