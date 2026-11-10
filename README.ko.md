@@ -1,6 +1,6 @@
 <img src="nubis.png" width="96" align="right"/>
 
-[English](README.md) | **한국어**
+[English](README.md) | **한국어** · 📖 [사용자 가이드](docs/guide.ko.md)
 
 # Nubis
 
@@ -9,8 +9,6 @@
 > 이름: 라틴어 *nubis* = "구름의" + 우리말 "누비다" (여러 클라우드의 서버를 누비며 접속한다)
 
 > **언어:** 앱 화면은 한국어와 영어를 지원한다 — 처음 실행할 때 고르고(한국어 기본), Settings → 언어에서 언제든 바꿀 수 있다. Claude 패널도 같은 언어로 답한다.
-
-> **사용자 가이드:** 설정 방법, 모든 기능과 설정의 동작 — [docs/guide.ko.md](docs/guide.ko.md)
 
 ## 주요 기능
 

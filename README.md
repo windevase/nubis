@@ -1,6 +1,6 @@
 <img src="nubis.png" width="96" align="right"/>
 
-**English** | [한국어](README.ko.md)
+**English** | [한국어](README.ko.md) · 📖 [User Guide](docs/guide.md)
 
 # Nubis
 
@@ -9,8 +9,6 @@
 > Name: Latin *nubis* = "of the cloud" + Korean *nubida* ("to roam through") — roaming the servers of many clouds.
 
 > **Languages:** the app UI is available in Korean and English — pick one on first launch (Korean is the default) and switch any time in Settings → Language. The Claude panel answers in the same language.
-
-> **User guide:** setup, every feature and every setting explained — [docs/guide.md](docs/guide.md)
 
 ## Highlights
 
