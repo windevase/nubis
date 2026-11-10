@@ -41,8 +41,8 @@ public sealed class CloudProfile : INotifyPropertyChanged
 
     public string DefaultUsername { get; set; } = "";
     public string? ProtectedDefaultPassword { get; set; }
-    public int SshPort { get; set; } = 50022;
-    public int RdpPort { get; set; } = 33890;
+    public int SshPort { get; set; } = 22;
+    public int RdpPort { get; set; } = 3389;
     public bool UsePublicIp { get; set; }
     public bool IncludeStopped { get; set; } = true;
     public DateTime? LastSync { get; set; }

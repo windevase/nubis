@@ -30,12 +30,12 @@ public class CloudSyncTests
         Assert.Equal(0, removed);
         var lin = hosts.Single(h => h.CloudInstanceId == "i-1");
         Assert.Equal(Protocol.Ssh, lin.Protocol);
-        Assert.Equal(50022, lin.Port);
+        Assert.Equal(22, lin.Port);
         Assert.Equal("10.0.0.1", lin.Address);
         Assert.Equal("api", lin.Purpose);
         var win = hosts.Single(h => h.CloudInstanceId == "i-2");
         Assert.Equal(Protocol.Rdp, win.Protocol);
-        Assert.Equal(33890, win.Port);
+        Assert.Equal(3389, win.Port);
         Assert.NotNull(p.LastSync);
     }
 
