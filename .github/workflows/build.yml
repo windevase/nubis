@@ -12,6 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    env:
+      # VirusTotal API 키 (저장소 Settings → Secrets → Actions 의 VT_API_KEY). 없으면 검사 단계를 건너뛴다
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
     steps:
       - uses: actions/checkout@v7
 
@@ -45,3 +48,29 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS.txt
           generate_release_notes: true
+
+      - name: VirusTotal 검사 (v* 태그)
+        if: startsWith(github.ref, 'refs/tags/v') && env.VT_API_KEY != ''
+        uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ env.VT_API_KEY }}
+          files: |
+            publish/Nubis.exe
+            dist/*.zip
+          request_rate: 4   # 무료 공개 API 한도 (분당 4회)
+
+      - name: 릴리스 설명에 SHA256 · VirusTotal 링크
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # VirusTotal 결과 주소는 파일 SHA256 으로 정해진다 (검사 전에는 "찾을 수 없음")
+          $lines = @('', '### Checksums · VirusTotal', '', '| File | SHA256 | Scan |', '|---|---|---|')
+          foreach ($l in Get-Content dist/SHA256SUMS.txt) {
+            $hash, $name = $l -split '\s+', 2
+            $lines += "| ``$name`` | ``$hash`` | [VirusTotal](https://www.virustotal.com/gui/file/$hash) |"
+          }
+          $body = gh release view $env:GITHUB_REF_NAME --json body --jq .body
+          (@($body) + $lines) -join "`n" | Set-Content -Encoding utf8 notes.md
+          gh release edit $env:GITHUB_REF_NAME --notes-file notes.md
