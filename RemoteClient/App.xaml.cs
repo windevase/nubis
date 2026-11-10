@@ -23,6 +23,12 @@ public partial class App : Application
         // 계정별 프로필: 로그인한 계정(또는 로그인을 껐을 때 소유자)의 폴더로 데이터 위치를 바꾼다.
         // 소유자가 처음 로그인하면 로그인을 켜기 전 공통 폴더의 데이터를 넘겨받는다.
         var cfg = SettingsStore.Global.Login;
+        // 소유자 기능이 생기기 전에 로그인을 설정한 경우: 업그레이드 후 처음 로그인한 계정을 소유자로 (기존 데이터를 넘겨받음)
+        if (cfg.Enabled && cfg.OwnerKey.Length == 0 && signedIn != null)
+        {
+            SettingsStore.UpdateGlobal(s => s.Login.OwnerKey = signedIn);
+            cfg = SettingsStore.Global.Login;
+        }
         if (Profiles.Choose(cfg, signedIn, Profiles.Exists) is { } key)
         {
             var dir = Profiles.Dir(key);
