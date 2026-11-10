@@ -1,0 +1,28 @@
+name: vt-check
+
+# VirusTotal API 키(VT_API_KEY) 확인용 — Actions 탭에서 수동 실행. 키 값은 출력하지 않는다
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: API 키 확인
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        run: |
+          if [ -z "$VT_API_KEY" ]; then echo "::error::VT_API_KEY 가 없습니다"; exit 1; fi
+          echo "키 길이: ${#VT_API_KEY}"
+          # 아무 파일 해시나 조회: 200/404 = 키 정상, 401 = 키 오류
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "x-apikey: $VT_API_KEY" \
+            https://www.virustotal.com/api/v3/files/730b0871c3a7648f87c3411e708c68b1fdd76969785a8da0a3d4180b09adc2ac)
+          echo "HTTP $code"
+          case "$code" in
+            200|404) echo "키 정상" ;;
+            401) echo "::error::키가 올바르지 않습니다 (401)"; exit 1 ;;
+            *) echo "::error::예상하지 못한 응답 $code"; exit 1 ;;
+          esac
