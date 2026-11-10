@@ -89,5 +89,5 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 
 ## 문서
 
-- 기능이 바뀌면 `README.md` 를 같이 갱신한다. 새 오픈소스 의존성은 `THIRD-PARTY-NOTICES.md` 에 추가한다.
+- 기능이 바뀌면 `README.md`(영어, GitHub 기본) 와 `README.ko.md`(한국어) 를 **둘 다** 같은 내용으로 갱신한다. 두 파일 맨 위의 언어 전환 링크는 유지한다. 새 오픈소스 의존성은 `THIRD-PARTY-NOTICES.md` 에 추가한다.
 - 코드 주석과 사용자 문구는 한국어.
