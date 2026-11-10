@@ -13,6 +13,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 ```
 
 - 직접 `dotnet` 을 부를 때는 `$env:DOTNET_ROOT="$env:LOCALAPPDATA\Microsoft\dotnet"` 를 설정해야 빌드된 exe/테스트 exe 가 실행된다.
+- 네이티브 DLL 은 **exe 에 넣지 않는다** (`IncludeNativeLibrariesForSelfExtract=false`, exe 옆에 `*_cor3.dll`·`WebView2Loader.dll` 등). 넣으면 실행 때 `%TEMP%\.net\` 에 풀어 불러오는데, 이 동작을 VirusTotal 샌드박스(CAPE)·SentinelOne 이 악성으로 판정했다.
 - 단일 exe **압축(EnableCompressionInSingleFile)은 쓰지 않는다** — 실행할 때마다 DLL 을 메모리에 풀어 약 100MB 를 더 쓴다. ReadyToRun 도 효과 대비 크기만 커져 뺐다 (exe 약 180MB 가 정상).
 - **사용자가 `publish\Nubis.exe` 를 실행 중이면 publish 가 파일 잠금으로 실패한다.** 사용자의 Nubis 를 종료하지 말고, 닫아 달라고 요청한다. 확인:
   `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like '*\publish\Nubis.exe'`

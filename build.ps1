@@ -1,7 +1,7 @@
 ﻿# Nubis 빌드/배포 스크립트
 #   .\build.ps1          → Debug 빌드 후 실행
 #   .\build.ps1 test     → 자동 테스트 (tests\Nubis.Tests)
-#   .\build.ps1 publish  → publish\ 에 단일 exe(자체 포함, .NET 설치 불필요) 생성
+#   .\build.ps1 publish  → publish\ 에 단일 exe(자체 포함, .NET 설치 불필요) + 네이티브 DLL 몇 개 생성
 #                          + dist\Nubis-<버전>-portable-win-x64.zip (압축 풀고 바로 실행) 과 SHA256SUMS.txt
 #   .\build.ps1 publish -Version 0.2.0   → 버전 지정 (기본: Nubis.csproj 의 <Version>)
 param([string]$Mode = "run", [string]$Version = "")
@@ -21,13 +21,15 @@ if ($Mode -eq "test") {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } elseif ($Mode -eq "publish") {
     if (-not $Version) { $Version = ([xml](Get-Content $proj -Raw -Encoding UTF8)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1 }
+    # 네이티브 DLL(WPF·WebView2Loader)은 exe 에 넣지 않고 옆에 둔다 (IncludeNativeLibrariesForSelfExtract=false).
+    # 넣으면 실행할 때마다 %TEMP%\.net\ 에 풀어서 불러오는데, 백신·샌드박스가 이를 드로퍼·DLL 하이재킹으로 오탐한다.
     # 압축(EnableCompressionInSingleFile)은 실행할 때마다 DLL 전체를 메모리에 풀어 약 100MB 를 더 쓰므로 끈다.
     $out = Join-Path $PSScriptRoot "publish"
     # 기존 폴더에 다시 게시하면 SDK 증분 정리가 wwwroot\·고지문을 지우고 다시 복사하지 않는다 → 항상 비우고 게시
     # (실행 중인 publish\Nubis.exe 가 있으면 여기서 실패한다 — 앱을 닫고 다시 실행)
     if (Test-Path $out) { Remove-Item $out -Recurse -Force }
     & $dotnet publish $proj -c Release -r win-x64 --self-contained true `
-        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=false `
         -p:DebugType=none -p:Version=$Version -o $out
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Get-ChildItem $out -Filter *.xml | Remove-Item
