@@ -148,7 +148,7 @@ public sealed class McpServer : IDisposable
                 {
                     protocolVersion = version,
                     capabilities = new { tools = new { listChanged = false } },
-                    serverInfo = new { name = ServerName, version = "0.1.0" },
+                    serverInfo = new { name = ServerName, version = typeof(McpServer).Assembly.GetName().Version?.ToString(3) ?? "0.0.0" },
                     instructions = _instructions,
                 };
 
