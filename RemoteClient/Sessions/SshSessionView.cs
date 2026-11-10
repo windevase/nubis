@@ -79,6 +79,13 @@ public sealed class SshSessionView : UserControl, ISessionView
         };
     }
 
+    /// <summary>패널을 연 뒤, 패널이 열리기 전에 셸이 알려준 현재 폴더가 있으면 그리로</summary>
+    private async System.Threading.Tasks.Task OpenSftpAsync(SftpPanel panel)
+    {
+        await panel.OpenAsync();
+        if (SettingsStore.Current.SftpFollowTerminal && _lastCwd != null) await panel.FollowAsync(_lastCwd);
+    }
+
     /// <summary>터미널 현재 폴더: OSC 7 로 받은 값, 없으면 화면 마지막 프롬프트에서 읽기</summary>
     private async System.Threading.Tasks.Task<string?> TerminalCwdAsync()
     {
@@ -131,7 +138,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _sftpColumn.MinWidth = 260;
             _sftpColumn.Width = new GridLength(_sftpWidth);
             _splitter.Visibility = Visibility.Visible;
-            _ = _sftp.OpenAsync();
+            _ = OpenSftpAsync(_sftp);
         }
         else
         {

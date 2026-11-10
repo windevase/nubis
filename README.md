@@ -24,25 +24,17 @@
 ## 파일
 
 ```
-RemoteClient/            (프로젝트: Nubis.csproj)
+RemoteClient/            (프로젝트: Nubis.csproj, 네임스페이스는 모두 Nubis)
   App.xaml               테마(색상, 버튼·입력창·스크롤바 스타일)
-  MainWindow.xaml(.cs)   탭바, 사이드바, 호스트 카드, 편집 패널, 빠른 접속
-  SshSessionView.cs      SSH 세션 (터미널 + SFTP 패널)
-  SftpPanel.xaml         SFTP 파일 패널 (탐색·업로드·다운로드·이름변경·삭제)
-  XtermView.cs           xterm.js 터미널 화면 공통 (테마·강조·버퍼 읽기)
-  LocalTerminalView.cs   로컬 터미널 (ConPTY: PowerShell 탭, Claude 패널)
-  MainWindow.Claude.cs   Claude 패널 + MCP 도구
-  McpServer.cs           내장 MCP 서버 (Streamable HTTP)
-  SshExec.cs / WinRm.cs  여러 서버 명령 실행 (SSH / WinRM)
-  RdpSessionView.cs      RDP 세션 (연결/해상도 자동 맞춤/끊김 처리)
-  RdpAxHost.cs           mstscax ActiveX 래퍼 + 이벤트 싱크
-  CredentialDialog.xaml  접속 시 사용자명/비밀번호 입력창
-  TerminalThemes.cs      터미널 색 테마 11종 (ANSI 16색 팔레트)
-  Cloud.cs               클라우드 프로필 모델, AWS/Tencent/GCP/Azure 조회, 동기화 병합
-  ProfileDialog.xaml     클라우드 프로필 설정 (기본 계정·포트·주소 방식)
-  Vault.cs               Vault 항목(비밀번호·SSH 키) 모델·저장, 접속용 사본에 값 채우기
-  VaultEntryDialog.xaml  Vault 항목 추가·수정 / VaultPickerDialog.xaml 호스트 편집에서 항목 선택
-  Models.cs / Storage.cs 호스트 모델, JSON 저장, DPAPI, known_hosts, 설정(settings.json)
+  MainWindow.*           창 + 화면별 partial (Hosts·HostEditor·Vault·Settings·Cloud·Tabs)
+  Claude/                Claude 패널, 내장 MCP 서버·도구, 권한 차단 규칙, 읽기 전용 명령 판별
+  Sessions/              SSH·RDP·로컬 터미널 세션, xterm.js 화면, ConPTY, 터미널 테마
+  Sftp/                  SFTP 패널 (탐색·전송·끌어내기·편집 동기화)
+  Remote/                여러 서버 비대화형 실행 (SSH / WinRM)
+  Cloud/                 클라우드 프로필·동기화, 제공자 4종 (AWS·Tencent·GCP·Azure)
+  Vault/                 Vault 계정 모델·저장, 추가·선택 대화상자
+  Core/                  호스트 모델, JSON 저장·DPAPI·설정, 로그, 아이콘
+  Dialogs/               승인·계정 입력·메시지·프로필·입력 대화상자
   wwwroot/               terminal.html + xterm.js 5.5 (오프라인 번들)
   Assets/                nubis.ico, nubis-256.png
 tests/Nubis.Tests/       자동 테스트 (xUnit)

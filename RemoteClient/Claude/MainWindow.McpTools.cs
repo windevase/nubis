@@ -12,211 +12,14 @@ using System.Windows.Media;
 namespace Nubis;
 
 /// <summary>
-/// Claude Code 패널 + 앱 내장 MCP 서버.
-/// 패널은 공식 claude CLI 를 로컬 터미널(ConPTY)로 띄우고, --mcp-config 로 이 앱의 MCP 서버에 연결한다.
+/// Claude 패널 MCP 도구 (2차): Vault 목록, 호스트 추가·수정·삭제, 접속 진단, 출력 기다리기, SFTP, 클라우드 동기화.
+/// 보안 원칙:
+/// - 호스트 추가·수정·삭제는 항상 승인 (주소를 바꾸고 Vault 계정을 붙여 open_session 하면 계정이 다른 서버로 갈 수 있음)
+/// - Claude 는 비밀번호를 넣거나 읽지 못한다 (Vault 계정 연결만)
+/// - 원격 파일 읽기는 run_command 와 같은 규칙(승인, 설정 시 읽기 전용 자동 승인), 파일 전송은 항상 승인
 /// </summary>
 public partial class MainWindow
 {
-    private McpServer? _mcp;
-    private LocalTerminalView? _claudeView;
-    private double _claudeWidth = 520;
-
-    private static string ClaudeWorkDir
-    {
-        get
-        {
-            var dir = Path.Combine(AppPaths.DataDir, "claude");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-    }
-
-    // =================== 패널 ===================
-
-    private void OnToggleClaude(object sender, RoutedEventArgs e) => ToggleClaude();
-    private void OnCloseClaude(object sender, RoutedEventArgs e) => ToggleClaude(false);
-
-    private void ToggleClaude(bool? open = null)
-    {
-        var isOpen = ClaudeColumn.Width.Value > 0;
-        var want = open ?? !isOpen;
-        if (want == isOpen)
-        {
-            if (want) _claudeView?.FocusSession();
-            return;
-        }
-
-        if (want)
-        {
-            ClaudeColumn.Width = new GridLength(_claudeWidth);
-            ClaudeColumn.MinWidth = 320;
-            ClaudeSplitter.Visibility = Visibility.Visible;
-            ClaudePanel.Visibility = Visibility.Visible;
-            EnsureClaude();
-            Dispatcher.BeginInvoke(() => _claudeView?.FocusSession(), System.Windows.Threading.DispatcherPriority.Input);
-        }
-        else
-        {
-            _claudeWidth = ClaudeColumn.ActualWidth > 0 ? ClaudeColumn.ActualWidth : _claudeWidth;
-            ClaudeColumn.MinWidth = 0;
-            ClaudeColumn.Width = new GridLength(0);
-            ClaudeSplitter.Visibility = Visibility.Collapsed;
-            ClaudePanel.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    private void OnOpenAuditLog(object sender, RoutedEventArgs e)
-    {
-        if (!File.Exists(AuditLog.FilePath)) File.WriteAllText(AuditLog.FilePath, "");
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(AuditLog.FilePath) { UseShellExecute = true });
-    }
-
-    private void OnRestartClaude(object sender, RoutedEventArgs e)
-    {
-        if (_claudeView != null)
-        {
-            _claudeView.CloseSession();
-            ClaudeHost.Content = null;
-            _claudeView = null;
-        }
-        EnsureClaude();
-    }
-
-    private void EnsureClaude()
-    {
-        if (_claudeView != null) return;
-
-        _mcp ??= new McpServer(BuildTools(), McpInstructions);
-        var configPath = _mcp.WriteClientConfig(Path.Combine(ClaudeWorkDir, "mcp-config.json"));
-        WriteClaudeMd();
-        // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
-        var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
-        _lastActiveContext = null;
-        UpdateActiveContext();
-        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath), new UTF8Encoding(false));
-
-        _claudeView = new LocalTerminalView(() =>
-        {
-            var exe = FindClaude();
-            if (exe == null)
-                return "cmd.exe /d /k echo Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code";
-            var args = $"--mcp-config \"{configPath}\" --settings \"{guardPath}\" --allowedTools mcp__{McpServer.ServerName}";
-            // npm 설치본은 claude.cmd 라 cmd 를 거쳐 실행
-            return exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                ? $"\"{exe}\" {args}"
-                : $"cmd.exe /d /s /c \"\"{exe}\" {args}\"";
-        }, ClaudeWorkDir, "Claude Code 가 종료되었습니다.");
-        ClaudeHost.Content = _claudeView;
-    }
-
-    // =================== 현재 화면 알려주기 (UserPromptSubmit hook) ===================
-    // 사용자가 탭을 바꿔도 Claude 는 알 수 없으므로, 앱이 현재 탭 정보를 파일에 써 두고
-    // Claude 패널의 UserPromptSubmit hook 이 메시지를 보낼 때마다 그 내용을 질문에 붙인다.
-
-    private static string ActiveContextPath => Path.Combine(ClaudeWorkDir, ClaudeGuard.ActiveContextFile);
-    private string? _lastActiveContext;
-
-    /// <summary>현재 탭 정보를 파일에 쓴다 (탭 선택·닫기·연결 상태 변경 때 호출)</summary>
-    private void UpdateActiveContext()
-    {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(UpdateActiveContext); return; }
-        var text = ActiveContextText(_tabs.FirstOrDefault(t => t.IsSelected), _tabs.Count);
-        if (text == _lastActiveContext) return;
-        try
-        {
-            File.WriteAllText(ActiveContextPath, text, new UTF8Encoding(false));
-            _lastActiveContext = text;
-        }
-        catch { }
-    }
-
-    public static string StatusText(SessionStatus s) => s switch
-    {
-        SessionStatus.Connected => "연결됨",
-        SessionStatus.Connecting => "연결 중",
-        _ => "끊김",
-    };
-
-    /// <summary>hook 이 질문에 붙일 문구. 비밀 값(계정·비밀번호)은 넣지 않는다.</summary>
-    public static string ActiveContextText(SessionTab? tab, int openTabs) =>
-        tab == null
-            ? ActiveContextText(null, "", Protocol.Local, null, 0, SessionStatus.Disconnected, openTabs)
-            : ActiveContextText(tab.Id, tab.Title, tab.Protocol, tab.Host?.Address, tab.Host?.Port ?? 0, tab.Status, openTabs);
-
-    public static string ActiveContextText(int? id, string title, Protocol protocol, string? address, int port, SessionStatus status, int openTabs)
-    {
-        if (id == null)
-            return $"[Nubis 현재 화면] 사용자는 세션 탭이 아닌 호스트 목록(홈) 화면을 보고 있습니다. 열린 세션 탭 {openTabs}개 (list_sessions 로 확인).";
-        var kind = protocol switch
-        {
-            Protocol.Ssh => "SSH 터미널",
-            Protocol.Rdp => "RDP 원격 데스크톱",
-            _ => "로컬 PowerShell",
-        };
-        var host = address != null ? $" · {address}:{port}" : "";
-        var how = protocol == Protocol.Rdp ? "capture_screen" : "read_terminal / get_selection / capture_screen";
-        // 탭 제목은 호스트 이름에서 오므로 줄바꿈·따옴표를 정리해 한 줄을 유지
-        var safeTitle = title.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
-        return $"[Nubis 현재 화면] 사용자가 지금 보고 있는 탭: session_id={id} · \"{safeTitle}\" · {kind}{host} · {StatusText(status)}. " +
-               $"'이 화면 / 지금 터미널 / 이 에러' 는 이 탭을 뜻합니다. 화면 내용은 {how} 를 session_id={id} 로 호출해 확인하세요 " +
-               $"(이전 대화의 session_id 를 그대로 쓰지 마세요). 열린 세션 탭 {openTabs}개.";
-    }
-
-    private void ShutdownClaude()
-    {
-        try { _claudeView?.CloseSession(); } catch { }
-        try { _mcp?.Dispose(); } catch { }
-    }
-
-    /// <summary>PATH 와 일반 설치 위치에서 claude 실행 파일 찾기</summary>
-    private static string? FindClaude()
-    {
-        var names = new[] { "claude.exe", "claude.cmd" };
-        var dirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries).ToList();
-        dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "bin"));
-        dirs.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm"));
-        foreach (var d in dirs)
-        foreach (var n in names)
-        {
-            try
-            {
-                var p = Path.Combine(d.Trim().Trim('"'), n);
-                if (File.Exists(p)) return p;
-            }
-            catch { }
-        }
-        return null;
-    }
-
-    private const string McpInstructions =
-        "이 MCP 서버는 Windows 원격 접속 클라이언트 'Nubis' 입니다. 사용자는 이 앱의 Claude 패널에서 대화하고 있습니다.\n" +
-        "- 서버 찾기: list_groups 로 그룹(클라우드 프로필 포함)을 보고, list_hosts 로 이름·IP·상태를 검색하세요.\n" +
-        "- '접속해줘/열어줘' 요청은 open_session 으로 앱에 SSH/RDP 탭을 엽니다.\n" +
-        "- 여러 서버 점검은 run_command 로 병렬 실행합니다(리눅스는 SSH, Windows 는 WinRM PowerShell). OS 가 다르면 나눠서 호출하세요. 실행 전에 앱이 사용자에게 승인을 받습니다. " +
-        "가능하면 읽기 전용 명령을 쓰고, 변경 작업은 사용자가 명시적으로 요청했을 때만 하세요.\n" +
-        "- 사용자가 '이 화면', '지금 터미널', '이 에러' 라고 하면 read_terminal 이나 get_selection 으로 현재 탭 내용을 먼저 확인하세요. RDP(Windows 원격 데스크톱) 화면은 capture_screen 으로 이미지를 받아 보세요.\n" +
-        "- 사용자는 대화 중에 탭을 자주 바꿉니다. 메시지마다 붙는 '[Nubis 현재 화면]' 줄이 그 메시지를 보낸 순간 사용자가 보고 있던 탭입니다. 이전에 쓰던 session_id 대신 그 줄의 session_id 를 쓰세요.\n" +
-        "- 호스트 등록·수정·삭제는 add_host / update_host / delete_host 로 합니다(앱이 승인을 받음). 계정은 비밀번호 대신 list_vault 의 Vault 계정을 vault 로 연결하세요.\n" +
-        "- 접속이 안 된다고 하면 먼저 test_connection 으로 DNS·포트·SSH 배너를 확인하세요.\n" +
-        "- send_to_terminal 로 명령을 보낸 뒤에는 wait_for_output 으로 끝날 때까지(또는 원하는 문자열이 나올 때까지) 기다렸다가 결과를 보세요.\n" +
-        "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
-        "- 클라우드 서버 목록이 오래됐으면 cloud_sync 로 다시 가져오세요.\n" +
-        "- 앱 설정(테마·글꼴·구문 강조·기본 포트 등)을 바꿔 달라고 하면 get_settings 로 확인한 뒤 update_settings 로 바꾸세요. settings.json 을 직접 고치지 마세요(앱이 덮어씁니다).\n" +
-        "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +
-        "- Nubis 데이터 파일(hosts.json, cloud_profiles.json, vault.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +
-        "- 답변은 한국어로 하세요.";
-
-    private static void WriteClaudeMd()
-    {
-        var path = Path.Combine(ClaudeWorkDir, "CLAUDE.md");
-        if (File.Exists(path)) return;   // 사용자가 수정했을 수 있으므로 덮어쓰지 않음
-        File.WriteAllText(path,
-            "# Nubis 의 Claude 패널\n\n" +
-            "이 대화는 원격 접속 클라이언트 Nubis 안에서 실행 중이다. `nubis` MCP 도구로 앱을 다룬다.\n\n" +
-            McpInstructions.Replace("\n", "\n\n") + "\n\n" +
-            "이 파일은 직접 수정해도 된다 (앱이 다시 덮어쓰지 않음).\n", new UTF8Encoding(false));
-    }
-
     // =================== MCP 도구 ===================
 
     /// <summary>UI 스레드에서 실행하고 결과 반환 (MCP 요청은 백그라운드 스레드에서 들어옴)</summary>
@@ -532,163 +335,141 @@ public partial class MainWindow
         return "설정을 바꿨습니다:\n" + command + note;
     }
 
-    // =================== 화면 캡처 (capture_screen) ===================
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern int GetGuiResources(IntPtr hProcess, int uiFlags);   // 0 = GDI, 1 = USER 객체 수
-
-    /// <summary>
-    /// 탭 영역을 PrintWindow(전체 렌더링 포함)로 캡처. RDP ActiveX·WebView2 처럼 자체 창에 그리는 화면도 담긴다.
-    /// UI 스레드에서 호출.
-    /// </summary>
-    private async Task<McpImage> CaptureSessionAsync(SessionTab? tab, int maxWidth)
+    // =================== MCP 도구 (2차) ===================
+    private IEnumerable<McpTool> ExtraTools()
     {
-        if (tab == null) throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
-        if (WindowState == WindowState.Minimized)
-            throw new McpToolException("Nubis 창이 최소화되어 있어 화면을 캡처할 수 없습니다. 창을 열어 달라고 사용자에게 요청하세요.");
-
-        var switched = !tab.IsSelected;
-        if (switched)
-        {
-            // 가려진 RDP 화면은 갱신되지 않으므로 보이게 한 뒤 그려질 시간을 준다
-            SelectTab(tab);
-            await Task.Delay(700);
-        }
-
-        var view = tab.View;
-        if (view.ActualWidth < 10 || view.ActualHeight < 10) throw new McpToolException("탭 화면 크기를 알 수 없습니다.");
-        var dpi = VisualTreeHelper.GetDpi(this);
-        var origin = view.TransformToAncestor(this).Transform(new System.Windows.Point(0, 0));
-        var crop = new System.Drawing.Rectangle(
-            (int)(origin.X * dpi.DpiScaleX), (int)(origin.Y * dpi.DpiScaleY),
-            (int)(view.ActualWidth * dpi.DpiScaleX), (int)(view.ActualHeight * dpi.DpiScaleY));
-
-        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
-        var clientW = (int)(ActualWidth * dpi.DpiScaleX) + 32;
-        var clientH = (int)(ActualHeight * dpi.DpiScaleY) + 32;
-
-        byte[] data;
-        string mime;
-        int outW, outH;
-        using (var full = new System.Drawing.Bitmap(clientW, clientH))
-        {
-            using (var g = System.Drawing.Graphics.FromImage(full))
+        // ---------- Vault ----------
+        yield return new McpTool("list_vault",
+            "Vault 계정 목록 (이름 · 사용자명 · 로그인 방식 · 사용 중인 호스트 수). 비밀번호·키 내용은 절대 포함하지 않는다. " +
+            "add_host / update_host 의 vault 인자에 이름을 넘겨 호스트에 연결한다.",
+            Schema(new { }),
+            _ => OnUi(() =>
             {
-                var hdc = g.GetHdc();
-                try { PrintWindow(hwnd, hdc, 0x1 | 0x2); }   // PW_CLIENTONLY | PW_RENDERFULLCONTENT
-                finally { g.ReleaseHdc(hdc); }
-            }
-            crop.Intersect(new System.Drawing.Rectangle(0, 0, full.Width, full.Height));
+                var all = VaultStore.All();
+                if (all.Count == 0) return "Vault 에 저장된 계정이 없습니다. 사용자에게 Nubis 의 Vault 메뉴에서 계정을 추가해 달라고 안내하세요.";
+                var sb = new StringBuilder("id | 이름 | 사용자명 | 로그인 방식 | 사용 호스트\n");
+                foreach (var v in all)
+                    sb.AppendLine($"{v.Id.ToString()[..8]} | {v.Name} | {(v.Username.Length > 0 ? v.Username : "-")} | {v.MethodsText}{(v.KeyType.Length > 0 ? $" ({v.KeyType})" : "")} | {_hosts.Count(h => h.VaultId == v.Id)}");
+                return sb.ToString();
+            }));
 
-            var scale = Math.Min(1.0, Math.Clamp(maxWidth, 320, 3840) / (double)crop.Width);
-            outW = Math.Max(1, (int)(crop.Width * scale));
-            outH = Math.Max(1, (int)(crop.Height * scale));
-            using var shot = new System.Drawing.Bitmap(outW, outH);
-            using (var g = System.Drawing.Graphics.FromImage(shot))
+        // ---------- 호스트 관리 ----------
+        yield return new McpTool("add_host",
+            "호스트(SSH/RDP 서버)를 새로 등록한다. 비밀번호는 넣을 수 없다 — 계정은 vault 로 Vault 계정을 연결하거나, 비워 두면 접속할 때 앱이 묻는다. " +
+            "등록 전에 앱이 사용자 승인을 받는다.",
+            Schema(new
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-                g.DrawImage(full, new System.Drawing.Rectangle(0, 0, outW, outH), crop, System.Drawing.GraphicsUnit.Pixel);
-            }
+                address = new { type = "string", description = "IP 또는 호스트명" },
+                protocol = new { type = "string", @enum = new[] { "ssh", "rdp" }, description = "기본 ssh" },
+                label = new { type = "string" },
+                group = new { type = "string" },
+                port = new { type = "integer", description = "생략하면 설정의 기본 포트" },
+                username = new { type = "string" },
+                vault = new { type = "string", description = "Vault 계정 이름 또는 id" },
+                public_ip = new { type = "string" },
+                use_public_ip = new { type = "boolean" },
+            }, "address"),
+            a => OnUi(() => AddHostFromClaude(a)));
 
-            // 대부분 PNG, 사진·배경화면처럼 큰 화면은 JPEG 로 (토큰·전송량 절약)
-            using var ms = new MemoryStream();
-            shot.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            if (ms.Length <= 1_500_000) { data = ms.ToArray(); mime = "image/png"; }
-            else
+        yield return new McpTool("update_host",
+            "등록된 호스트 1개의 설정을 바꾼다 (넘긴 항목만). host 는 이름·IP·id. 클라우드 동기화 호스트는 주소를 바꿀 수 없다. " +
+            "비밀번호는 바꿀 수 없다. 변경 전에 앱이 사용자 승인을 받는다.",
+            Schema(new
             {
-                using var jms = new MemoryStream();
-                var jpeg = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders().First(e => e.MimeType == "image/jpeg");
-                using var p = new System.Drawing.Imaging.EncoderParameters(1);
-                p.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
-                shot.Save(jms, jpeg, p);
-                data = jms.ToArray();
-                mime = "image/jpeg";
-            }
-        }
+                host = new { type = "string", description = "대상 호스트 (이름·IP·id, 정확히 1개여야 함)" },
+                address = new { type = "string", description = "새 주소 (직접 등록한 호스트만)" },
+                protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
+                label = new { type = "string" },
+                group = new { type = "string", description = "그룹 (직접 등록한 호스트만)" },
+                port = new { type = "integer" },
+                username = new { type = "string", description = "빈 문자열 = 지우기 (Vault 계정의 사용자명을 따름)" },
+                vault = new { type = "string", description = "Vault 계정 이름 또는 id (list_vault). \"none\" = 연결 해제" },
+                public_ip = new { type = "string", description = "빈 문자열 = 지우기" },
+                use_public_ip = new { type = "boolean" },
+            }, "host"),
+            a => OnUi(() => UpdateHostFromClaude(a)));
 
-        var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-        AuditLog.Write("capture_screen", new[] { target }, $"({outW}x{outH} {mime})", "조회");
-        var kind = tab.Protocol switch { Protocol.Rdp => "RDP", Protocol.Ssh => "SSH", _ => "로컬" };
-        return new McpImage(data, mime,
-            $"[{target}] {kind} 화면 {crop.Width}x{crop.Height}" + (outW != crop.Width ? $" (축소 {outW}x{outH})" : "") +
-            (switched ? " — 캡처를 위해 이 탭으로 전환했습니다." : ""));
-    }
+        yield return new McpTool("delete_host",
+            "호스트를 목록에서 지운다 (여러 개 가능, 'group:이름' 은 허용하지 않음). 클라우드 호스트는 클라우드 서버는 그대로 두고 다음 동기화에서도 숨긴다. " +
+            "삭제 전에 앱이 사용자 승인을 받는다.",
+            Schema(new { hosts = new { type = "array", items = new { type = "string" }, description = "이름·IP·id 목록" } }, "hosts"),
+            a => OnUi(() => DeleteHostsFromClaude(a)));
 
-    private async Task<string> RunCommandAsync(JsonElement a)
-    {
-        var specs = ListArg(a, "targets");
-        var command = Arg(a, "command");
-        var timeout = Math.Clamp(IntArg(a, "timeout_sec") ?? 60, 5, 1800);
-        if (specs.Count == 0 || command.Trim().Length == 0) throw new McpToolException("targets 와 command 가 필요합니다.");
-
-        // 대상 해석 (UI 스레드의 호스트 목록 사용)
-        var (targets, skipped) = await OnUi(() =>
-        {
-            var found = new List<HostEntry>();
-            var skip = new List<string>();
-            foreach (var spec in specs)
+        // ---------- 접속 진단 ----------
+        yield return new McpTool("test_connection",
+            "등록된 호스트에 접속이 안 될 때 원인을 찾는다: 주소별(사설 → 공인) DNS 조회, TCP 포트 연결(SSH 는 서버 배너까지), RDP 호스트는 WinRM(5986/5985)도 확인. " +
+            "로그인은 하지 않으며 서버를 바꾸지 않는다. ports 로 확인할 포트를 직접 지정할 수 있다(최대 10개).",
+            Schema(new
             {
-                var r = ResolveHosts(spec);
-                if (r.Count == 0) skip.Add($"{spec}: 일치하는 호스트 없음");
-                if (r.Count > 1 && !spec.StartsWith("group:", StringComparison.OrdinalIgnoreCase))
-                    skip.Add($"{spec}: {r.Count}개 일치 → 모두 포함");
-                found.AddRange(r);
-            }
-            var unique = found.DistinctBy(h => h.Id).ToList();
-            foreach (var h in unique.Where(h => h.IsStopped)) skip.Add($"{h.DisplayName}: 중지 상태({h.CloudState})");
-            var run = unique.Where(h => h.Protocol is Protocol.Ssh or Protocol.Rdp && !h.IsStopped).Select(WithProfileDefaults).ToList();
-            return (run, skip);
-        });
+                host = new { type = "string", description = "호스트 이름·IP·id" },
+                ports = new { type = "array", items = new { type = "integer" }, description = "확인할 포트 (생략 시 프로토콜 기본)" },
+                timeout_sec = new { type = "integer", description = "포트당 제한 시간 (기본 4초)" },
+            }, "host"),
+            TestConnectionAsync);
 
-        if (targets.Count == 0)
-            throw new McpToolException("실행할 수 있는 대상이 없습니다.\n" + string.Join("\n", skipped));
-
-        var useCmd = Arg(a, "windows_shell").Equals("cmd", StringComparison.OrdinalIgnoreCase);
-        var linux = targets.Where(h => h.Protocol == Protocol.Ssh).ToList();
-        var windows = targets.Where(h => h.Protocol == Protocol.Rdp).ToList();
-        var winLabel = useCmd ? "WinRM cmd" : "WinRM PowerShell";
-        // 시도할 주소 순서(사설 → 공인)를 승인 창에 그대로 보여준다
-        string Addrs(HostEntry h, string ports) => string.Join(" → ", h.AddressCandidates().Select(a => $"{a}:{ports}"));
-        var labels = linux.Select(h => $"[SSH]  {h.DisplayName}  ({Addrs(h, h.Port.ToString())})")
-            .Concat(windows.Select(h => $"[{winLabel}]  {h.DisplayName}  ({Addrs(h, $"{WinRm.HttpsPort}/{WinRm.HttpPort}")})"))
-            .ToList();
-        var mixed = linux.Count > 0 && windows.Count > 0
-            ? "\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요." : "";
-        // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행
-        var autoApproved = SettingsStore.Current.AutoApproveReadOnly
-            && (linux.Count == 0 || ReadOnlyCommands.IsReadOnly(command, CommandShell.Sh))
-            && (windows.Count == 0 || ReadOnlyCommands.IsReadOnly(command, useCmd ? CommandShell.Cmd : CommandShell.PowerShell));
-        if (!autoApproved)
-        {
-            var approved = await OnUi(() => ApprovalDialog.Ask(this, $"Claude 가 서버 {targets.Count}대에 명령 실행을 요청합니다",
-                "승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다." + mixed +
-                (skipped.Count > 0 ? $"\n제외: {skipped.Count}건 (중지·미일치)" : ""), labels, command));
-            if (!approved)
+        // ---------- 출력 기다리기 ----------
+        yield return new McpTool("wait_for_output",
+            "SSH/로컬 터미널에서 출력이 나올 때까지 기다린다. pattern 을 주면 그 문자열(또는 regex=true 면 정규식)이 새로 나타날 때까지, " +
+            "생략하면 출력이 idle_sec 초 동안 멈출 때까지(명령이 끝날 때까지) 기다린 뒤 화면 마지막 lines 줄을 돌려준다. send_to_terminal 다음에 쓰면 좋다.",
+            Schema(new
             {
-                AuditLog.Write("run_command", labels, command, "거부");
-                throw new McpToolException("사용자가 실행을 거부했습니다.");
-            }
-        }
+                session_id = new { type = "integer", description = "생략 시 현재 탭" },
+                pattern = new { type = "string", description = "기다릴 문자열 (예: '$ ', 'Complete!', 'error')" },
+                regex = new { type = "boolean" },
+                timeout_sec = new { type = "integer", description = "최대 대기 (기본 60, 최대 600)" },
+                idle_sec = new { type = "number", description = "pattern 없을 때 출력이 멈춘 것으로 볼 시간 (기본 2초)" },
+                lines = new { type = "integer", description = "돌려줄 줄 수 (기본 60)" },
+            }),
+            WaitForOutputAsync);
 
-        var sshTask = SshExec.RunAsync(linux, command, timeout, CancellationToken.None);
-        var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, CancellationToken.None);
-        await Task.WhenAll(sshTask, winTask);
-        var results = sshTask.Result.Concat(winTask.Result).ToList();
-        var okCount = results.Count(r => r.Ok);
-        AuditLog.Write("run_command", labels, command, $"{(autoApproved ? "자동 승인(읽기 전용)" : "승인")}·실행 (성공 {okCount} / 실패 {results.Count - okCount})");
+        // ---------- SFTP ----------
+        yield return new McpTool("sftp_list",
+            "SSH 호스트의 원격 폴더 목록 (이름·종류·크기·수정 시각·권한). 승인 규칙은 run_command 와 같다(설정에 따라 읽기 전용 자동 승인).",
+            Schema(new
+            {
+                host = new { type = "string" },
+                path = new { type = "string", description = "원격 경로 (생략 시 홈)" },
+            }, "host"),
+            a => SftpListAsync(a));
 
-        var sb = new StringBuilder($"실행 완료: 성공 {okCount} / 실패 {results.Count - okCount} (총 {results.Count}대)\n");
-        if (skipped.Count > 0) sb.AppendLine("제외: " + string.Join("; ", skipped));
-        foreach (var r in results.OrderBy(r => r.Ok).ThenBy(r => r.Host.DisplayName))
-        {
-            sb.AppendLine();
-            sb.AppendLine($"## {r.Host.DisplayName} ({r.Host.PrimaryAddress}{(r.Host.HasPublicIp ? $" / 공인 {r.Host.PublicIp}" : "")}) — {(r.ExitCode is { } c ? $"exit {c}" : "실패")}, {r.ElapsedMs / 1000.0:0.0}s");
-            if (r.Output.Length > 0) sb.AppendLine(r.Output.TrimEnd());
-            if (r.Error.Length > 0) sb.AppendLine("[stderr/오류] " + r.Error.TrimEnd());
-        }
-        return sb.ToString();
+        yield return new McpTool("sftp_read",
+            "SSH 호스트의 원격 텍스트 파일을 읽는다 (로그·설정 확인용, 기본 64KB, 최대 1MB). tail=true 면 끝부분. 바이너리 파일은 거부. " +
+            "승인 규칙은 run_command 와 같다.",
+            Schema(new
+            {
+                host = new { type = "string" },
+                path = new { type = "string" },
+                max_bytes = new { type = "integer", description = "읽을 최대 바이트 (기본 65536, 최대 1048576)" },
+                tail = new { type = "boolean", description = "파일 끝부분을 읽기 (로그)" },
+            }, "host", "path"),
+            a => SftpReadAsync(a));
+
+        yield return new McpTool("sftp_download",
+            "SSH 호스트의 원격 파일·폴더를 이 PC 의 다운로드\\Nubis\\<호스트> 폴더로 받는다 (경로는 앱이 정함, 기존 파일은 덮어쓰지 않음). 항상 사용자 승인.",
+            Schema(new
+            {
+                host = new { type = "string" },
+                path = new { type = "string", description = "원격 파일 또는 폴더" },
+            }, "host", "path"),
+            a => SftpDownloadAsync(a));
+
+        yield return new McpTool("sftp_upload",
+            "이 PC 의 파일·폴더를 SSH 호스트의 원격 폴더로 올린다. 같은 이름이 있으면 overwrite=true 일 때만 덮어쓴다. 항상 사용자 승인. " +
+            "Nubis 데이터 폴더와 ~/.ssh, 개인키 파일은 올릴 수 없다.",
+            Schema(new
+            {
+                host = new { type = "string" },
+                local_path = new { type = "string", description = "이 PC 의 파일 또는 폴더 (절대 경로)" },
+                remote_dir = new { type = "string", description = "올릴 원격 폴더" },
+                overwrite = new { type = "boolean" },
+            }, "host", "local_path", "remote_dir"),
+            a => SftpUploadAsync(a));
+
+        // ---------- 클라우드 ----------
+        yield return new McpTool("cloud_sync",
+            "클라우드 프로필의 서버 목록을 다시 조회해 호스트 목록에 반영한다 (조회 API 만 사용, 클라우드 리소스는 바꾸지 않음). " +
+            "profile 은 그룹 이름·프로필 이름 또는 'all'. 생략하면 프로필 목록만 보여준다.",
+            Schema(new { profile = new { type = "string" } }),
+            CloudSyncAsync);
     }
 }

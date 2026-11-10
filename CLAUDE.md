@@ -22,23 +22,31 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 
 소스 폴더 이름은 `RemoteClient\` 이지만 프로젝트/어셈블리/네임스페이스는 `Nubis` 다 (폴더 이름은 VS Code 가 잡고 있어 못 바꿈. 바꾸면 `build.ps1` 경로 두 곳도 수정).
 
-| 파일 | 역할 |
+| 위치 | 역할 |
 |---|---|
-| `MainWindow.xaml(.cs)` | 탭바, 사이드바(Hosts·Cloud·Known Hosts·Settings), 호스트 카드(가상화 목록), 편집 패널, 클라우드 페이지 |
-| `MainWindow.Claude.cs` | Claude 패널(ConPTY 로 `claude` CLI) + MCP 도구 구현(`list_hosts`, `open_session`, `read_terminal`, `capture_screen`, `run_command`, `send_to_terminal` 등) |
-| `McpServer.cs` | 최소 MCP 서버 (Streamable HTTP, JSON 응답, 127.0.0.1 + Bearer 토큰). 도구 결과는 string 또는 `McpImage` |
-| `XtermView.cs` + `wwwroot\terminal.html` | WebView2 위 xterm.js 공통 화면 (테마·구문 강조·출력 묶음·버퍼 읽기·단축키) |
-| `SshSessionView.cs` / `SftpPanel.xaml` | SSH 탭 (SSH.NET ShellStream) + 왼쪽 SFTP 패널 |
-| `RdpSessionView.cs` / `RdpAxHost.cs` / `RdpDefaults.cs` | RDP 탭 (Windows 내장 mstscax ActiveX, `Default.rdp` 값 적용). 컨트롤은 `RdpAxHost.Acquire/Release` 풀로 재사용 — 인스턴스를 해제할 때마다 핸들·스레드가 남는 mstscax 누수 회피 |
-| `ClaudeGuard.cs` | Claude 패널 권한 거부 규칙(`<데이터>\claude\nubis-permissions.json`, 실행마다 다시 씀) — 계정 파일 읽기·셸 접근·DPAPI 복호화 차단 |
-| `ReadOnlyCommands.cs` | run_command 읽기 전용 판별 (설정 `AutoApproveReadOnly` 일 때 승인 생략). 허용 목록 방식, 애매하면 false |
-| `LocalTerminalView.cs` / `ConPty.cs` | 로컬 PowerShell 탭·Claude 패널 (ConPTY, 자식 환경변수 정리 `ChildEnvironment`) |
-| `SshExec.cs` / `WinRm.cs` | 여러 서버 비대화형 명령 실행 (SSH / WinRM 직접 구현: 5986 HTTPS → 5985 HTTP+NTLM 암호화) |
-| `Cloud.cs` | 클라우드 프로필, 제공자 4종(AWS SDK, Tencent TC3 직접 서명, GCP·Azure REST), `CloudSync.Apply` 병합, `CloudPaths` |
-| `Models.cs` / `Storage.cs` | 호스트 모델, JSON 저장(`SafeFile`), DPAPI(`Secret`), known_hosts, 설정 |
-| `Vault.cs` | Vault 계정(사용자명 + 비밀번호/SSH 키, `vault.json`). 호스트는 `VaultId` 하나로 참조하고, `WithDefaults` 가 접속용 사본에만 값을 채운다 — 호스트에 직접 적은 값 우선(`KeyMaterial`·`KeyPassphrase` 는 `[JsonIgnore]`). 예전 분리형(`Kind`/`ProtectedSecret`, `VaultPasswordId`/`VaultKeyId`)은 읽을 때 변환 |
-| `*Dialog.xaml` | 앱 테마 대화상자. **`MessageBox.Show` 대신 `Dialog.Show`** (같은 인자 순서) |
+| `MainWindow.xaml(.cs)` | 창 초기화·사이드바 전환·창 제어. 화면별 코드는 partial 로 나눔 ↓ |
+| `MainWindow.Hosts.cs` / `.HostEditor.cs` / `.Vault.cs` / `.Settings.cs` / `.Cloud.cs` / `.Tabs.cs` | 호스트 목록(가상화 카드) · 호스트 편집 패널 · Vault 페이지 · Settings 페이지 · 클라우드 페이지·동기화 · 세션 탭 |
+| `Claude\MainWindow.ClaudePanel.cs` | Claude 패널(ConPTY 로 `claude` CLI), 현재 탭 알려주기 hook(`active-session.txt`) |
+| `Claude\MainWindow.McpTools.cs` | **MCP 도구 등록 목록 전체** (`BuildTools`, `ExtraTools`) + 기본 도구·설정 변경 구현. 새 도구는 여기에 등록 |
+| `Claude\MainWindow.Mcp*.cs` | 도구 구현: `McpHosts`(호스트 추가·수정·삭제, Vault 목록, 클라우드 동기화) · `McpDiagnostics`(test_connection, wait_for_output) · `McpSftp` · `McpCapture` · `McpRunCommand` |
+| `Claude\McpServer.cs` | 최소 MCP 서버 (Streamable HTTP, JSON 응답, 127.0.0.1 + Bearer 토큰). 도구 결과는 string 또는 `McpImage` |
+| `Claude\ClaudeGuard.cs` | Claude 패널 권한 거부 규칙(`<데이터>\claude\nubis-permissions.json`, 실행마다 다시 씀) — 계정 파일 읽기·셸 접근·DPAPI 복호화·settings.json 수정 차단 |
+| `Claude\ReadOnlyCommands.cs` | run_command 읽기 전용 판별 (설정 `AutoApproveReadOnly` 일 때 승인 생략). 허용 목록 방식, 애매하면 false |
+| `Claude\SettingsCatalog.cs` / `McpHelpers.cs` | update_settings 가 다룰 수 있는 설정·검증(보안 설정은 승인, 편집기 경로는 제외) / MCP 도구의 화면 무관 판단 로직(테스트 대상) |
+| `Sessions\XtermView.cs` + `wwwroot\terminal.html` | WebView2 위 xterm.js 공통 화면 (테마·구문 강조·버퍼 읽기·단축키·OSC 7 현재 폴더) |
+| `Sessions\SshSessionView.cs` | SSH 탭 (SSH.NET ShellStream) + 왼쪽 SFTP 패널 자동 열기·터미널 폴더 따라가기 |
+| `Sessions\RdpSessionView.cs` / `RdpAxHost.cs` / `RdpDefaults.cs` | RDP 탭 (Windows 내장 mstscax ActiveX, `Default.rdp` 값 적용). 컨트롤은 `RdpAxHost.Acquire/Release` 풀로 재사용 — 인스턴스를 해제할 때마다 핸들·스레드가 남는 mstscax 누수 회피 |
+| `Sessions\LocalTerminalView.cs` / `ConPty.cs` / `TerminalThemes.cs` | 로컬 PowerShell 탭·Claude 패널 (ConPTY, 자식 환경변수 정리 `ChildEnvironment`) / 터미널 테마 |
+| `Sftp\SftpPanel.xaml(.cs)` + `.Transfer.cs` / `.DragOut.cs` / `.Edit.cs` | SFTP 패널: 탐색 · 업로드·다운로드 · 탐색기로 끌어내기(지연 렌더링) · 편집 후 저장하면 자동 업로드(충돌 확인) |
+| `Remote\SshExec.cs` / `WinRm.cs` | 여러 서버 비대화형 명령 실행·SFTP 연결 (SSH / WinRM 직접 구현: 5986 HTTPS → 5985 HTTP+NTLM 암호화) |
+| `Cloud\Cloud.cs` / `CloudSync.cs` / `*Provider.cs` | 클라우드 프로필·`CloudPaths`·제공자 목록 / 저장·`CloudSync.Apply` 병합 / 제공자 4종(AWS SDK, Tencent TC3 직접 서명, GCP·Azure REST) |
+| `Vault\Vault.cs` + 대화상자 | Vault 계정(사용자명 + 비밀번호/SSH 키, `vault.json`). 호스트는 `VaultId` 하나로 참조하고, `WithDefaults` 가 접속용 사본에만 값을 채운다 — 호스트에 직접 적은 값 우선(`KeyMaterial`·`KeyPassphrase` 는 `[JsonIgnore]`). 예전 분리형(`Kind`/`ProtectedSecret`, `VaultPasswordId`/`VaultKeyId`)은 읽을 때 변환 |
+| `Core\Models.cs` / `Storage.cs` / `Logging.cs` / `BrandIcons.cs` | 호스트 모델 · JSON 저장(`SafeFile`)·DPAPI(`Secret`)·known_hosts·설정 · `AuditLog`·`LogFiles` · 벡터 아이콘 |
+| `Dialogs\*Dialog.xaml` | 앱 테마 대화상자. **`MessageBox.Show` 대신 `Dialog.Show`** (같은 인자 순서) |
 | `tools\IconGen` | 앱 아이콘을 WPF 로 그려 `Assets\nubis.ico/png` 생성 |
+
+- 네임스페이스는 폴더와 상관없이 모두 `Nubis` (폴더는 정리용). `MainWindow.xaml` 은 `Assets/...` 상대 경로를 쓰므로 루트에 둔다.
+- 한 파일이 500줄을 넘기 시작하면 역할별 partial / 파일로 나눈다.
 
 ## 데이터 위치
 
