@@ -1,0 +1,33 @@
+name: vt-scan
+
+# 이미 나온 릴리스의 파일(zip + 안의 Nubis.exe)을 VirusTotal 에 올린다 — Actions 탭에서 수동 실행
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '릴리스 태그 (예: v0.2.0)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 릴리스 파일 받기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p '*.zip' -D scan
+          unzip -q scan/*.zip -d scan/x
+          cp scan/x/Nubis/Nubis.exe scan/
+          sha256sum scan/*.zip scan/Nubis.exe
+
+      - uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          files: |
+            scan/*.zip
+            scan/Nubis.exe
+          request_rate: 4   # 무료 공개 API 한도 (분당 4회)
