@@ -240,9 +240,9 @@ public partial class MainWindow : Window
             Protocol = proto,
             Address = m.Groups["host"].Value,
             Username = m.Groups["user"].Value,
-            Port = m.Groups["port"].Success ? int.Parse(m.Groups["port"].Value) : HostEntry.DefaultPort(proto),
+            Port = m.Groups["port"].Success ? int.Parse(m.Groups["port"].Value) : HostEntry.PreferredPort(proto),
         };
-        if (host.Port is < 1 or > 65535) host.Port = HostEntry.DefaultPort(proto);
+        if (host.Port is < 1 or > 65535) host.Port = HostEntry.PreferredPort(proto);
         Connect(host);
     }
 
@@ -367,6 +367,8 @@ public partial class MainWindow : Window
         RdpCertBox.IsChecked = s.RdpCertWarning;
         SshKeyPromptBox.IsChecked = s.SshHostKeyPrompt;
         AutoReadOnlyBox.IsChecked = s.AutoApproveReadOnly;
+        DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
+        DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
         FontSizeText.Text = $"{s.FontSize}px";
 
         if (FontPanel.Children.Count == 0)
@@ -423,6 +425,29 @@ public partial class MainWindow : Window
     private void OnSshKeyPromptClick(object sender, RoutedEventArgs e) =>
         SettingsStore.Update(s => s.SshHostKeyPrompt = SshKeyPromptBox.IsChecked == true);
 
+    /// <summary>기본 포트 입력란: 1~65535 숫자만 저장하고, 비우거나 잘못 넣으면 표준 포트로 되돌린다</summary>
+    private void OnDefaultPortChanged(object sender, RoutedEventArgs e)
+    {
+        var ssh = int.TryParse(DefSshPortBox.Text.Trim(), out var a) && a is >= 1 and <= 65535 ? a : HostEntry.DefaultPort(Protocol.Ssh);
+        var rdp = int.TryParse(DefRdpPortBox.Text.Trim(), out var b) && b is >= 1 and <= 65535 ? b : HostEntry.DefaultPort(Protocol.Rdp);
+        DefSshPortBox.Text = ssh.ToString();
+        DefRdpPortBox.Text = rdp.ToString();
+        var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
+        if (oldSsh == ssh && oldRdp == rdp) return;
+        SettingsStore.Update(x => { x.DefaultSshPort = ssh; x.DefaultRdpPort = rdp; });
+
+        // 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중, 이전 기본 포트를 쓰던 것도 함께 변경
+        // (사용자가 호스트별로 바꾼 포트는 유지)
+        var changed = 0;
+        foreach (var p in _profiles)
+            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
+            {
+                if (p.SshPort == null && h.Protocol == Protocol.Ssh && h.Port == oldSsh) { h.Port = ssh; changed++; }
+                if (p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp) { h.Port = rdp; changed++; }
+            }
+        if (changed > 0) { SaveHosts(); RefreshHosts(); }
+    }
+
     private void OnAutoReadOnlyClick(object sender, RoutedEventArgs e) =>
         SettingsStore.Update(s => s.AutoApproveReadOnly = AutoReadOnlyBox.IsChecked == true);
 
@@ -462,7 +487,7 @@ public partial class MainWindow : Window
         DeleteButton.Visibility = h == null ? Visibility.Collapsed : Visibility.Visible;
 
         var proto = h?.Protocol ?? Protocol.Ssh;
-        EdPort.Text = (h?.Port ?? HostEntry.DefaultPort(proto)).ToString();
+        EdPort.Text = (h?.Port ?? HostEntry.PreferredPort(proto)).ToString();
         (proto == Protocol.Ssh ? ProtoSsh : ProtoRdp).IsChecked = true;
         UpdateProtoUi();
 
@@ -501,8 +526,8 @@ public partial class MainWindow : Window
         if (EdPort == null) return;
         var proto = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
         var other = proto == Protocol.Ssh ? Protocol.Rdp : Protocol.Ssh;
-        if (string.IsNullOrWhiteSpace(EdPort.Text) || EdPort.Text == HostEntry.DefaultPort(other).ToString())
-            EdPort.Text = HostEntry.DefaultPort(proto).ToString();
+        if (string.IsNullOrWhiteSpace(EdPort.Text) || EdPort.Text == HostEntry.PreferredPort(other).ToString())
+            EdPort.Text = HostEntry.PreferredPort(proto).ToString();
         UpdateProtoUi();
     }
 
@@ -722,7 +747,7 @@ public partial class MainWindow : Window
     private void OnProfileSettings(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not CloudProfile p) return;
-        var (oldSsh, oldRdp, oldPublic) = (p.SshPort, p.RdpPort, p.UsePublicIp);
+        var (oldSsh, oldRdp, oldPublic) = (p.EffectiveSshPort, p.EffectiveRdpPort, p.UsePublicIp);
         if (!ProfileDialog.Edit(this, p)) return;
         // 기본 접속 주소(사설/공인)를 바꾸면 공인 IP 가 있는 서버 전체에 적용
         if (oldPublic != p.UsePublicIp)
@@ -731,8 +756,8 @@ public partial class MainWindow : Window
         // 기본 포트를 바꾸면 기본값을 쓰던 호스트도 함께 변경
         foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
         {
-            if (h.Protocol == Protocol.Ssh && h.Port == oldSsh) h.Port = p.SshPort;
-            if (h.Protocol == Protocol.Rdp && h.Port == oldRdp) h.Port = p.RdpPort;
+            if (h.Protocol == Protocol.Ssh && h.Port == oldSsh) h.Port = p.EffectiveSshPort;
+            if (h.Protocol == Protocol.Rdp && h.Port == oldRdp) h.Port = p.EffectiveRdpPort;
         }
         SaveProfiles();
         SaveHosts();

@@ -41,8 +41,9 @@ public sealed class CloudProfile : INotifyPropertyChanged
 
     public string DefaultUsername { get; set; } = "";
     public string? ProtectedDefaultPassword { get; set; }
-    public int SshPort { get; set; } = 22;
-    public int RdpPort { get; set; } = 3389;
+    /// <summary>이 프로필 서버들의 포트. null 이면 설정의 기본 포트(Settings → 기본 포트)를 따른다</summary>
+    public int? SshPort { get; set; }
+    public int? RdpPort { get; set; }
     public bool UsePublicIp { get; set; }
     public bool IncludeStopped { get; set; } = true;
     public DateTime? LastSync { get; set; }
@@ -55,6 +56,9 @@ public sealed class CloudProfile : INotifyPropertyChanged
         get => Secret.Unprotect(ProtectedDefaultPassword);
         set => ProtectedDefaultPassword = string.IsNullOrEmpty(value) ? null : Secret.Protect(value);
     }
+
+    [JsonIgnore] public int EffectiveSshPort => SshPort ?? HostEntry.PreferredPort(Protocol.Ssh);
+    [JsonIgnore] public int EffectiveRdpPort => RdpPort ?? HostEntry.PreferredPort(Protocol.Rdp);
 
     [JsonIgnore] public string GroupName => string.IsNullOrWhiteSpace(DisplayName) ? Name : DisplayName;
     [JsonIgnore] public string ProviderText => CloudProviders.Label(Provider);
@@ -715,7 +719,7 @@ public static class CloudSync
                     CloudProfileId = p.Id,
                     CloudInstanceId = inst.InstanceId,
                     Protocol = inst.IsWindows ? Protocol.Rdp : Protocol.Ssh,
-                    Port = inst.IsWindows ? p.RdpPort : p.SshPort,
+                    Port = inst.IsWindows ? p.EffectiveRdpPort : p.EffectiveSshPort,
                 };
                 h.UsePublicIp = p.UsePublicIp && inst.PublicIp.Length > 0;   // 새 호스트는 프로필 기본값을 따름
                 hosts.Add(h);

@@ -131,6 +131,14 @@ public sealed class HostEntry
 
     public static int DefaultPort(Protocol p) => p == Protocol.Ssh ? 22 : 3389;
 
+    /// <summary>새로 만드는 호스트·프로필에 넣을 포트 (설정의 기본 포트, 잘못된 값이면 표준 포트)</summary>
+    public static int PreferredPort(Protocol p)
+    {
+        var s = SettingsStore.Current;
+        var port = p == Protocol.Ssh ? s.DefaultSshPort : s.DefaultRdpPort;
+        return port is >= 1 and <= 65535 ? port : DefaultPort(p);
+    }
+
     public HostEntry Clone() => (HostEntry)MemberwiseClone();
 }
 

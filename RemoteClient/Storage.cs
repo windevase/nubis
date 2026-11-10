@@ -144,6 +144,9 @@ public sealed class AppSettings
     public bool SshHostKeyPrompt { get; set; }
     /// <summary>Claude 의 run_command 중 읽기 전용으로 판별된 명령은 승인 창 없이 실행 (기본 꺼짐, 감사 로그는 남김)</summary>
     public bool AutoApproveReadOnly { get; set; }
+    /// <summary>새 호스트·새 클라우드 프로필에 넣을 기본 포트 (서버들이 비표준 포트를 쓰는 환경이면 바꿔 둔다)</summary>
+    public int DefaultSshPort { get; set; } = 22;
+    public int DefaultRdpPort { get; set; } = 3389;
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 }

@@ -30,13 +30,36 @@ public class CloudSyncTests
         Assert.Equal(0, removed);
         var lin = hosts.Single(h => h.CloudInstanceId == "i-1");
         Assert.Equal(Protocol.Ssh, lin.Protocol);
-        Assert.Equal(22, lin.Port);
+        Assert.Equal(HostEntry.PreferredPort(Protocol.Ssh), lin.Port);   // 프로필에 포트 미지정 → 설정의 기본 포트
         Assert.Equal("10.0.0.1", lin.Address);
         Assert.Equal("api", lin.Purpose);
         var win = hosts.Single(h => h.CloudInstanceId == "i-2");
         Assert.Equal(Protocol.Rdp, win.Protocol);
-        Assert.Equal(3389, win.Port);
+        Assert.Equal(HostEntry.PreferredPort(Protocol.Rdp), win.Port);
         Assert.NotNull(p.LastSync);
+    }
+
+    [Fact]
+    public void 프로필에_지정한_포트가_기본_포트보다_우선한다()
+    {
+        var p = Profile();
+        p.SshPort = 50022;
+        p.RdpPort = 33890;
+        var hosts = new List<HostEntry>();
+        CloudSync.Apply(p, new() { Linux("i-1"), Windows("i-2") }, hosts);
+        Assert.Equal(50022, hosts.Single(h => h.CloudInstanceId == "i-1").Port);
+        Assert.Equal(33890, hosts.Single(h => h.CloudInstanceId == "i-2").Port);
+    }
+
+    [Fact]
+    public void 저장된_프로필_포트를_그대로_읽고_없으면_null()
+    {
+        var withPorts = System.Text.Json.JsonSerializer.Deserialize<CloudProfile>("{\"Name\":\"a\",\"SshPort\":50022,\"RdpPort\":33890}")!;
+        Assert.Equal(50022, withPorts.SshPort);
+        Assert.Equal(33890, withPorts.EffectiveRdpPort);
+        var without = System.Text.Json.JsonSerializer.Deserialize<CloudProfile>("{\"Name\":\"b\"}")!;
+        Assert.Null(without.SshPort);
+        Assert.Equal(HostEntry.PreferredPort(Protocol.Ssh), without.EffectiveSshPort);
     }
 
     [Fact]

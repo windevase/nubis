@@ -23,8 +23,11 @@ public partial class ProfileDialog : Window
         NameBox.Text = p.GroupName;
         UserBox.Text = p.DefaultUsername;
         PassBox.Password = p.DefaultPassword;
-        SshPortBox.Text = p.SshPort.ToString();
-        RdpPortBox.Text = p.RdpPort.ToString();
+        // 비워 두면 설정의 기본 포트를 따른다
+        SshPortBox.Text = p.SshPort?.ToString() ?? "";
+        RdpPortBox.Text = p.RdpPort?.ToString() ?? "";
+        SshPortBox.Tag = $"기본 포트 ({HostEntry.PreferredPort(Protocol.Ssh)})";
+        RdpPortBox.Tag = $"기본 포트 ({HostEntry.PreferredPort(Protocol.Rdp)})";
         (p.UsePublicIp ? PublicIp : PrivateIp).IsChecked = true;
         StoppedBox.IsChecked = p.IncludeStopped;
         if (p.HiddenInstances.Count > 0)
@@ -40,8 +43,8 @@ public partial class ProfileDialog : Window
 
     private void OnOk(object sender, RoutedEventArgs e)
     {
-        if (!int.TryParse(SshPortBox.Text.Trim(), out var ssh) || ssh is < 1 or > 65535) { SshPortBox.Focus(); return; }
-        if (!int.TryParse(RdpPortBox.Text.Trim(), out var rdp) || rdp is < 1 or > 65535) { RdpPortBox.Focus(); return; }
+        if (!TryPort(SshPortBox.Text, out var ssh)) { SshPortBox.Focus(); return; }
+        if (!TryPort(RdpPortBox.Text, out var rdp)) { RdpPortBox.Focus(); return; }
 
         _p.DisplayName = NameBox.Text.Trim();
         _p.DefaultUsername = UserBox.Text.Trim();
@@ -52,6 +55,17 @@ public partial class ProfileDialog : Window
         _p.IncludeStopped = StoppedBox.IsChecked == true;
         if (UnhideBox.IsChecked == true) _p.HiddenInstances.Clear();
         DialogResult = true;
+    }
+
+    /// <summary>빈 칸 = null(기본 포트 따름), 1~65535 = 지정 포트</summary>
+    private static bool TryPort(string text, out int? port)
+    {
+        port = null;
+        text = text.Trim();
+        if (text.Length == 0) return true;
+        if (!int.TryParse(text, out var v) || v is < 1 or > 65535) return false;
+        port = v;
+        return true;
     }
 
     private void OnDrag(object sender, MouseButtonEventArgs e)
