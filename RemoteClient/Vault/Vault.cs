@@ -84,26 +84,28 @@ public sealed class VaultEntry
     [JsonIgnore]
     public string MethodsText => (HasPassword, HasKey) switch
     {
-        (true, true) => "비밀번호 + SSH 키",
-        (false, true) => "SSH 키",
-        (true, false) => "비밀번호",
-        _ => "인증 정보 없음",
+        (true, true) => L.T("비밀번호 + SSH 키"),
+        (false, true) => L.T("SSH 키"),
+        (true, false) => L.T("비밀번호"),
+        _ => L.T("인증 정보 없음"),
     };
     [JsonIgnore]
     public string Detail
     {
         get
         {
-            var parts = new List<string> { string.IsNullOrWhiteSpace(Username) ? "사용자명 없음" : $"사용자 {Username}" };
-            if (HasPassword) parts.Add("비밀번호");
-            if (HasKey) parts.Add((KeyType.Length > 0 ? KeyType : "SSH") + " 키" + (string.IsNullOrEmpty(ProtectedPassphrase) ? "" : " (키 암호 저장)"));
+            var parts = new List<string> { string.IsNullOrWhiteSpace(Username) ? L.T("사용자명 없음") : L.F("사용자 {0}", Username) };
+            if (HasPassword) parts.Add(L.T("비밀번호"));
+            if (HasKey) parts.Add(string.IsNullOrEmpty(ProtectedPassphrase)
+                ? L.F("{0} 키", KeyType.Length > 0 ? KeyType : "SSH")
+                : L.F("{0} 키 (키 암호 저장)", KeyType.Length > 0 ? KeyType : "SSH"));
             if (!string.IsNullOrWhiteSpace(Note)) parts.Add(Note);
             return string.Join(" · ", parts);
         }
     }
     /// <summary>이 항목을 쓰는 호스트 수 (목록 표시 때 채움)</summary>
     [JsonIgnore] public int UsedBy { get; set; }
-    [JsonIgnore] public string UsedByText => UsedBy == 0 ? "사용 안 함" : $"호스트 {UsedBy}개";
+    [JsonIgnore] public string UsedByText => UsedBy == 0 ? L.T("사용 안 함") : L.F("호스트 {0}개", UsedBy);
     [JsonIgnore] public Visibility CopyVisibility => HasKey && !string.IsNullOrEmpty(PublicKey) ? Visibility.Visible : Visibility.Collapsed;
 }
 

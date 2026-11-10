@@ -284,8 +284,8 @@ public partial class MainWindow
                 if (tab.Protocol == Protocol.Rdp) throw new McpToolException("RDP 세션에는 입력할 수 없습니다.");
                 var text = Arg(a, "text");
                 var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-                if (!ApprovalDialog.Ask(this, "Claude 가 터미널 입력을 요청합니다",
-                        "아래 세션의 터미널에 텍스트를 입력합니다.", new[] { target }, text))
+                if (!ApprovalDialog.Ask(this, L.T("Claude 가 터미널 입력을 요청합니다"),
+                        L.T("아래 세션의 터미널에 텍스트를 입력합니다."), new[] { target }, text))
                 {
                     AuditLog.Write("send_to_terminal", new[] { target }, text, "거부");
                     throw new McpToolException("사용자가 입력을 거부했습니다.");
@@ -311,8 +311,8 @@ public partial class MainWindow
         var lines = plan.Select(p => p.Text).ToList();
         var command = string.Join("\n", lines);
         if (plan.Any(p => p.Def.Security) &&
-            !ApprovalDialog.Ask(this, "Claude 가 보안 설정 변경을 요청합니다",
-                "아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다.", new[] { "Nubis 설정" }, command))
+            !ApprovalDialog.Ask(this, L.T("Claude 가 보안 설정 변경을 요청합니다"),
+                L.T("아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다."), new[] { "Nubis 설정" }, command))
         {
             AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
             throw new McpToolException("사용자가 설정 변경을 거부했습니다.");

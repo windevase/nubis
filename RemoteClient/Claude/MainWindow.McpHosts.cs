@@ -125,9 +125,9 @@ public partial class MainWindow
         ApplyHostArgs(h, a, isNew: true);
         var dup = _hosts.FirstOrDefault(x => x.Address.Equals(h.Address, StringComparison.OrdinalIgnoreCase) && x.Port == h.Port && x.Protocol == h.Protocol);
         var summary = HostSummary(h);
-        if (!ApprovalDialog.Ask(this, "Claude 가 호스트 등록을 요청합니다",
-                "아래 호스트를 등록합니다. Vault 계정을 연결하면 이 주소로 접속할 때 그 계정의 비밀번호·키가 쓰입니다. 주소가 맞는지 확인하세요." +
-                (dup != null ? $"\n⚠ 같은 주소·포트의 호스트 '{dup.DisplayName}' 가 이미 있습니다." : ""),
+        if (!ApprovalDialog.Ask(this, L.T("Claude 가 호스트 등록을 요청합니다"),
+                L.T("아래 호스트를 등록합니다. Vault 계정을 연결하면 이 주소로 접속할 때 그 계정의 비밀번호·키가 쓰입니다. 주소가 맞는지 확인하세요.") +
+                (dup != null ? L.F("\n⚠ 같은 주소·포트의 호스트 '{0}' 가 이미 있습니다.", dup.DisplayName) : ""),
                 new[] { h.DisplayName }, summary))
         {
             AuditLog.Write("add_host", new[] { h.DisplayName }, summary, "거부");
@@ -148,8 +148,8 @@ public partial class MainWindow
         if (changes.Count == 0) return "바뀐 항목이 없습니다.";
         var text = string.Join("\n", changes);
         var risky = changes.Any(c => c.StartsWith("주소") || c.StartsWith("공인") || c.StartsWith("Vault") || c.StartsWith("포트"));
-        if (!ApprovalDialog.Ask(this, "Claude 가 호스트 설정 변경을 요청합니다",
-                $"'{h.DisplayName}' 의 설정을 바꿉니다." + (risky ? "\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요." : ""),
+        if (!ApprovalDialog.Ask(this, L.T("Claude 가 호스트 설정 변경을 요청합니다"),
+                L.F("'{0}' 의 설정을 바꿉니다.", h.DisplayName) + (risky ? L.T("\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요.") : ""),
                 new[] { h.DisplayName }, text))
         {
             AuditLog.Write("update_host", new[] { h.DisplayName }, text, "거부");
@@ -171,8 +171,8 @@ public partial class MainWindow
         if (specs.Count == 0) throw new McpToolException("hosts 가 필요합니다.");
         var targets = specs.Select(ResolveOneHost).DistinctBy(h => h.Id).ToList();
         var labels = targets.Select(h => $"{h.DisplayName}  ({h.ProtocolText} {h.Address}:{h.Port}{(h.IsCloud ? ", 클라우드 — 다음 동기화에서도 숨김" : "")})").ToList();
-        if (!ApprovalDialog.Ask(this, $"Claude 가 호스트 {targets.Count}개 삭제를 요청합니다",
-                "Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다.", labels, "delete_host"))
+        if (!ApprovalDialog.Ask(this, L.F("Claude 가 호스트 {0}개 삭제를 요청합니다", targets.Count),
+                L.T("Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다."), labels, "delete_host"))
         {
             AuditLog.Write("delete_host", labels, "delete_host", "거부");
             throw new McpToolException("사용자가 삭제를 거부했습니다.");

@@ -62,7 +62,7 @@ public sealed class LoginConfig
         LoginProviderKind.GitHub => "GitHub",
         LoginProviderKind.Google => "Google",
         LoginProviderKind.Microsoft => "Microsoft (Entra ID)",
-        _ => "사용 안 함",
+        _ => L.T("사용 안 함"),
     };
 
     /// <summary>"a, b ;c" → [a, b, c] (빈 값·중복 제거)</summary>
@@ -94,13 +94,13 @@ public sealed class LoginConfig
     public string? Validate()
     {
         if (Provider == LoginProviderKind.None) return null;
-        if (ClientId.Trim().Length == 0) return "Client ID 를 넣으세요.";
-        if (Provider == LoginProviderKind.Google && ClientSecret.Length == 0) return "Google 은 Client Secret 도 필요합니다 (\"TV 및 입력 제한 기기\" 유형 클라이언트).";
-        if (Provider == LoginProviderKind.Microsoft && Tenant.Trim().Length == 0) return "Microsoft 테넌트를 넣으세요 (회사 계정이면 organizations).";
+        if (ClientId.Trim().Length == 0) return L.T("Client ID 를 넣으세요.");
+        if (Provider == LoginProviderKind.Google && ClientSecret.Length == 0) return L.T("Google 은 Client Secret 도 필요합니다 (\"TV 및 입력 제한 기기\" 유형 클라이언트).");
+        if (Provider == LoginProviderKind.Microsoft && Tenant.Trim().Length == 0) return L.T("Microsoft 테넌트를 넣으세요 (회사 계정이면 organizations).");
         if (AllowedAccounts.Count == 0 && (Provider != LoginProviderKind.GitHub || GitHubOrg.Trim().Length == 0))
-            return "허용할 계정을 하나 이상 넣으세요" + (Provider == LoginProviderKind.GitHub ? " (또는 GitHub Organization)." : ".");
-        if (RememberHours is < 0 or > 24 * 30) return "로그인 유지 시간은 0 ~ 720 시간입니다.";
-        if (OfflineDays is < 0 or > 30) return "오프라인 허용 기간은 0 ~ 30 일입니다.";
+            return Provider == LoginProviderKind.GitHub ? L.T("허용할 계정을 하나 이상 넣으세요 (또는 GitHub Organization).") : L.T("허용할 계정을 하나 이상 넣으세요.");
+        if (RememberHours is < 0 or > 24 * 30) return L.T("로그인 유지 시간은 0 ~ 720 시간입니다.");
+        if (OfflineDays is < 0 or > 30) return L.T("오프라인 허용 기간은 0 ~ 30 일입니다.");
         return null;
     }
 }

@@ -99,13 +99,13 @@ public partial class MainWindow
         {
             var exe = FindClaude();
             if (exe == null)
-                return "cmd.exe /d /k echo Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code";
+                return "cmd.exe /d /k echo " + L.T("Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code");
             var args = $"--mcp-config \"{configPath}\" --settings \"{guardPath}\" --allowedTools mcp__{McpServer.ServerName}";
             // npm 설치본은 claude.cmd 라 cmd 를 거쳐 실행
             return exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 ? $"\"{exe}\" {args}"
                 : $"cmd.exe /d /s /c \"\"{exe}\" {args}\"";
-        }, ClaudeWorkDir, "Claude Code 가 종료되었습니다.");
+        }, ClaudeWorkDir, L.T("Claude Code 가 종료되었습니다."));
         ClaudeHost.Content = _claudeView;
     }
 

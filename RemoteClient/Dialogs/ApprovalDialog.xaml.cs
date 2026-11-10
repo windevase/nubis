@@ -27,13 +27,13 @@ public partial class ApprovalDialog : Window
         // 창이 뜨자마자 반사적으로/겹친 클릭으로 승인되지 않도록 잠시 실행 버튼을 잠근다
         OkButton.IsEnabled = false;
         var remain = 3;
-        OkButton.Content = $"실행 ({remain})";
+        OkButton.Content = L.F("실행 ({0})", remain);
         var timer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
         timer.Tick += (_, _) =>
         {
-            if (--remain > 0) { OkButton.Content = $"실행 ({remain})"; return; }
+            if (--remain > 0) { OkButton.Content = L.F("실행 ({0})", remain); return; }
             timer.Stop();
-            OkButton.Content = "실행";
+            OkButton.Content = L.T("실행");
             OkButton.IsEnabled = true;
         };
         Loaded += (_, _) => timer.Start();
@@ -44,12 +44,12 @@ public partial class ApprovalDialog : Window
         var dlg = new ApprovalDialog { Owner = owner };
         dlg.TitleText.Text = title;
         dlg.DescText.Text = description;
-        dlg.TargetsLabel.Text = $"대상 {targets.Count}개";
+        dlg.TargetsLabel.Text = L.F("대상 {0}개", targets.Count);
         dlg.TargetsText.Text = string.Join("\n", targets);
         dlg.CommandBox.Text = command;
         if (IsDangerous(command))
         {
-            dlg.WarnText.Text = "⚠ 서비스 중단·데이터 삭제가 될 수 있는 명령이 포함되어 있습니다. 대상과 명령을 다시 확인하세요.";
+            dlg.WarnText.Text = L.T("⚠ 서비스 중단·데이터 삭제가 될 수 있는 명령이 포함되어 있습니다. 대상과 명령을 다시 확인하세요.");
             dlg.WarnText.Visibility = Visibility.Visible;
         }
         if (owner.WindowState == WindowState.Minimized) owner.WindowState = WindowState.Normal;

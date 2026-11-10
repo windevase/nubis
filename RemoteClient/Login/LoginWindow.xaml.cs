@@ -30,12 +30,12 @@ public partial class LoginWindow : Window
         _test = test;
         _state = test ? null : LoginState.Load();
         var name = LoginConfig.ProviderLabel(cfg.Provider);
-        SubTitle.Text = test ? "로그인 설정 테스트" : "Cloud & AI Remote";
-        TitleText.Text = test ? $"{name} 로그인 테스트" : $"{name} 로그인이 필요합니다";
-        InfoText.Text = (test ? "이 설정으로 실제로 들어갈 수 있는지 확인합니다. 성공해야 설정이 저장됩니다.\n" : "") +
-                        $"허용된 계정으로 로그인하면 Nubis 가 열립니다. 비밀번호는 브라우저({name})에서만 입력하며, Nubis 는 받지 않습니다.";
-        LoginButton.Content = $"{(cfg.Provider == LoginProviderKind.Microsoft ? "Microsoft" : name)}로 로그인";
-        CancelButton.Content = test ? "취소" : "종료";
+        SubTitle.Text = test ? L.T("로그인 설정 테스트") : "Cloud & AI Remote";
+        TitleText.Text = test ? L.F("{0} 로그인 테스트", name) : L.F("{0} 로그인이 필요합니다", name);
+        InfoText.Text = (test ? L.T("이 설정으로 실제로 들어갈 수 있는지 확인합니다. 성공해야 설정이 저장됩니다.\n") : "") +
+                        L.F("허용된 계정으로 로그인하면 Nubis 가 열립니다. 비밀번호는 브라우저({0})에서만 입력하며, Nubis 는 받지 않습니다.", name);
+        LoginButton.Content = L.F("{0}로 로그인", cfg.Provider == LoginProviderKind.Microsoft ? "Microsoft" : name);
+        CancelButton.Content = test ? L.T("취소") : L.T("종료");
         Closed += (_, _) => _cts?.Cancel();
     }
 
@@ -92,14 +92,14 @@ public partial class LoginWindow : Window
             UrlText.Text = _code.VerificationUri;
             CodePanel.Visibility = Visibility.Visible;
             LoginButton.Visibility = Visibility.Collapsed;
-            CancelButton.Content = "취소";
+            CancelButton.Content = L.T("취소");
             try { Clipboard.SetText(_code.UserCode); } catch { }
             OpenBrowser();
 
             var (who, orgMember) = await flow.WaitAsync(_code, ct);
             if (!_cfg.IsAllowed(who, orgMember))
-                throw new LoginException($"허용되지 않은 계정입니다: {who.Account}" +
-                                         (_cfg.GitHubOrg.Trim().Length > 0 && _cfg.Provider == LoginProviderKind.GitHub ? $" (Organization '{_cfg.GitHubOrg}' 멤버가 아님)" : ""));
+                throw new LoginException(L.F("허용되지 않은 계정입니다: {0}", who.Account) +
+                                         (_cfg.GitHubOrg.Trim().Length > 0 && _cfg.Provider == LoginProviderKind.GitHub ? L.F(" (Organization '{0}' 멤버가 아님)", _cfg.GitHubOrg) : ""));
             Result = who;
             _profileKey = who.ProfileKey;
             try { LoginState.Save(who, _cfg); } catch { }
@@ -108,9 +108,9 @@ public partial class LoginWindow : Window
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { ResetToStart(null); }
         catch (LoginException ex) { Fail(ex.Message); }
-        catch (HttpRequestException ex) { Fail($"로그인 서버에 연결할 수 없습니다: {ex.Message}", offline: true); }
-        catch (TaskCanceledException) { Fail("로그인 서버 응답이 없습니다 (시간 초과).", offline: true); }
-        catch (Exception ex) { Fail($"로그인 실패: {ex.Message}"); }
+        catch (HttpRequestException ex) { Fail(L.F("로그인 서버에 연결할 수 없습니다: {0}", ex.Message), offline: true); }
+        catch (TaskCanceledException) { Fail(L.T("로그인 서버 응답이 없습니다 (시간 초과)."), offline: true); }
+        catch (Exception ex) { Fail(L.F("로그인 실패: {0}", ex.Message)); }
     }
 
     private void Fail(string message, bool offline = false)
@@ -121,7 +121,7 @@ public partial class LoginWindow : Window
         if (offline && !_test && _cfg.OfflineDays > 0 && _state != null &&
             _state.Within(_cfg, TimeSpan.FromDays(_cfg.OfflineDays), DateTime.UtcNow))
         {
-            OfflineButton.Content = $"오프라인으로 들어가기 (마지막 로그인 {_state.LastSuccessUtc.ToLocalTime():MM-dd HH:mm}, {_state.Account})";
+            OfflineButton.Content = L.F("오프라인으로 들어가기 (마지막 로그인 {0:MM-dd HH:mm}, {1})", _state.LastSuccessUtc.ToLocalTime(), _state.Account);
             OfflineButton.Visibility = Visibility.Visible;
         }
     }
@@ -131,7 +131,7 @@ public partial class LoginWindow : Window
         CodePanel.Visibility = Visibility.Collapsed;
         LoginButton.Visibility = Visibility.Visible;
         LoginButton.IsEnabled = true;
-        CancelButton.Content = _test ? "취소" : "종료";
+        CancelButton.Content = _test ? L.T("취소") : L.T("종료");
         ShowError(error);
     }
 
@@ -161,11 +161,11 @@ public partial class LoginWindow : Window
         // 로그인 제공자 주소만 연다 (응답에 다른 주소가 와도 열지 않음)
         if (!Uri.TryCreate(_code.VerificationUri, UriKind.Absolute, out var u) || !IsTrustedLoginUrl(u))
         {
-            ShowError($"브라우저에서 직접 여세요: {_code.VerificationUri}");
+            ShowError(L.F("브라우저에서 직접 여세요: {0}", _code.VerificationUri));
             return;
         }
         try { Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true }); }
-        catch { ShowError($"브라우저를 열지 못했습니다. 직접 여세요: {u.AbsoluteUri}"); }
+        catch { ShowError(L.F("브라우저를 열지 못했습니다. 직접 여세요: {0}", u.AbsoluteUri)); }
     }
 
     /// <summary>https 이고 로그인 제공자 도메인(또는 그 하위 도메인)인지</summary>

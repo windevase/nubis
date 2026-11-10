@@ -30,8 +30,8 @@ public partial class MainWindow
     {
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         if (SettingsStore.Current.AutoApproveReadOnly) { AuditLog.Write(tool, new[] { target }, what, "자동 승인(읽기 전용)"); return; }
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, "Claude 가 원격 파일 읽기를 요청합니다",
-            "승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음).", new[] { target }, what));
+        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
+            L.T("승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음)."), new[] { target }, what));
         AuditLog.Write(tool, new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
     }
@@ -104,8 +104,8 @@ public partial class MainWindow
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Nubis", SftpPanel.SafeLocalName(h.DisplayName));
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"받기: {path}\n저장 위치: {root}";
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, "Claude 가 파일 다운로드를 요청합니다",
-            "서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호).", new[] { target }, what));
+        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 파일 다운로드를 요청합니다"),
+            L.T("서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호)."), new[] { target }, what));
         AuditLog.Write("sftp_download", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 
@@ -158,8 +158,8 @@ public partial class MainWindow
 
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"올리기: {local}{(isDir ? $" (폴더, 파일 {files.Count}개)" : "")} — {SftpPanel.HumanSize(total)}\n원격 폴더: {remoteDir}" + (overwrite ? "\n같은 이름이 있으면 덮어씀" : "");
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, "Claude 가 파일 업로드를 요청합니다",
-            "이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요.", new[] { target }, what));
+        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 파일 업로드를 요청합니다"),
+            L.T("이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요."), new[] { target }, what));
         AuditLog.Write("sftp_upload", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 

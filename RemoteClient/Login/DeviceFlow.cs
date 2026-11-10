@@ -35,7 +35,7 @@ public sealed class DeviceFlow
         LoginProviderKind.Google => ("https://oauth2.googleapis.com/device/code", "https://oauth2.googleapis.com/token", "openid email profile"),
         LoginProviderKind.Microsoft => ($"https://login.microsoftonline.com/{Tenant}/oauth2/v2.0/devicecode",
             $"https://login.microsoftonline.com/{Tenant}/oauth2/v2.0/token", "openid profile email"),
-        _ => throw new LoginException("로그인 제공자가 설정되지 않았습니다."),
+        _ => throw new LoginException(L.T("로그인 제공자가 설정되지 않았습니다.")),
     };
 
     private static async Task<JsonElement> PostFormAsync(string url, Dictionary<string, string> form, CancellationToken ct)
@@ -45,7 +45,7 @@ public sealed class DeviceFlow
         using var res = await Http.SendAsync(req, ct);
         var body = await res.Content.ReadAsStringAsync(ct);
         try { return JsonDocument.Parse(body).RootElement.Clone(); }
-        catch (JsonException) { throw new LoginException($"로그인 서버 응답을 읽을 수 없습니다 (HTTP {(int)res.StatusCode}). Client ID 를 확인하세요."); }
+        catch (JsonException) { throw new LoginException(L.F("로그인 서버 응답을 읽을 수 없습니다 (HTTP {0}). Client ID 를 확인하세요.", (int)res.StatusCode)); }
     }
 
     private static string? Str(JsonElement e, string name) =>
@@ -62,7 +62,7 @@ public sealed class DeviceFlow
         var user = Str(r, "user_code");
         var device = Str(r, "device_code");
         var uri = Str(r, "verification_uri") ?? Str(r, "verification_url");
-        if (user == null || device == null || uri == null) throw new LoginException("로그인 코드를 받지 못했습니다. Client ID 와 Device Flow 사용 설정을 확인하세요.");
+        if (user == null || device == null || uri == null) throw new LoginException(L.T("로그인 코드를 받지 못했습니다. Client ID 와 Device Flow 사용 설정을 확인하세요."));
         return new DeviceCodeInfo(user, uri, device, Math.Max(1, Int(r, "interval", 5)), Int(r, "expires_in", 900));
     }
 
@@ -79,7 +79,7 @@ public sealed class DeviceFlow
         switch (Str(r, "error"))
         {
             case null:
-                if (Str(r, "access_token") == null) throw new LoginException("토큰을 받지 못했습니다.");
+                if (Str(r, "access_token") == null) throw new LoginException(L.T("토큰을 받지 못했습니다."));
                 return (r, false);
             case "authorization_pending": return (null, false);
             case "slow_down": return (null, true);
@@ -120,7 +120,7 @@ public sealed class DeviceFlow
             if (slow) interval += TimeSpan.FromSeconds(5);
             if (token is { } t) return t;
         }
-        throw new LoginException("로그인 코드가 만료되었습니다. 다시 시도하세요.");
+        throw new LoginException(L.T("로그인 코드가 만료되었습니다. 다시 시도하세요."));
     }
 
     private async Task<LoginIdentity> IdentityAsync(JsonElement token, CancellationToken ct)
@@ -131,27 +131,27 @@ public sealed class DeviceFlow
             case LoginProviderKind.GitHub:
             {
                 var u = await GetJsonAsync("https://api.github.com/user", access, ct);
-                var login = Str(u, "login") ?? throw new LoginException("GitHub 계정 정보를 읽지 못했습니다.");
+                var login = Str(u, "login") ?? throw new LoginException(L.T("GitHub 계정 정보를 읽지 못했습니다."));
                 var id = u.TryGetProperty("id", out var idEl) ? idEl.ToString() : "";
                 return new LoginIdentity(LoginProviderKind.GitHub, login, Str(u, "name") ?? login, id);
             }
             case LoginProviderKind.Google:
             {
                 var u = await GetJsonAsync("https://openidconnect.googleapis.com/v1/userinfo", access, ct);
-                var email = Str(u, "email") ?? throw new LoginException("Google 계정 이메일을 읽지 못했습니다.");
+                var email = Str(u, "email") ?? throw new LoginException(L.T("Google 계정 이메일을 읽지 못했습니다."));
                 if (u.TryGetProperty("email_verified", out var ev) && ev.ValueKind == JsonValueKind.False)
-                    throw new LoginException("이메일이 확인되지 않은 Google 계정입니다.");
+                    throw new LoginException(L.T("이메일이 확인되지 않은 Google 계정입니다."));
                 return new LoginIdentity(LoginProviderKind.Google, email, Str(u, "name") ?? email, Str(u, "sub") ?? "");
             }
             case LoginProviderKind.Microsoft:
             {
                 // id_token 은 TLS 로 토큰 엔드포인트에서 직접 받은 것이라 내용만 읽는다
-                var claims = JwtPayload(Str(token, "id_token") ?? throw new LoginException("Microsoft 로그인 정보(id_token)를 받지 못했습니다."));
-                var account = Str(claims, "preferred_username") ?? Str(claims, "email") ?? throw new LoginException("Microsoft 계정 이름을 읽지 못했습니다.");
+                var claims = JwtPayload(Str(token, "id_token") ?? throw new LoginException(L.T("Microsoft 로그인 정보(id_token)를 받지 못했습니다.")));
+                var account = Str(claims, "preferred_username") ?? Str(claims, "email") ?? throw new LoginException(L.T("Microsoft 계정 이름을 읽지 못했습니다."));
                 return new LoginIdentity(LoginProviderKind.Microsoft, account, Str(claims, "name") ?? account, Str(claims, "oid") ?? "");
             }
         }
-        throw new LoginException("로그인 제공자가 설정되지 않았습니다.");
+        throw new LoginException(L.T("로그인 제공자가 설정되지 않았습니다."));
     }
 
     /// <summary>GitHub Organization 활성 멤버인지 (read:org 권한)</summary>
@@ -179,7 +179,7 @@ public sealed class DeviceFlow
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         Prepare(req, accessToken);
         using var res = await Http.SendAsync(req, ct);
-        if (!res.IsSuccessStatusCode) throw new LoginException($"계정 정보를 읽지 못했습니다 (HTTP {(int)res.StatusCode}).");
+        if (!res.IsSuccessStatusCode) throw new LoginException(L.F("계정 정보를 읽지 못했습니다 (HTTP {0}).", (int)res.StatusCode));
         return JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct)).RootElement.Clone();
     }
 
@@ -187,7 +187,7 @@ public sealed class DeviceFlow
     public static JsonElement JwtPayload(string jwt)
     {
         var parts = jwt.Split('.');
-        if (parts.Length < 2) throw new LoginException("로그인 정보 형식이 올바르지 않습니다.");
+        if (parts.Length < 2) throw new LoginException(L.T("로그인 정보 형식이 올바르지 않습니다."));
         var b64 = parts[1].Replace('-', '+').Replace('_', '/');
         b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
         return JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(b64))).RootElement.Clone();
@@ -196,13 +196,13 @@ public sealed class DeviceFlow
     /// <summary>OAuth 오류 코드를 한국어 안내로</summary>
     public static string Describe(string error, string? description) => error switch
     {
-        "access_denied" => "로그인이 거부되었습니다.",
-        "expired_token" => "로그인 코드가 만료되었습니다. 다시 시도하세요.",
+        "access_denied" => L.T("로그인이 거부되었습니다."),
+        "expired_token" => L.T("로그인 코드가 만료되었습니다. 다시 시도하세요."),
         "incorrect_client_credentials" or "invalid_client" or "unauthorized_client" =>
-            "Client ID(또는 Secret)가 올바르지 않거나 이 앱에서 Device Flow 가 켜져 있지 않습니다.",
-        "device_flow_disabled" => "GitHub OAuth 앱 설정에서 'Enable Device Flow' 를 켜세요.",
-        "Not Found" => "Client ID 에 해당하는 OAuth 앱을 찾을 수 없습니다. Client ID 를 확인하세요.",
-        "invalid_scope" => "요청한 권한(scope)을 이 앱에서 쓸 수 없습니다.",
-        _ => $"로그인 실패: {error}" + (string.IsNullOrWhiteSpace(description) ? "" : $" — {description.Split('\n')[0]}"),
+            L.T("Client ID(또는 Secret)가 올바르지 않거나 이 앱에서 Device Flow 가 켜져 있지 않습니다."),
+        "device_flow_disabled" => L.T("GitHub OAuth 앱 설정에서 'Enable Device Flow' 를 켜세요."),
+        "Not Found" => L.T("Client ID 에 해당하는 OAuth 앱을 찾을 수 없습니다. Client ID 를 확인하세요."),
+        "invalid_scope" => L.T("요청한 권한(scope)을 이 앱에서 쓸 수 없습니다."),
+        _ => L.F("로그인 실패: {0}", error) + (string.IsNullOrWhiteSpace(description) ? "" : $" — {description.Split('\n')[0]}"),
     };
 }

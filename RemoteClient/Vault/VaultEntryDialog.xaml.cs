@@ -19,20 +19,20 @@ public partial class VaultEntryDialog : Window
         InitializeComponent();
         _entry = entry;
         _isNew = isNew;
-        TitleText.Text = isNew ? "새 Vault 계정" : "Vault 계정 수정";
+        TitleText.Text = isNew ? L.T("새 Vault 계정") : L.T("Vault 계정 수정");
         NameBox.Text = entry.Name;
         UserBox.Text = entry.Username;
         NoteBox.Text = entry.Note;
         if (entry.HasPassword)
         {
-            PasswordLabel.Text = "비밀번호 (저장됨 — 비워 두면 그대로)";
+            PasswordLabel.Text = L.T("비밀번호 (저장됨 — 비워 두면 그대로)");
             ClearPasswordBox.Visibility = Visibility.Visible;
         }
         if (entry.HasKey)
         {
-            KeyLabel.Text = "SSH 개인키 (저장됨 — 비워 두면 그대로)";
+            KeyLabel.Text = L.T("SSH 개인키 (저장됨 — 비워 두면 그대로)");
             ClearKeyBox.Visibility = Visibility.Visible;
-            if (entry.PublicKey is { Length: > 0 } pub) KeyBox.Tag = $"저장된 키: {pub[..Math.Min(pub.Length, 52)]}...";
+            if (entry.PublicKey is { Length: > 0 } pub) KeyBox.Tag = L.F("저장된 키: {0}...", pub[..Math.Min(pub.Length, 52)]);
         }
         Loaded += (_, _) => NameBox.Focus();
     }
@@ -58,14 +58,14 @@ public partial class VaultEntryDialog : Window
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "SSH 개인키 선택",
-            Filter = "모든 파일|*.*|PuTTY 키 (*.ppk)|*.ppk|PEM (*.pem)|*.pem",
+            Title = L.T("SSH 개인키 선택"),
+            Filter = L.T("모든 파일|*.*|PuTTY 키 (*.ppk)|*.ppk|PEM (*.pem)|*.pem"),
             InitialDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh"),
         };
         if (dlg.ShowDialog(this) != true) return;
         try
         {
-            if (new FileInfo(dlg.FileName).Length > 64 * 1024) { ShowError("개인키 파일로 보기에는 너무 큽니다 (64KB 초과)."); return; }
+            if (new FileInfo(dlg.FileName).Length > 64 * 1024) { ShowError(L.T("개인키 파일로 보기에는 너무 큽니다 (64KB 초과).")); return; }
             KeyBox.Text = File.ReadAllText(dlg.FileName);
             ClearKeyBox.IsChecked = false;
             if (NameBox.Text.Trim().Length == 0) NameBox.Text = Path.GetFileNameWithoutExtension(dlg.FileName);
@@ -93,7 +93,7 @@ public partial class VaultEntryDialog : Window
         var clearKey = ClearKeyBox.IsChecked == true && keyText.Length == 0;
         var willHavePassword = newPassword.Length > 0 || (_entry.HasPassword && !clearPassword);
         var willHaveKey = keyText.Length > 0 || (_entry.HasKey && !clearKey);
-        if (!willHavePassword && !willHaveKey) { PasswordBox.Focus(); ShowError("비밀번호나 SSH 키 중 하나는 있어야 합니다."); return; }
+        if (!willHavePassword && !willHaveKey) { PasswordBox.Focus(); ShowError(L.T("비밀번호나 SSH 키 중 하나는 있어야 합니다.")); return; }
 
         string? publicKey = _entry.PublicKey;
         if (willHaveKey && (keyText.Length > 0 || newPass.Length > 0))
@@ -105,8 +105,8 @@ public partial class VaultEntryDialog : Window
             catch (Exception ex)
             {
                 ShowError(ex is Renci.SshNet.Common.SshPassPhraseNullOrEmptyException
-                    ? "암호가 걸린 키입니다. 키 암호를 입력하세요."
-                    : $"개인키를 읽을 수 없습니다: {ex.Message}");
+                    ? L.T("암호가 걸린 키입니다. 키 암호를 입력하세요.")
+                    : L.F("개인키를 읽을 수 없습니다: {0}", ex.Message));
                 return;
             }
         }

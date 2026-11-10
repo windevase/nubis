@@ -16,9 +16,9 @@ public partial class ProfileDialog : Window
         TitleText.Text = p.GroupName;
         SubText.Text = p.Provider switch
         {
-            CloudProvider.Azure => $"구독 {p.Name}",
-            CloudProvider.Gcp => $"프로젝트 {p.Name}",
-            _ => $"프로필 {p.Name}",
+            CloudProvider.Azure => L.F("구독 {0}", p.Name),
+            CloudProvider.Gcp => L.F("프로젝트 {0}", p.Name),
+            _ => L.F("프로필 {0}", p.Name),
         };
         NameBox.Text = p.GroupName;
         UserBox.Text = p.DefaultUsername;
@@ -26,13 +26,13 @@ public partial class ProfileDialog : Window
         // 비워 두면 설정의 기본 포트를 따른다
         SshPortBox.Text = p.SshPort?.ToString() ?? "";
         RdpPortBox.Text = p.RdpPort?.ToString() ?? "";
-        SshPortBox.Tag = $"기본 포트 ({HostEntry.PreferredPort(Protocol.Ssh)})";
-        RdpPortBox.Tag = $"기본 포트 ({HostEntry.PreferredPort(Protocol.Rdp)})";
+        SshPortBox.Tag = L.F("기본 포트 ({0})", HostEntry.PreferredPort(Protocol.Ssh));
+        RdpPortBox.Tag = L.F("기본 포트 ({0})", HostEntry.PreferredPort(Protocol.Rdp));
         (p.UsePublicIp ? PublicIp : PrivateIp).IsChecked = true;
         StoppedBox.IsChecked = p.IncludeStopped;
         if (p.HiddenInstances.Count > 0)
         {
-            UnhideBox.Content = $"목록에서 지운 서버 {p.HiddenInstances.Count}개 다시 표시 (다음 동기화부터)";
+            UnhideBox.Content = L.F("목록에서 지운 서버 {0}개 다시 표시 (다음 동기화부터)", p.HiddenInstances.Count);
             UnhideBox.Visibility = Visibility.Visible;
         }
         Loaded += (_, _) => UserBox.Focus();

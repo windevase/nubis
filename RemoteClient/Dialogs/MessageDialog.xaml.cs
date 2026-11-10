@@ -52,13 +52,13 @@ public partial class MessageDialog : Window
         {
             case MessageBoxButton.YesNo:
             case MessageBoxButton.YesNoCancel:
-                dlg.SetButtons("예", MessageBoxResult.Yes, "아니요", MessageBoxResult.No);
+                dlg.SetButtons(L.T("예"), MessageBoxResult.Yes, L.T("아니요"), MessageBoxResult.No);
                 break;
             case MessageBoxButton.OKCancel:
-                dlg.SetButtons("확인", MessageBoxResult.OK, "취소", MessageBoxResult.Cancel);
+                dlg.SetButtons(L.T("확인"), MessageBoxResult.OK, L.T("취소"), MessageBoxResult.Cancel);
                 break;
             default:
-                dlg.SetButtons("확인", MessageBoxResult.OK, null, MessageBoxResult.None);
+                dlg.SetButtons(L.T("확인"), MessageBoxResult.OK, null, MessageBoxResult.None);
                 break;
         }
 

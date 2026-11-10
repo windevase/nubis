@@ -11,9 +11,10 @@ public partial class VaultPickerDialog : Window
     private VaultPickerDialog(Guid? current, Protocol protocol)
     {
         InitializeComponent();
-        TitleText.Text = "Vault 계정 선택";
-        SubText.Text = "이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다." +
-                       (protocol == Protocol.Rdp ? " RDP 는 비밀번호만 씁니다." : "");
+        TitleText.Text = L.T("Vault 계정 선택");
+        SubText.Text = protocol == Protocol.Rdp
+            ? L.T("이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다. RDP 는 비밀번호만 씁니다.")
+            : L.T("이 호스트에 로그인할 계정을 고르세요. 계정의 사용자명·비밀번호·SSH 키로 접속하며, 호스트에 직접 적은 값이 있으면 그 값이 우선합니다.");
         Reload(current);
     }
 

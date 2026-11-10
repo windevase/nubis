@@ -1,7 +1,8 @@
 <Window x:Class="Nubis.PromptDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="입력" Width="420" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        xmlns:l="clr-namespace:Nubis"
+        Title="{l:Tr '입력'}" Width="420" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
     <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
@@ -14,8 +15,8 @@
             <TextBlock x:Name="LabelText" Style="{StaticResource FieldLabel}"/>
             <TextBox x:Name="InputBox"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-                <Button Content="취소" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
-                <Button Content="확인" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+                <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
+                <Button Content="{l:Tr '확인'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
             </StackPanel>
         </StackPanel>
     </Border>

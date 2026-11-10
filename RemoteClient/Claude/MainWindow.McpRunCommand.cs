@@ -53,16 +53,16 @@ public partial class MainWindow
             .Concat(windows.Select(h => $"[{winLabel}]  {h.DisplayName}  ({Addrs(h, $"{WinRm.HttpsPort}/{WinRm.HttpPort}")})"))
             .ToList();
         var mixed = linux.Count > 0 && windows.Count > 0
-            ? "\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요." : "";
+            ? L.T("\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요.") : "";
         // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행
         var autoApproved = SettingsStore.Current.AutoApproveReadOnly
             && (linux.Count == 0 || ReadOnlyCommands.IsReadOnly(command, CommandShell.Sh))
             && (windows.Count == 0 || ReadOnlyCommands.IsReadOnly(command, useCmd ? CommandShell.Cmd : CommandShell.PowerShell));
         if (!autoApproved)
         {
-            var approved = await OnUi(() => ApprovalDialog.Ask(this, $"Claude 가 서버 {targets.Count}대에 명령 실행을 요청합니다",
-                "승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다." + mixed +
-                (skipped.Count > 0 ? $"\n제외: {skipped.Count}건 (중지·미일치)" : ""), labels, command));
+            var approved = await OnUi(() => ApprovalDialog.Ask(this, L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
+                L.T("승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다.") + mixed +
+                (skipped.Count > 0 ? L.F("\n제외: {0}건 (중지·미일치)", skipped.Count) : ""), labels, command));
             if (!approved)
             {
                 AuditLog.Write("run_command", labels, command, "거부");
