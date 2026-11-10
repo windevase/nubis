@@ -1,6 +1,6 @@
 <img src="nubis.png" width="96" align="right"/>
 
-[English](README.md) | **한국어** · 📖 [사용자 가이드](docs/guide.ko.md)
+[English](README.md) | **한국어** · 📖 [사용자 가이드](docs/guide.ko.md) · ⬇️ [다운로드](https://github.com/windevase/nubis/releases/latest) · 🛡️ [VirusTotal 검사 결과 (v0.2.0 exe)](https://www.virustotal.com/gui/file/ee41b98563d88ee1cfd8a9eb33f6abb6032e57ebbb9a74e1135b255df1a88e22)
 
 # Nubis
 
