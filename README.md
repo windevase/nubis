@@ -133,12 +133,14 @@ Choose GitHub · Google · Microsoft under Settings → **Sign-in screen**, and 
 - Method: OAuth Device Flow — enter the code shown on screen in your browser and approve. Your password is typed only in the browser (GitHub/Google/Microsoft); Nubis never receives it. The token is used only to identify the account and is not stored
 - Allowed: account names (GitHub login / email), `@company.com` for a whole domain, and for GitHub the members of an Organization
 - Stay signed in (hours, 0 = every time) · allow offline (days, 0 = never). The last sign-in is stored encrypted in `login.json`
+- **Per-account profiles**: each signed-in account gets its own hosts · Vault · cloud profiles · known_hosts · Claude working folder · audit log · display settings under `%APPDATA%\Nubis\users\<provider>_<account id>\`. Another account starts empty and never sees yours (only language and sign-in settings are shared). The account id never changes (e.g. the GitHub user number), so renaming your login keeps the same profile
+- **Owner** = the account that set up sign-in. Data from before sign-in was enabled moves to the owner on their first sign-in, and only the owner can change the sign-in settings. Turning sign-in off keeps using the owner's profile
 - **Settings are saved only after a successful test sign-in** (so a wrong setting cannot lock you out). If you are locked out anyway, set `"Login"` → `"Provider"` to `"None"` in `%APPDATA%\Nubis\settings.json`
 - Registration
   - GitHub: github.com/settings/developers → OAuth Apps → New OAuth App (any Homepage · Callback URL) → check **Enable Device Flow** → Client ID
   - Google: Google Cloud console → Credentials → OAuth client ID → type **TVs and Limited Input devices** → Client ID · Secret
   - Microsoft: Entra admin center → App registrations → Authentication → **Allow public client flows** → Application (client) ID; tenant `organizations` or your company tenant
-- Limitation: the sign-in is "the door into the app". It is not tied to the data encryption (DPAPI), so it does not stop a program running under the same Windows account from decrypting the files directly (DPAPI does stop files leaking to another PC or account)
+- Limitation: the sign-in and per-account profiles are "the door into the app" and "separation inside the app". It is not tied to the data encryption (DPAPI), so it does not stop a program running under the same Windows account from decrypting the files directly (DPAPI does stop files leaking to another PC or account)
 
 ## Claude Code panel
 

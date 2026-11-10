@@ -131,12 +131,14 @@ Settings → **시작 화면 로그인** 에서 GitHub · Google · Microsoft �
 - 방식: OAuth Device Flow — 화면에 나온 코드를 브라우저에서 입력하고 승인. 비밀번호는 브라우저(GitHub/Google/Microsoft)에서만 입력하고 Nubis 는 받지 않는다. 받은 토큰은 계정 확인에만 쓰고 저장하지 않는다
 - 허용: 계정 이름(GitHub 로그인 이름 / 이메일), `@회사.com` 은 그 도메인 전체, GitHub 는 Organization 멤버도 가능
 - 로그인 유지(시간, 0 = 매번)·오프라인 허용(일, 0 = 막음). 마지막 로그인 기록은 `login.json` 에 암호화해 저장
+- **계정별 프로필**: 로그인한 계정마다 호스트·Vault·클라우드 프로필·known_hosts·Claude 작업 폴더·감사 로그·화면 설정이 `%APPDATA%\Nubis\users\<제공자>_<계정 ID>\` 에 따로 저장된다. 다른 계정으로 로그인하면 빈 상태로 시작하고 서로의 데이터가 보이지 않는다 (언어·로그인 설정만 공통). 계정 ID 는 바뀌지 않는 값(GitHub 사용자 번호 등)이라 아이디를 바꿔도 같은 프로필
+- **소유자** = 로그인을 설정한 계정. 로그인을 켜기 전의 데이터는 소유자가 처음 로그인할 때 넘겨받고, 로그인 설정은 소유자만 바꿀 수 있다. 로그인을 끄면 소유자 프로필을 그대로 쓴다
 - **테스트 로그인에 성공해야 저장**된다 (잘못된 설정으로 못 들어오는 일 방지). 그래도 못 들어오면 `%APPDATA%\Nubis\settings.json` 의 `"Login"` → `"Provider"` 를 `"None"` 으로
 - 등록
   - GitHub: github.com/settings/developers → OAuth Apps → New OAuth App (Homepage·Callback URL 은 아무 주소) → **Enable Device Flow** 체크 → Client ID
   - Google: Google Cloud 콘솔 → 사용자 인증 정보 → OAuth 클라이언트 ID → 유형 **TV 및 입력 제한 기기** → Client ID·Secret
   - Microsoft: Entra 관리 센터 → 앱 등록 → 인증 → **공용 클라이언트 흐름 허용** → 애플리케이션(클라이언트) ID, 테넌트는 `organizations` 또는 회사 테넌트
-- 한계: 로그인은 "앱에 들어가는 문" 이다. 데이터 암호화(DPAPI)와 묶여 있지 않으므로, 같은 Windows 계정에서 도는 프로그램이 파일을 직접 푸는 것까지 막지는 못한다 (다른 PC·계정으로 파일이 새는 것은 DPAPI 가 막음)
+- 한계: 로그인과 계정별 프로필은 "앱에 들어가는 문" 과 "앱 화면에서의 분리" 다. 데이터 암호화(DPAPI)와 묶여 있지 않으므로, 같은 Windows 계정에서 도는 프로그램이 파일을 직접 푸는 것까지 막지는 못한다 (다른 PC·계정으로 파일이 새는 것은 DPAPI 가 막음)
 
 ## Claude Code 패널
 

@@ -51,6 +51,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 ## 데이터 위치
 
 - 사용자 데이터: `%APPDATA%\Nubis\` (`hosts.json`, `cloud_profiles.json`, `known_hosts.json`, `vault.json`, `login.json`, `settings.json`, `claude\`, `claude_audit.log`). 저장소에는 데이터가 없다.
+- **계정별 프로필**: 시작 화면 로그인을 쓰면 `AppPaths.DataDir` 가 `users\<제공자>_<계정 ID>\`(`Profiles`) 로 바뀐다 — 앱 시작 때 한 번, 메인 창 전에. 공통 폴더(`AppPaths.RootDir`)에는 언어·로그인 설정(`SettingsStore.Global`)과 `login.json` 만. 화면 설정은 `SettingsStore.Current`(계정별). 언어·로그인은 반드시 `Global`/`UpdateGlobal` 로. 소유자(`Login.OwnerKey`)만 로그인 설정을 바꾼다.
 - `hosts.json` · `cloud_profiles.json` · `known_hosts.json` · `vault.json` · `login.json` 은 **파일 전체 DPAPI 암호화**(`SafeFile.LoadProtected/WriteProtected`, 표식 `NUBIS-DPAPI1`, entropy `Nubis.DataFile.v1` — 바꾸지 않는다). 표식이 없는 평문은 읽을 때 자동 암호화. `settings.json` 은 평문 유지(비밀 값 없음, 로그인 설정을 잘못했을 때 사용자가 직접 고쳐 풀 수 있게). 새 데이터 파일을 만들면 `WriteProtected` 를 쓰고 `ClaudeGuard.SecretFiles` 에 추가한다.
 - **암호화된 데이터는 이전 버전(0.1.2 이하)이 읽지 못한다** — 읽기 실패로 빈 목록이 되므로 옛 exe 를 실행하지 않게 안내한다.
 - 캐시: `%LOCALAPPDATA%\Nubis\WebView2\`
