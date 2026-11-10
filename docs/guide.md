@@ -35,7 +35,7 @@ Nubis is a Windows remote-access client. It gathers your cloud servers by profil
 | Runtime | None needed — the release exe is a single file that bundles .NET |
 | WebView2 | Included with Windows 10/11 (used for the terminal) |
 | Claude panel (optional) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
-| Cloud import (optional) | A CLI sign-in for each cloud you use (`aws`, `tccli`, `gcloud`, `az`) |
+| Cloud import (optional) | A credential profile for each cloud you use — the ones created by the `aws`, `tccli`, `gcloud` and `az` CLIs |
 
 ### 1.2 Installation
 
@@ -201,7 +201,7 @@ Host editor → **Sign-in account** → **Choose a Vault account**. The card sho
 
 ## 8. Importing cloud servers
 
-Nubis reuses the CLI sign-ins already on this PC. You do not enter keys separately.
+Nubis reuses the **credential profiles** already saved on this PC — the profile and credential files each cloud CLI creates. You do not enter keys into Nubis.
 
 ### 8.1 Preparation
 

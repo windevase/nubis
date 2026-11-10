@@ -23,7 +23,7 @@
   "서버의 ~/.ssh/authorized_keys 에 붙여넣을 공개키": "Public key to paste into ~/.ssh/authorized_keys on the server",
   "수정": "Edit",
   "신뢰한 SSH 서버 호스트키 지문입니다. 서버를 재설치해 키가 바뀌었다면 여기서 삭제 후 다시 접속하세요.": "Fingerprints of trusted SSH server host keys. If a server was reinstalled and its key changed, delete it here and connect again.",
-  "클라우드 계정의 서버를 프로필 그룹으로 가져옵니다. 인증은 이 PC의 CLI 로그인 정보를 그대로 사용합니다.": "Imports servers from cloud accounts into profile groups. Authentication uses this PC's existing CLI sign-in.",
+  "클라우드 계정의 서버를 프로필 그룹으로 가져옵니다. 인증은 이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI)을 그대로 사용합니다.": "Imports servers from cloud accounts into profile groups. Authentication uses the credential profiles already saved on this PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI).",
   "전체 동기화": "Sync all",
   "로그인": "Sign in",
   "CLI 로그인 명령을 새 창에서 실행합니다": "Runs the CLI sign-in command in a new window",

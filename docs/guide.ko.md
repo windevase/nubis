@@ -35,7 +35,7 @@ Nubis 는 클라우드 서버를 프로필별로 모아 SSH · RDP · SFTP 로 �
 | 런타임 | 필요 없음 — 배포용 exe 는 .NET 을 포함한 단일 파일 |
 | WebView2 | Windows 10/11 에 기본 포함 (터미널 화면에 사용) |
 | Claude 패널 (선택) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
-| 클라우드 가져오기 (선택) | 쓰는 클라우드의 CLI 로그인 (`aws`, `tccli`, `gcloud`, `az`) |
+| 클라우드 가져오기 (선택) | 쓰는 클라우드의 인증 프로필 — `aws`, `tccli`, `gcloud`, `az` CLI 로 만들어 둔 것 |
 
 ### 1.2 설치
 
@@ -201,7 +201,7 @@ Windows 내장 원격 데스크톱 엔진(mstsc 와 같은 `mstscax`)을 앱 안
 
 ## 8. 클라우드 서버 가져오기
 
-이 PC 의 CLI 로그인 정보를 그대로 씁니다. 키를 따로 입력하지 않습니다.
+이 PC 에 저장된 **인증 프로필**을 그대로 씁니다 — 각 클라우드 CLI 가 만들어 둔 프로필·자격 증명 파일입니다. Nubis 에 키를 따로 입력하지 않습니다.
 
 ### 8.1 준비
 

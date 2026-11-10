@@ -49,7 +49,7 @@ public partial class MainWindow
     private static string GuidePrompt(OnboardingTopic topic) => topic switch
     {
         OnboardingTopic.Hosts => L.T("Nubis 에 서버를 처음 추가하려고 해. get_setup_status 로 지금 상태를 보고, 직접 추가하는 방법과 네가 add_host 로 추가해 주는 방법을 알려줘. 필요한 화면은 open_app_page 로 열어 줘."),
-        OnboardingTopic.Cloud => L.T("Nubis 로 클라우드 서버를 가져오고 싶어. get_setup_status 로 이 PC 에 어떤 클라우드 CLI 로그인이 있는지 보고, 프로필을 추가해 동기화하는 과정을 단계별로 안내해줘. Cloud 화면은 open_app_page 로 열어 줘."),
+        OnboardingTopic.Cloud => L.T("Nubis 로 클라우드 서버를 가져오고 싶어. get_setup_status 로 이 PC 에 어떤 클라우드 인증 프로필이 있는지 보고, 프로필을 추가해 동기화하는 과정을 단계별로 안내해줘. Cloud 화면은 open_app_page 로 열어 줘."),
         OnboardingTopic.Vault => L.T("Nubis Vault 에 서버 계정을 저장하는 방법을 알려줘. 비밀번호와 SSH 키를 어떻게 넣고, 호스트에 어떻게 연결하는지 단계별로. Vault 화면은 open_app_page 로 열어 줘."),
         OnboardingTopic.Login => L.T("Nubis 시작 화면 로그인(SSO) 을 설정하고 싶어. get_setup_status 로 현재 상태를 보고, GitHub · Google · Microsoft 중 하나를 골라 OAuth 앱 등록부터 Client ID 입력, 테스트 로그인까지 한 단계씩 안내해줘. 설정 화면은 open_app_page 로 열어 줘. 값 입력과 저장은 내가 직접 할게."),
         _ => L.T("Nubis 의 Claude 패널로 무엇을 할 수 있는지 get_setup_status 로 내 상태를 보고 예시와 함께 짧게 소개해줘. 위험한 작업은 어떻게 승인되는지도 알려줘."),

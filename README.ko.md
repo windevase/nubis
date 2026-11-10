@@ -26,7 +26,7 @@ Linux 와 Windows 서버가 섞여 있고 여러 클라우드에 흩어져 있�
 SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속됩니다.
 
 **☁️ 클라우드 서버가 이미 목록에**
-이미 해 둔 CLI 로그인으로 AWS · Tencent Cloud · Google Cloud · Azure 의 서버를 가져옵니다. 계속 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다.
+이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI)로 AWS · Tencent Cloud · Google Cloud · Azure 의 서버를 프로필별로 가져옵니다. 계속 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다.
 
 **✦ 터미널 바로 옆의 Claude**
 내장 Claude 패널은 지금 보고 있는 탭을 압니다. "이 에러 뭐야?", "Production 그룹 디스크 확인해줘", "이 서버 추가하고 운영 계정 연결해줘" 처럼 말하면 됩니다. 서버를 바꾸는 작업은 모두 승인을 거치고 감사 로그에 남으며, Claude 는 저장된 비밀번호와 키를 읽을 수 없습니다.
@@ -75,7 +75,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다.
 
-Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 클라우드 프로필의 API (이 PC 의 CLI 로그인 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
+Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
 
 ## 라이선스
 

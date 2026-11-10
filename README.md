@@ -26,7 +26,7 @@ If your work looks like that too — a mix of Linux and Windows servers, spread 
 SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected.
 
 **☁️ Your cloud servers, already in the list**
-Import servers from AWS, Tencent Cloud, Google Cloud and Azure using the CLI sign-ins you already have. They stay in sync — names and IPs update, your own changes stay.
+Import servers from AWS, Tencent Cloud, Google Cloud and Azure, profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI). They stay in sync — names and IPs update, your own changes stay.
 
 **✦ Claude, right next to the terminal**
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys.
@@ -75,7 +75,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
 
-Nubis connects only to the places you configure: the servers you connect to, the cloud APIs of the profiles you add (with the CLI sign-in on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
+Nubis connects only to the places you configure: the servers you connect to, the cloud APIs of the profiles you add (using the credential profiles saved on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
 
 ## License
 

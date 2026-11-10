@@ -23,7 +23,7 @@ public partial class OnboardingWindow : Window
         AddCard(OnboardingTopic.Hosts, "", L.T("서버 직접 추가"),
             L.T("SSH / RDP 서버를 주소·포트·계정으로 등록합니다. 검색창에 user@host 를 입력해 바로 접속할 수도 있습니다."), L.T("새 호스트"));
         AddCard(OnboardingTopic.Cloud, "", L.T("클라우드 서버 가져오기"),
-            L.T("AWS · Tencent · GCP · Azure 의 서버를 이 PC 의 CLI 로그인으로 그룹별로 가져옵니다."), L.T("Cloud 열기"));
+            L.T("AWS · Tencent · GCP · Azure 의 서버를 이 PC 에 저장된 인증 프로필로 그룹별로 가져옵니다."), L.T("Cloud 열기"));
         AddCard(OnboardingTopic.Vault, "", L.T("Vault 계정"),
             L.T("여러 서버가 함께 쓰는 사용자명·비밀번호·SSH 키를 한 번 저장해 두고 골라 씁니다."), L.T("Vault 열기"));
         AddCard(OnboardingTopic.Login, "", L.T("시작 화면 로그인 (SSO)"),
