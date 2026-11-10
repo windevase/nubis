@@ -297,6 +297,31 @@ Cloud 페이지의 각 섹션에 있는 **로그인** 버튼은 해당 CLI 로�
 | `get_setup_status` · `open_app_page` | 설정 상태 · 화면 열기 (설정 안내용) |
 | `diagnostics` | 앱 메모리 · 핸들 |
 
+### 9.6 여러 서버 명령 실행 (SSH / WinRM)
+
+`run_command` 는 Linux 서버에는 SSH, Windows 서버에는 WinRM(PowerShell · cmd)으로 여러 서버에 동시에 명령을 실행합니다. `group:Production` 처럼 그룹 전체를 대상으로 할 수 있고, 중지된 서버는 자동으로 건너뜁니다.
+
+| 항목 | 동작 |
+|---|---|
+| 주소 순서 | 사설 IP → 공인 IP. SSH 는 사설 → 공인, WinRM 은 사설 5986 → 5985 → 공인 5986 → 5985 |
+| 재시도 | **연결 실패일 때만** 다음 주소·포트로. 인증 실패는 계정 잠금을 막기 위해 바로 중단하고, 셸이 만들어진 뒤의 오류는 명령이 두 번 실행되지 않게 재시도하지 않음 |
+| WinRM 5986 | HTTPS + NTLM/Negotiate (자체 서명 인증서 허용) |
+| WinRM 5985 | HTTP + NTLM 메시지 암호화 (서버 기본 정책 `AllowUnencrypted=false` 에서 동작). 이 PC 의 TrustedHosts 설정 필요 없음 |
+| 계정 | RDP 와 같은 호스트·클라우드 프로필 계정 (`DOMAIN\user`, `user@domain`, 로컬 계정) |
+| 서버 준비 (Windows) | WinRM 리스너(`winrm quickconfig`, HTTPS 는 인증서 바인딩)와 5986/5985 방화벽 허용 |
+
+> **참고** WinRM 은 아직 실서버에서 충분히 검증되지 않았습니다. 문제가 있으면 이슈로 알려 주세요.
+
+**읽기 전용 자동 승인 범위** — [Settings → Claude](#117-claude--rdp) 의 자동 승인을 켜면 아래와 같은 조회 명령만 승인 창 없이 실행됩니다. 허용 목록 방식이라 목록에 없거나 애매하면 승인 창이 다시 뜹니다.
+
+| 구분 | 승인 없이 실행 (예) | 승인 창이 뜸 (예) |
+|---|---|---|
+| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, 파일 리디렉션 `>`, 명령 치환 `$( )`·백틱 |
+| PowerShell | `Get-*`, `Select-/Where-/Sort-/Format-*`, `Test-*` | `Invoke-*`, 메서드·.NET 호출, 모르는 명령 |
+| cmd · 공통 | `ipconfig` `sc query` `reg query` `netstat` `tasklist` | `ipconfig /release` 같은 쓰기 옵션 |
+
+위험한 명령은 설정과 상관없이 항상 승인을 묻고, 자동 실행한 명령도 감사 로그에 "자동 승인(읽기 전용)" 으로 남습니다.
+
 ---
 
 ## 10. 시작 화면 로그인과 계정별 프로필

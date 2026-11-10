@@ -297,6 +297,31 @@ The approval prompt shows the target servers and the full command. It flags risk
 | `get_setup_status` · `open_app_page` | Setup status and opening screens (for setup guidance) |
 | `diagnostics` | App memory and handles |
 
+### 9.6 Running commands on several servers (SSH / WinRM)
+
+`run_command` runs a command on several servers at once: over SSH for Linux servers and over WinRM (PowerShell · cmd) for Windows servers. You can target a whole group, such as `group:Production`, and stopped servers are skipped automatically.
+
+| Item | Behavior |
+|---|---|
+| Address order | Private IP → public IP. SSH: private → public. WinRM: private 5986 → 5985 → public 5986 → 5985 |
+| Retries | Moves to the next address or port **only when the connection fails**. An authentication failure stops immediately to avoid account lockouts, and errors after the shell is created are not retried so a command never runs twice |
+| WinRM 5986 | HTTPS + NTLM/Negotiate (self-signed certificates allowed) |
+| WinRM 5985 | HTTP + NTLM message encryption (works with the default server policy `AllowUnencrypted=false`). No TrustedHosts setup is needed on this PC |
+| Account | The same host or cloud-profile account as RDP (`DOMAIN\user`, `user@domain`, local accounts) |
+| Server setup (Windows) | A WinRM listener (`winrm quickconfig`, plus a certificate binding for HTTPS) and firewall rules for 5986/5985 |
+
+> **Note** WinRM has not yet been fully verified against real servers. If you run into problems, please open an issue.
+
+**What read-only auto-approve covers** — when auto-approve is on in [Settings → Claude](#117-claude--rdp), only read-only commands like the ones below run without an approval prompt. It is an allow list: anything not on it, or anything ambiguous, brings the prompt back.
+
+| Kind | Runs without approval (examples) | Asks for approval (examples) |
+|---|---|---|
+| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, file redirection `>`, command substitution `$( )` or backticks |
+| PowerShell | `Get-*`, `Select-/Where-/Sort-/Format-*`, `Test-*` | `Invoke-*`, method or .NET calls, unknown commands |
+| cmd · common | `ipconfig` `sc query` `reg query` `netstat` `tasklist` | Write options such as `ipconfig /release` |
+
+Dangerous commands always ask, whatever the setting, and commands that run automatically are still written to the audit log as "auto-approved (read-only)".
+
 ---
 
 ## 10. Sign-in screen and per-account profiles
