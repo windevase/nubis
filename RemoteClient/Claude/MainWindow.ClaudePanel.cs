@@ -139,6 +139,9 @@ public partial class MainWindow
 
     /// <summary>hook 이 질문에 붙일 문구. 비밀 값(계정·비밀번호)은 넣지 않는다.</summary>
     public static string ActiveContextText(SessionTab? tab, int openTabs) =>
+        ActiveContextCore(tab, openTabs) + (L.IsEnglish ? " (The user's app language is English — reply in English.)" : "");
+
+    private static string ActiveContextCore(SessionTab? tab, int openTabs) =>
         tab == null
             ? ActiveContextText(null, "", Protocol.Local, null, 0, SessionStatus.Disconnected, openTabs)
             : ActiveContextText(tab.Id, tab.Title, tab.Protocol, tab.Host?.Address, tab.Host?.Port ?? 0, tab.Status, openTabs);
@@ -188,7 +191,9 @@ public partial class MainWindow
         return null;
     }
 
-    private const string McpInstructions =
+    private static string McpInstructions => McpInstructionsBase + (L.IsEnglish ? "- Answer in English." : "- 답변은 한국어로 하세요.");
+
+    private const string McpInstructionsBase =
         "이 MCP 서버는 Windows 원격 접속 클라이언트 'Nubis' 입니다. 사용자는 이 앱의 Claude 패널에서 대화하고 있습니다.\n" +
         "- 서버 찾기: list_groups 로 그룹(클라우드 프로필 포함)을 보고, list_hosts 로 이름·IP·상태를 검색하세요.\n" +
         "- '접속해줘/열어줘' 요청은 open_session 으로 앱에 SSH/RDP 탭을 엽니다.\n" +
@@ -204,7 +209,7 @@ public partial class MainWindow
         "- 앱 설정(테마·글꼴·구문 강조·기본 포트 등)을 바꿔 달라고 하면 get_settings 로 확인한 뒤 update_settings 로 바꾸세요. settings.json 을 직접 고치지 마세요(앱이 덮어씁니다).\n" +
         "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +
         "- Nubis 데이터 파일(hosts.json, cloud_profiles.json, vault.json)을 직접 읽거나 저장된 암호를 복호화하지 마세요. 호스트 정보는 list_hosts 로 확인합니다.\n" +
-        "- 답변은 한국어로 하세요.";
+        "";
 
     private static void WriteClaudeMd()
     {
@@ -213,7 +218,7 @@ public partial class MainWindow
         File.WriteAllText(path,
             "# Nubis 의 Claude 패널\n\n" +
             "이 대화는 원격 접속 클라이언트 Nubis 안에서 실행 중이다. `nubis` MCP 도구로 앱을 다룬다.\n\n" +
-            McpInstructions.Replace("\n", "\n\n") + "\n\n" +
+            McpInstructionsBase.Replace("\n", "\n\n") + "\n\n" +
             "이 파일은 직접 수정해도 된다 (앱이 다시 덮어쓰지 않음).\n", new UTF8Encoding(false));
     }
 }

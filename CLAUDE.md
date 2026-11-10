@@ -70,6 +70,16 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 - WPF 와 WinForms 를 같이 쓰므로 `ImplicitUsings` 는 꺼져 있다. `System.Drawing` 등은 완전한 이름으로 쓴다.
 - 다크 테마: `ListBox` 등은 Windows 기본 글자색(검정)을 다시 지정하므로 `Foreground="{StaticResource Text}"` 를 명시한다.
 
+## 화면 문구 번역 (한국어 기본 · 영어)
+
+- 사용자에게 보이는 문구는 **한국어 원문을 키로** 감싼다 (`Core\Localization.cs`). 영어는 `RemoteClient\Lang\en\*.json` (`"한국어 원문": "English"`). 번역이 없으면 한국어가 그대로 보인다.
+  - C#: `L.T("호스트 추가")`. 값이 들어가면 `L.F("{0} 에 업로드", path)` — 보간 문자열 `$"..."` 을 `L.T` 로 감싸지 않는다 (키가 매번 달라짐). 서식은 `{0:HH:mm}` 처럼 자리표시자에.
+  - XAML: 루트에 `xmlns:l="clr-namespace:Nubis"` 를 두고 `Text="{l:Tr '주소'}"`. 작은따옴표는 `\'`, 쉼표·중괄호가 있어도 작은따옴표 안이면 된다. `<Run Text="{l:Tr '...'}"/>` 도 같다.
+  - `L.T` 에는 문자열 리터럴 **하나**만 (이어 붙이기 `"a" + "b"` 금지 — 테스트가 키를 못 찾음).
+- 번역하지 않는 것: MCP 도구 설명·도구 결과·`McpToolException` 메시지(Claude 만 읽음), 감사 로그 내용, 로그 파일, 정규식·구문 강조 키워드, 파일 이름·설정 키, UI 자동화가 찾는 이름이 아닌 내부 식별자. 단 MCP 경로라도 **사용자 화면에 뜨는** `ApprovalDialog.Ask` 제목·설명, `Dialog.Show`, 상태 문구는 번역한다.
+- `LocalizationTests` 가 감싼 모든 키의 영어 번역 존재 · 자리표시자 일치 · 영어 값에 한국어가 남지 않았는지를 검사한다. 새 문구를 추가하면 같은 변경에서 영어 사전에도 넣는다.
+- 언어는 공통 설정 `Language` (`ko`/`en`, 처음 실행 때 `LanguageWindow` 로 고름). 바꾸면 다시 시작해야 적용. Claude 패널 답변 언어도 따라간다.
+
 ## 인코딩 주의 (Windows PowerShell 5.1)
 
 - PowerShell 5.1 의 `Get-Content`/`Set-Content` 는 BOM 없는 UTF-8 을 ANSI 로 읽고 써서 **한글이 깨진다** (csproj 주석이 그렇게 깨진 적 있음). 파일 수정은 Edit/Write 도구나 `[IO.File]::ReadAllText/WriteAllText(..., UTF8Encoding)` 를 쓴다.

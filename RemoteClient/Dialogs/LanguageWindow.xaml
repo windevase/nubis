@@ -1,0 +1,32 @@
+<Window x:Class="Nubis.LanguageWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Nubis" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+    <!-- 처음 실행할 때 한 번만: 아직 언어를 모르므로 두 언어로 함께 쓴다 -->
+    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel Margin="28,26,28,24">
+            <StackPanel Orientation="Horizontal">
+                <Image Source="/Assets/nubis-256.png" Width="34" Height="34" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <TextBlock Text="Nubis" FontSize="17" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock Text="언어를 선택하세요" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,0"/>
+            <TextBlock Text="Choose your language" FontSize="13" Foreground="{StaticResource SubText}" Margin="0,4,0,0"/>
+            <TextBlock Text="나중에 Settings 에서 바꿀 수 있습니다.  ·  You can change it later in Settings."
+                       FontSize="11.5" Foreground="{StaticResource SubText}" Margin="0,10,0,0" TextWrapping="Wrap"/>
+            <UniformGrid Columns="2" Margin="0,20,0,0">
+                <Button Style="{StaticResource PrimaryButton}" Margin="0,0,6,0" Height="46" Click="OnKorean" IsDefault="True">
+                    <TextBlock Text="한국어" FontSize="14"/>
+                </Button>
+                <Button Style="{StaticResource GhostButton}" Margin="6,0,0,0" Height="46" Click="OnEnglish">
+                    <TextBlock Text="English" FontSize="14"/>
+                </Button>
+            </UniformGrid>
+        </StackPanel>
+    </Border>
+</Window>

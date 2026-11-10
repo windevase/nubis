@@ -30,7 +30,10 @@ public static class L
     public static void Init(string? language) => IsEnglish = language == English;
 
     /// <summary>한국어 원문 → 현재 언어 문구</summary>
-    public static string T(string ko) => IsEnglish && En.Value.TryGetValue(ko, out var en) ? en : ko;
+    public static string T(string ko) => Translate(ko, IsEnglish);
+
+    /// <summary>언어를 지정해 번역 (테스트용 — 전역 언어를 바꾸지 않는다)</summary>
+    internal static string Translate(string ko, bool english) => english && En.Value.TryGetValue(ko, out var en) ? en : ko;
 
     /// <summary>자리표시자({0}, {1:HH:mm} …)가 있는 문구</summary>
     public static string F(string ko, params object?[] args) => string.Format(CultureInfo.CurrentCulture, T(ko), args);

@@ -44,6 +44,7 @@ public partial class MainWindow
         SftpFollowBox.IsChecked = s.SftpFollowTerminal;
         SftpEditorBox.Text = s.SftpEditor;
         LoadLoginSettings();
+        (SettingsStore.Global.Language == L.English ? LangEnglish : LangKorean).IsChecked = true;
         DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
         DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
         FontSizeText.Text = $"{s.FontSize}px";
@@ -133,6 +134,20 @@ public partial class MainWindow
             }
         if (changed > 0) { SaveHosts(); RefreshHosts(); }
         return changed;
+    }
+
+    // ----- 언어 -----
+
+    private void OnLanguageClick(object sender, RoutedEventArgs e)
+    {
+        var lang = LangEnglish.IsChecked == true ? L.English : L.Korean;
+        if (lang == (SettingsStore.Global.Language ?? L.Korean)) return;
+        SettingsStore.UpdateGlobal(s => s.Language = lang);
+        // 새 언어로 안내 (아직 앱은 이전 언어로 떠 있음)
+        var msg = lang == L.English
+            ? "Language changed to English. Restart Nubis now to apply it?"
+            : "언어를 한국어로 바꿨습니다. 지금 Nubis 를 다시 시작해 적용할까요?";
+        if (Dialog.Show(this, msg, "Nubis", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) App.Restart();
     }
 
     // ----- 시작 화면 로그인 -----
