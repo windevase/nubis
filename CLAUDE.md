@@ -13,7 +13,7 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 ```
 
 - 직접 `dotnet` 을 부를 때는 `$env:DOTNET_ROOT="$env:LOCALAPPDATA\Microsoft\dotnet"` 를 설정해야 빌드된 exe/테스트 exe 가 실행된다.
-- **단일 파일(PublishSingleFile)은 쓰지 않는다** — 번들 exe 를 백신·샌드박스(VirusTotal CAPE·SentinelOne 등)가 드로퍼로 오탐하는 일이 잦아 0.2.4 이후 폴더형으로 바꿨다. 다시 단일 파일·압축·`IncludeNativeLibrariesForSelfExtract` 로 돌리지 않는다. ReadyToRun 도 효과 대비 크기만 커져 뺐다.
+- **단일 파일(PublishSingleFile)은 쓰지 않는다** — 번들 exe 를 백신·샌드박스(VirusTotal CAPE·SentinelOne 등)가 드로퍼로 오탐하는 일이 잦아 0.2.5 부터 폴더형으로 바꿨다. 다시 단일 파일·압축·`IncludeNativeLibrariesForSelfExtract` 로 돌리지 않는다. ReadyToRun 도 효과 대비 크기만 커져 뺐다.
 - 릴리스 VirusTotal 검사는 `tools\vt-scan.ps1` (Nubis.exe·Nubis.dll·zip, 탐지 엔진·진단명을 Actions 실행 요약에 표로). 이미 나온 릴리스 재검사는 `vt-scan` 워크플로 수동 실행.
 - **사용자가 `publish\Nubis.exe` 를 실행 중이면 publish 가 파일 잠금으로 실패한다.** 사용자의 Nubis 를 종료하지 말고, 닫아 달라고 요청한다. 확인:
   `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like '*\publish\Nubis.exe'`
