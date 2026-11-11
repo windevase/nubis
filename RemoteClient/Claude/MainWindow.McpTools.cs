@@ -75,7 +75,10 @@ public partial class MainWindow
         var exact = _hosts.Where(h =>
             h.Id.ToString().StartsWith(spec, StringComparison.OrdinalIgnoreCase) && spec.Length >= 8 ||
             h.DisplayName.Equals(spec, StringComparison.OrdinalIgnoreCase) ||
-            h.Address.Equals(spec, StringComparison.OrdinalIgnoreCase)).ToList();
+            h.Address.Equals(spec, StringComparison.OrdinalIgnoreCase) ||
+            spec.Equals(h.PrivateIp, StringComparison.OrdinalIgnoreCase) ||
+            spec.Equals(h.PublicIp, StringComparison.OrdinalIgnoreCase) ||
+            spec.Equals(h.CloudInstanceId, StringComparison.OrdinalIgnoreCase)).ToList();
         if (exact.Count > 0) return exact;
 
         return _hosts.Where(h => h.DisplayName.Contains(spec, StringComparison.OrdinalIgnoreCase)).ToList();
@@ -107,7 +110,7 @@ public partial class MainWindow
             "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS. 비밀번호는 포함하지 않는다.",
             Schema(new
             {
-                query = new { type = "string", description = "이름·IP·용도·OS 부분 검색어" },
+                query = new { type = "string", description = "이름·IP(사설/공인)·인스턴스 ID·리전·용도·OS 부분 검색어" },
                 group = new { type = "string", description = "그룹 이름 (예: 'Production', '[AWS] prod')" },
                 protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
                 running_only = new { type = "boolean", description = "실행 중인 서버만" },
@@ -120,7 +123,7 @@ public partial class MainWindow
                 var proto = Arg(a, "protocol");
                 IEnumerable<HostEntry> list = _hosts;
                 if (q.Length > 0)
-                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.Purpose, h.Os, h.Username }
+                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.Username }
                         .Any(s => s?.Contains(q, StringComparison.OrdinalIgnoreCase) == true));
                 if (group.Length > 0)
                     list = list.Where(h => GroupLabel(h).Contains(group, StringComparison.OrdinalIgnoreCase));

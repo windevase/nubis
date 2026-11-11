@@ -178,8 +178,9 @@ public sealed class SshSessionView : UserControl, ISessionView
         var gen = ++_gen;   // 이전 연결의 Closed/Error 이벤트는 무시
         DisposeSsh();
 
-        var user = _host.Username;
-        var password = _host.Password;
+        // 다시 연결할 때는 직전에 로그인에 성공한 계정을 그대로 (접속 때 입력만 하고 저장하지 않은 경우에도 다시 묻지 않게)
+        var user = _authUser ?? _host.Username;
+        var password = _authUser != null ? _authPassword ?? "" : _host.Password;
         var save = false;
 
         // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
@@ -241,6 +242,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             if (_status == SessionStatus.Disconnected) return;
             SetStatus(SessionStatus.Connected);
             _askCredentials = false;
+            _autoAttempts = 0;
             _authUser = user;
             _authPassword = password;
             // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
@@ -280,12 +282,24 @@ public sealed class SshSessionView : UserControl, ISessionView
             _ = ConnectAsync();
             return;
         }
+        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.HasPublicIp && _host.Address != _host.PublicIp)
+        {
+            // 사설 IP 로 연결이 안 되면(VPN 꺼짐 등) 공인 IP 로 한 번 더 — 인증 실패는 여기로 오지 않는다
+            _triedPublic = true;
+            _connecting = false;
+            DisposeSsh();
+            _term.Info(L.F("연결 실패: {0}", ex.Message.Split('\n')[0]), "31");
+            _term.Info(L.F("공인 IP {0} 로 다시 시도합니다...", _host.PublicIp));
+            _host.Address = _host.PublicIp!;
+            _ = ConnectAsync();
+            return;
+        }
         catch (Exception ex)
         {
             _term.Info(L.F("연결 실패: {0}", ex.Message), "31");
-            _term.Info(L.T("Enter 키를 누르면 다시 연결합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
+            if (!ScheduleAutoReconnect()) _term.Info(L.T("Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"));
         }
         finally
         {
@@ -293,7 +307,36 @@ public sealed class SshSessionView : UserControl, ISessionView
         }
     }
 
-    private bool _askCredentials, _hostKeyAccepted, _retriedAfterHostKey;
+    private bool _askCredentials, _hostKeyAccepted, _retriedAfterHostKey, _triedPublic;
+    private int _autoAttempts;
+    private const int MaxAutoAttempts = 5;
+
+    private static bool IsNetworkError(Exception ex) =>
+        ex is System.Net.Sockets.SocketException or SshOperationTimeoutException or SshConnectionException or TimeoutException ||
+        ex.InnerException is System.Net.Sockets.SocketException;
+
+    /// <summary>설정 "끊기면 자동으로 다시 연결" 이 켜져 있으면 2·4·8·16·32초 뒤 다시 연결. 예약했으면 true</summary>
+    private bool ScheduleAutoReconnect()
+    {
+        if (_closed || !SettingsStore.Current.SshAutoReconnect || _askCredentials || _autoAttempts >= MaxAutoAttempts) return false;
+        var delay = TimeSpan.FromSeconds(2 << _autoAttempts);
+        _autoAttempts++;
+        _term.Info(L.F("{0}초 뒤 자동으로 다시 연결합니다 ({1}/{2})... Enter 를 누르면 바로 연결", (int)delay.TotalSeconds, _autoAttempts, MaxAutoAttempts), "33");
+        var gen = _gen;
+        _ = Task.Delay(delay).ContinueWith(_ => Dispatcher.BeginInvoke(() =>
+        {
+            if (!_closed && gen == _gen && _status == SessionStatus.Disconnected && !_connecting) _ = ConnectAsync();
+        }));
+        return true;
+    }
+
+    /// <summary>탭 우클릭 "다시 연결"</summary>
+    public void Reconnect()
+    {
+        if (_closed || _connecting) return;
+        _autoAttempts = 0;
+        _ = ConnectAsync();
+    }
 
     private void OnHostKey(object? sender, HostKeyEventArgs e)
     {
@@ -348,7 +391,8 @@ public sealed class SshSessionView : UserControl, ISessionView
         SetStatus(SessionStatus.Disconnected);
         _term.Write("\r\n");
         if (reason != null) _term.Info(L.F("오류: {0}", reason), "31");
-        _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다."), "33");
+        _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"), "33");
+        Dispatcher.BeginInvoke(() => ScheduleAutoReconnect());
     }
 
     private void DisposeSsh()

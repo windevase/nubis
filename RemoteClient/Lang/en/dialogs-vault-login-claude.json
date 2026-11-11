@@ -1,5 +1,4 @@
 {
-  "Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code": "Claude Code CLI (claude) not found. Install: npm install -g @anthropic-ai/claude-code",
   "Claude Code 가 종료되었습니다.": "Claude Code has exited.",
   "Claude 가 호스트 등록을 요청합니다": "Claude wants to add a host",
   "아래 호스트를 등록합니다. Vault 계정을 연결하면 이 주소로 접속할 때 그 계정의 비밀번호·키가 쓰입니다. 주소가 맞는지 확인하세요.": "The host below will be added. If a Vault account is linked, its password/key will be used when connecting to this address. Make sure the address is correct.",

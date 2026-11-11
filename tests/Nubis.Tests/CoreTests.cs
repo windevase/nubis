@@ -103,16 +103,59 @@ public class CloudSyncTests
     }
 
     [Fact]
-    public void 중지_서버_제외_설정이면_중지된_서버는_추가하지_않고_기존_것도_제거한다()
+    public void 중지_서버_제외_설정이면_새로_중지된_서버는_추가하지_않고_기존_것은_설정을_유지한다()
     {
         var p = Profile();
         var hosts = new List<HostEntry>();
-        CloudSync.Apply(p, new() { Linux("i-1", state: "stopped") }, hosts);
-        Assert.Single(hosts);
+        CloudSync.Apply(p, new() { Linux("i-1") }, hosts);
+        var vault = Guid.NewGuid();
+        hosts[0].VaultId = vault;   // 사용자가 호스트에 지정한 값
+        hosts[0].Port = 2222;
 
+        // 서버를 잠깐 멈춘 상태에서 동기화해도 호스트는 지워지지 않고(목록에서만 숨김) 설정이 남는다
         p.IncludeStopped = false;
-        CloudSync.Apply(p, new() { Linux("i-1", state: "stopped"), Linux("i-2", ip: "10.0.0.2") }, hosts);
-        Assert.Equal(new[] { "i-2" }, hosts.Select(h => h.CloudInstanceId));
+        var (added, _, removed) = CloudSync.Apply(p, new() { Linux("i-1", state: "stopped"), Linux("i-2", ip: "10.0.0.2"), Linux("i-3", ip: "10.0.0.3", state: "stopped") }, hosts);
+        Assert.Equal(new[] { "i-1", "i-2" }, hosts.Select(h => h.CloudInstanceId).OrderBy(x => x));
+        Assert.Equal(1, added);
+        Assert.Equal(0, removed);
+        var kept = hosts.Single(h => h.CloudInstanceId == "i-1");
+        Assert.Equal("stopped", kept.CloudState);
+        Assert.Equal(vault, kept.VaultId);
+        Assert.Equal(2222, kept.Port);
+
+        // 다시 켜면 그대로 이어서 쓴다
+        CloudSync.Apply(p, new() { Linux("i-1"), Linux("i-2", ip: "10.0.0.2") }, hosts);
+        Assert.Equal(vault, hosts.Single(h => h.CloudInstanceId == "i-1").VaultId);
+    }
+
+    [Fact]
+    public void 사용자가_바꾼_클라우드_호스트_이름은_동기화가_덮어쓰지_않는다()
+    {
+        var p = Profile();
+        var hosts = new List<HostEntry>();
+        CloudSync.Apply(p, new() { Linux("i-1") }, hosts);
+        var original = hosts[0].Label;
+
+        // 클라우드 이름이 바뀌면 따라간다 (사용자가 안 바꿨으므로)
+        CloudSync.Apply(p, new() { Linux("i-1") with { Name = "web-renamed" } }, hosts);
+        Assert.Equal("web-renamed", hosts[0].Label);
+
+        // 사용자가 이름을 바꾸면 이후 동기화에서 유지
+        hosts[0].Label = "내 웹서버";
+        CloudSync.Apply(p, new() { Linux("i-1") with { Name = "web-again" } }, hosts);
+        Assert.Equal("내 웹서버", hosts[0].Label);
+        Assert.NotEqual(original, hosts[0].Label);
+    }
+
+    [Fact]
+    public void 긴_출력은_앞과_끝을_남기고_가운데를_줄인다()
+    {
+        var s = "HEAD" + new string('x', 20_000) + "TAIL-ERROR";
+        var clipped = SshExec.ClipOutput(s, 8000);
+        Assert.StartsWith("HEAD", clipped);
+        Assert.EndsWith("TAIL-ERROR", clipped);
+        Assert.True(clipped.Length < 8200);
+        Assert.Equal("짧은 출력", SshExec.ClipOutput("짧은 출력", 8000));
     }
 
     [Fact]

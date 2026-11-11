@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:Nubis"
-        Title="{l:Tr 'Vault 선택'}" Width="460" Height="460" WindowStyle="None" ResizeMode="NoResize"
+        Title="{l:Tr 'Vault 선택'}" Width="480" Height="520" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
     <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
@@ -13,6 +13,8 @@
         <DockPanel Margin="24,22,24,22">
             <TextBlock x:Name="TitleText" DockPanel.Dock="Top" FontSize="17" FontWeight="SemiBold"/>
             <TextBlock x:Name="SubText" DockPanel.Dock="Top" Foreground="{StaticResource SubText}" Margin="0,6,0,12" TextWrapping="Wrap"/>
+            <TextBox x:Name="FilterBox" DockPanel.Dock="Top" Margin="0,0,0,10" Tag="{l:Tr '계정 검색'}" TextChanged="OnFilterChanged"
+                     PreviewKeyDown="OnFilterKeyDown"/>
 
             <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
                 <Button Content="{l:Tr '새로 만들기'}" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnCreate"/>

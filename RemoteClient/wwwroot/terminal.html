@@ -7,10 +7,21 @@
   html, body { margin: 0; height: 100%; background: #161925; overflow: hidden; }
   #t { position: absolute; top: 10px; left: 14px; right: 6px; bottom: 6px; }
   .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: #2E3350 transparent; }
+  /* 화면 내용 찾기 (Ctrl+Shift+F) */
+  #find { position: absolute; top: 8px; right: 18px; z-index: 10; display: none; align-items: center; gap: 6px;
+          background: #1B1E2C; border: 1px solid #2E3350; border-radius: 8px; padding: 5px 6px 5px 10px;
+          font: 12px "Segoe UI", "Malgun Gothic", sans-serif; color: #9AA0B8; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #find input { width: 220px; background: #12141E; color: #E6E8F0; border: 1px solid #2E3350; border-radius: 6px;
+                padding: 4px 8px; font: 13px "Segoe UI", "Malgun Gothic", sans-serif; outline: none; }
+  #find input:focus { border-color: #20C5A0; }
+  #find button { background: transparent; color: #C9CDDB; border: 0; border-radius: 5px; cursor: pointer; padding: 3px 7px; font-size: 13px; }
+  #find button:hover { background: #262B40; }
 </style>
 </head>
 <body>
 <div id="t"></div>
+<div id="find"><input id="findText" spellcheck="false"><span id="findCount"></span>
+  <button id="findPrev" title="Shift+Enter">&#x25B2;</button><button id="findNext" title="Enter">&#x25BC;</button><button id="findClose" title="Esc">&#x2715;</button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
@@ -44,15 +55,42 @@
   term.onResize(({ cols, rows }) => post({ t: 'resize', cols, rows }));
   new ResizeObserver(() => { try { fit.fit(); } catch (e) { } }).observe(el);
 
-  // 복사/붙여넣기: Ctrl+Shift+C / Ctrl+Shift+V, 우클릭(선택 있으면 복사, 없으면 붙여넣기)
+  // 붙여넣기 요청: 서버가 bracketed paste 를 켰으면(줄마다 바로 실행되지 않음) 앱이 확인 창을 띄우지 않는다
+  const requestPaste = () => post({ t: 'paste', bp: !!(term.modes && term.modes.bracketedPasteMode) });
+  let smartCopy = true;
+  let baseFontSize = 14, zoom = 0;
+  function setZoom(z) {
+    zoom = Math.max(-6, Math.min(24, z));
+    term.options.fontSize = Math.max(6, baseFontSize + zoom);
+    try { fit.fit(); } catch (e) { }
+  }
+  el.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    setZoom(zoom + (e.deltaY < 0 ? 1 : -1));
+  }, { passive: false });
+
+  // 복사/붙여넣기: Ctrl+Shift+C / Ctrl+Shift+V, (설정) 선택 있을 때 Ctrl+C · Ctrl+V, 우클릭(선택 있으면 복사, 없으면 붙여넣기)
   term.attachCustomKeyEventHandler(ev => {
     if (ev.type !== 'keydown') return true;
     if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
       const s = term.getSelection(); if (s) post({ t: 'copy', d: s });
       return false;
     }
-    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyV') { post({ t: 'paste' }); return false; }
-    if (ev.shiftKey && ev.code === 'Insert') { post({ t: 'paste' }); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyV') { requestPaste(); return false; }
+    if (ev.shiftKey && ev.code === 'Insert') { requestPaste(); return false; }
+    if (smartCopy && ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
+      if (ev.code === 'KeyC' && term.hasSelection()) { post({ t: 'copy', d: term.getSelection() }); term.clearSelection(); return false; }
+      if (ev.code === 'KeyV') { requestPaste(); return false; }
+    }
+    // 글자 크기: Ctrl+= / Ctrl+- / Ctrl+0 (이 탭만)
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (ev.code === 'Equal' || ev.code === 'NumpadAdd')) { setZoom(zoom + 1); return false; }
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (ev.code === 'Minus' || ev.code === 'NumpadSubtract')) { setZoom(zoom - 1); return false; }
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (ev.code === 'Digit0' || ev.code === 'Numpad0')) { setZoom(0); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyF') { openFind(); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyW') { post({ t: 'hotkey', k: 'closetab' }); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyK') { post({ t: 'hotkey', k: 'search' }); return false; }
+    if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && /^Digit[1-9]$/.test(ev.code)) { post({ t: 'hotkey', k: 'tab' + ev.code.slice(5) }); return false; }
     // 앱 단축키: 터미널에 포커스가 있어도 앱이 처리
     if (ev.ctrlKey && ev.code === 'Tab') { post({ t: 'hotkey', k: ev.shiftKey ? 'prevtab' : 'nexttab' }); return false; }
     if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyA') { post({ t: 'hotkey', k: 'claude' }); return false; }
@@ -74,10 +112,63 @@
   }
   document.addEventListener('contextmenu', e => {
     e.preventDefault();
+    if (e.target.closest && e.target.closest('#find')) return;
     const s = term.getSelection();
     if (s) { post({ t: 'copy', d: s }); term.clearSelection(); }
-    else post({ t: 'paste' });
+    else requestPaste();
   });
+
+  // ===================== 화면 내용 찾기 =====================
+  const findBox = document.getElementById('find');
+  const findText = document.getElementById('findText');
+  const findCount = document.getElementById('findCount');
+  let findPos = null;   // 마지막으로 찾은 위치 { y, x }
+
+  function openFind() {
+    findBox.style.display = 'flex';
+    const sel = term.getSelection();
+    if (sel && !sel.includes('\n')) findText.value = sel;
+    findText.focus(); findText.select();
+  }
+  function closeFind() { findBox.style.display = 'none'; findPos = null; findCount.textContent = ''; term.clearSelection(); term.focus(); }
+
+  /** 대소문자 무시, 줄 단위로 찾기. dir: 1 = 아래(다음), -1 = 위(이전) */
+  function find(dir) {
+    const q = findText.value.toLowerCase();
+    if (!q) { findCount.textContent = ''; return; }
+    const b = term.buffer.active;
+    const total = b.length;
+    const hits = [];
+    for (let y = 0; y < total; y++) {
+      const line = b.getLine(y); if (!line) continue;
+      const s = line.translateToString(true).toLowerCase();
+      let i = s.indexOf(q);
+      while (i >= 0) { hits.push({ y, x: i }); i = s.indexOf(q, i + 1); }
+    }
+    if (hits.length === 0) { findCount.textContent = '0'; term.clearSelection(); return; }
+    let idx;
+    if (!findPos) {
+      // 처음에는 화면 아래(최근 출력)부터 위로
+      idx = dir > 0 ? hits.length - 1 : hits.length - 1;
+    } else {
+      const cur = hits.findIndex(h => h.y === findPos.y && h.x === findPos.x);
+      idx = cur < 0 ? hits.length - 1 : (cur + (dir > 0 ? 1 : -1) + hits.length) % hits.length;
+    }
+    const h = hits[idx];
+    findPos = h;
+    term.select(h.x, h.y, q.length);
+    term.scrollToLine(Math.max(0, h.y - Math.floor(term.rows / 2)));
+    findCount.textContent = (idx + 1) + '/' + hits.length;
+  }
+  findText.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { find(e.shiftKey ? -1 : 1); e.preventDefault(); }
+    else if (e.key === 'Escape') { closeFind(); e.preventDefault(); }
+    else if (e.key === 'F' && e.ctrlKey && e.shiftKey) { e.preventDefault(); }
+  });
+  findText.addEventListener('input', () => { findPos = null; find(-1); });
+  document.getElementById('findNext').onclick = () => find(1);
+  document.getElementById('findPrev').onclick = () => find(-1);
+  document.getElementById('findClose').onclick = closeFind;
 
   // ===================== 구문 강조 =====================
   // 출력 데이터는 건드리지 않고, 화면에 그려진 줄을 읽어 xterm 데코레이션으로 글자색만 덧입힌다.
@@ -207,7 +298,9 @@
   // 테마/글꼴 적용. minimumContrastRatio 로 배경과 대비가 낮은 글자색(밝은 테마의 흰 글자 등)을 자동 보정
   function applySettings(s) {
     term.options.theme = s.theme;
-    term.options.fontSize = s.fontSize;
+    baseFontSize = s.fontSize;
+    term.options.fontSize = Math.max(6, s.fontSize + zoom);
+    smartCopy = !!s.smartCopy;
     term.options.fontFamily = '"' + s.fontFamily + '", "Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace';
     term.options.minimumContrastRatio = s.autoContrast ? 4.5 : 1;
     document.body.style.background = s.theme.background;

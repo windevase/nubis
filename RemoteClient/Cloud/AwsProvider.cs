@@ -35,19 +35,31 @@ public sealed class AwsProvider : ICloudProvider
 
     public Task<List<CloudCandidate>> DiscoverAsync(CancellationToken ct)
     {
-        var path = CloudPaths.Effective(CloudProvider.Aws);
-        var list = new List<CloudCandidate>();
-        if (File.Exists(path))
+        // config 의 [default] · [profile x] 와 credentials 의 [x] (액세스 키 프로필) 를 모두 후보로
+        var config = CloudPaths.Effective(CloudProvider.Aws);
+        var credentials = Environment.GetEnvironmentVariable("AWS_SHARED_CREDENTIALS_FILE") is { Length: > 0 } env
+            ? env
+            : Path.Combine(Path.GetDirectoryName(config) ?? "", "credentials");
+        var names = new List<string>();
+        void Add(string n) { n = n.Trim(); if (n.Length > 0 && !names.Contains(n, StringComparer.OrdinalIgnoreCase)) names.Add(n); }
+        foreach (var (path, isConfig) in new[] { (config, true), (credentials, false) })
         {
+            if (!File.Exists(path)) continue;
             foreach (var line in File.ReadAllLines(path))
             {
                 var t = line.Trim();
-                if (!t.StartsWith("[profile ") || !t.EndsWith("]")) continue;
-                var name = t[9..^1].Trim();
-                list.Add(new CloudCandidate(name, name.ToUpperInvariant()));
+                if (!t.StartsWith('[') || !t.EndsWith(']')) continue;
+                var section = t[1..^1].Trim();
+                if (isConfig)
+                {
+                    if (section.Equals("default", StringComparison.OrdinalIgnoreCase)) Add("default");
+                    else if (section.StartsWith("profile ", StringComparison.OrdinalIgnoreCase)) Add(section[8..]);
+                    // [sso-session x] · [services x] 는 프로필이 아님
+                }
+                else Add(section);
             }
         }
-        return Task.FromResult(list);
+        return Task.FromResult(names.Select(n => new CloudCandidate(n, n.ToUpperInvariant())).ToList());
     }
 
     public async Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct)

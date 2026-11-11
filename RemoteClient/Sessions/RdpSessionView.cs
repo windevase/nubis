@@ -58,6 +58,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             }
         };
         _rdp.Disconnected += OnDisconnected;
+        _rdp.LeftFullScreen += () => Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background);
         _rdp.FatalError += code => OnDisconnected(-code);
 
         _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
@@ -256,6 +257,32 @@ public sealed class RdpSessionView : UserControl, ISessionView
     public System.Threading.Tasks.Task<string?> ReadTerminalAsync(int lines) => System.Threading.Tasks.Task.FromResult<string?>(null);
     public System.Threading.Tasks.Task<string?> GetSelectionAsync() => System.Threading.Tasks.Task.FromResult<string?>(null);
     public bool SendText(string text) => false;
+
+    public void Reconnect() { if (_status == SessionStatus.Disconnected) Connect(); }
+
+    public bool IsConnected => _status == SessionStatus.Connected;
+
+    /// <summary>
+    /// 전체 화면 (mstsc 와 같은 연결 표시줄로 돌아옴). 전체 화면에서는 Win 키·Alt+Tab 이 원격으로 간다 (KeyboardHook 기본값).
+    /// 원격 해상도를 모니터 크기로 바꾼 뒤 전환하고, 전체 화면을 나오면 탭 크기로 되돌린다.
+    /// </summary>
+    public void EnterFullScreen()
+    {
+        if (_closed || _status != SessionStatus.Connected) return;
+        try
+        {
+            var screen = System.Windows.Forms.Screen.FromHandle(_rdp.Handle).Bounds;
+            var scale = (int)Math.Round(VisualTreeHelper.GetDpi(this).DpiScaleX * 100);
+            if (_loggedIn)
+            {
+                try { _rdp.Ocx.UpdateSessionDisplaySettings((uint)(screen.Width & ~1), (uint)screen.Height, (uint)screen.Width, (uint)screen.Height, 0u, (uint)Math.Clamp(scale, 100, 500), 100u); }
+                catch { }
+            }
+            _rdp.Ocx.FullScreenTitle = _host.DisplayName;
+            _rdp.Ocx.FullScreen = true;
+        }
+        catch (Exception ex) { Dialog.Show(Window.GetWindow(this), L.F("전체 화면으로 바꾸지 못했습니다: {0}", ex.Message), "RDP"); }
+    }
 
     public void FocusSession()
     {

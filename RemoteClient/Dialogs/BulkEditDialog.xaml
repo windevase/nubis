@@ -1,0 +1,101 @@
+<Window x:Class="Nubis.BulkEditDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Nubis"
+        Title="{l:Tr '일괄 편집'}" Width="560" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+    <Window.Resources>
+        <Style x:Key="RowCheck" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,12,0"/>
+        </Style>
+    </Window.Resources>
+    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+            MouseLeftButtonDown="OnDrag">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
+        </Border.Effect>
+        <StackPanel Margin="24,22,24,22">
+            <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold"/>
+            <TextBlock x:Name="SubText" Foreground="{StaticResource SubText}" Margin="0,6,0,16" TextWrapping="Wrap"/>
+
+            <Grid x:Name="Rows">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 로그인 계정 -->
+                <CheckBox x:Name="VaultCheck" Style="{StaticResource RowCheck}" Content="{l:Tr 'Vault 계정'}" VerticalAlignment="Top" Margin="0,10,12,0"/>
+                <StackPanel Grid.Column="1" Margin="0,0,0,12" IsEnabled="{Binding IsChecked, ElementName=VaultCheck}">
+                    <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                        <UniformGrid Columns="2">
+                            <RadioButton x:Name="VaultSet" Style="{StaticResource Segment}" Content="{l:Tr '계정 지정'}" GroupName="vault" IsChecked="True"/>
+                            <RadioButton x:Name="VaultClear" Style="{StaticResource Segment}" Content="{l:Tr '해제 (기본 계정 따르기)'}" GroupName="vault"/>
+                        </UniformGrid>
+                    </Border>
+                    <Button x:Name="VaultPickButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Margin="0,8,0,0" Click="OnPickVault" IsEnabled="{Binding IsChecked, ElementName=VaultSet}"/>
+                </StackPanel>
+
+                <!-- 직접 적은 값 지우기 -->
+                <CheckBox x:Name="ClearOwnCheck" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,14"
+                          Content="{l:Tr '호스트에 직접 적은 사용자명·비밀번호·키 파일 지우기 (Vault 계정이 쓰이게)'}"/>
+
+                <!-- 사용자명 -->
+                <CheckBox x:Name="UserCheck" Grid.Row="2" Style="{StaticResource RowCheck}" Content="{l:Tr '사용자명'}"/>
+                <TextBox x:Name="UserBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,12" TextChanged="OnFieldChanged" Tag="{l:Tr '비우면 Vault 계정의 사용자명'}"/>
+
+                <!-- 포트 -->
+                <CheckBox x:Name="PortCheck" Grid.Row="3" Style="{StaticResource RowCheck}" Content="{l:Tr '포트'}"/>
+                <TextBox x:Name="PortBox" Grid.Row="3" Grid.Column="1" Margin="0,0,0,12" TextChanged="OnFieldChanged"/>
+
+                <!-- 그룹 -->
+                <CheckBox x:Name="GroupCheck" Grid.Row="4" Style="{StaticResource RowCheck}" Content="{l:Tr '그룹'}"/>
+                <Grid Grid.Row="4" Grid.Column="1" Margin="0,0,0,12">
+                    <TextBox x:Name="GroupBox" Padding="10,0,36,0" TextChanged="OnFieldChanged" Tag="{l:Tr '비우면 그룹 없음 (Hosts)'}"/>
+                    <Button Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" HorizontalAlignment="Right" Margin="0,0,4,0"
+                            Click="OnPickGroup" ToolTip="{l:Tr '기존 그룹에서 고르기'}"/>
+                </Grid>
+
+                <!-- 접속 IP -->
+                <CheckBox x:Name="IpCheck" Grid.Row="5" Style="{StaticResource RowCheck}" Content="{l:Tr '접속 IP'}"/>
+                <Border x:Name="IpRow" Grid.Row="5" Grid.Column="1" Margin="0,0,0,12" Background="{StaticResource InputBg}" CornerRadius="8" Padding="3"
+                        BorderBrush="{StaticResource Line}" BorderThickness="1" IsEnabled="{Binding IsChecked, ElementName=IpCheck}">
+                    <UniformGrid Columns="2">
+                        <RadioButton x:Name="IpPrivate" Style="{StaticResource Segment}" Content="{l:Tr '사설 IP'}" GroupName="ip" IsChecked="True"/>
+                        <RadioButton x:Name="IpPublic" Style="{StaticResource Segment}" Content="{l:Tr '공인 IP'}" GroupName="ip"/>
+                    </UniformGrid>
+                </Border>
+
+                <!-- 즐겨찾기 -->
+                <CheckBox x:Name="FavCheck" Grid.Row="6" Style="{StaticResource RowCheck}" Content="{l:Tr '즐겨찾기'}"/>
+                <Border Grid.Row="6" Grid.Column="1" Background="{StaticResource InputBg}" CornerRadius="8" Padding="3"
+                        BorderBrush="{StaticResource Line}" BorderThickness="1" IsEnabled="{Binding IsChecked, ElementName=FavCheck}">
+                    <UniformGrid Columns="2">
+                        <RadioButton x:Name="FavOn" Style="{StaticResource Segment}" Content="{l:Tr '추가'}" GroupName="fav" IsChecked="True"/>
+                        <RadioButton x:Name="FavOff" Style="{StaticResource Segment}" Content="{l:Tr '해제'}" GroupName="fav"/>
+                    </UniformGrid>
+                </Border>
+            </Grid>
+
+            <TextBlock x:Name="NoteText" Foreground="{StaticResource SubText}" FontSize="12" Margin="0,14,0,0" TextWrapping="Wrap"/>
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" Margin="0,10,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
+                <Button Content="{l:Tr '적용'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</Window>

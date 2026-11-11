@@ -23,10 +23,10 @@ If your work looks like that too — a mix of Linux and Windows servers, spread 
 ## What it does
 
 **🖥️ One window for every connection**
-SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected.
+SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K`, type part of a name or IP, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top, and tabs can be reordered, renamed, reconnected and closed in bulk.
 
 **☁️ Your cloud servers, already in the list**
-Import servers from AWS, Tencent Cloud, Google Cloud and Azure, profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI). They stay in sync — names and IPs update, your own changes stay.
+Import servers from AWS, Tencent Cloud, Google Cloud and Azure, profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI). They stay in sync (on demand, at startup or every few minutes) — names and IPs update, your own changes stay. Right-click a group to switch all of its servers to public or private IPs, or to assign one Vault account to every server in it — or `Ctrl`/`Shift`+click any cards and bulk-edit their account, username, port, group, IP choice or favorite at once.
 
 **✦ Claude, right next to the terminal**
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys.
@@ -35,7 +35,7 @@ The built-in Claude panel sees the tab you are looking at. Ask "what is this err
 The file panel opens with every SSH session and follows the terminal's current folder. Drag files in and out of Explorer. Open a file in VS Code, and every save goes straight back to the server.
 
 **🔑 Accounts in one Vault**
-Save shared usernames, passwords and SSH keys once, then pick them per host. Change a password in one place and every host uses it.
+Save shared usernames, passwords and SSH keys once. Set a default account for SSH and for RDP and every host without its own account uses it, assign one to a whole group with a right-click, or pick one per host. Change a password in one place and every host uses it.
 
 **🔒 Safe by default**
 All data is encrypted with Windows DPAPI on your PC, so it will not open on another PC or under another Windows account. No telemetry. An optional sign-in screen (GitHub · Google · Microsoft) keeps each account's data separate.

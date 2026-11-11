@@ -55,8 +55,17 @@ public static class CloudSync
 
         foreach (var inst in instances)
         {
-            if (!p.IncludeStopped && !inst.IsRunning) continue;
             if (p.HiddenInstances.Contains(inst.InstanceId)) continue;
+            // "중지된 서버 제외" 여도 이미 있는 호스트는 지우지 않는다 (호스트별 설정 유지, 목록에서만 숨김). 새로 추가하지는 않는다
+            if (!p.IncludeStopped && !inst.IsRunning)
+            {
+                if (existing.TryGetValue(inst.InstanceId, out var stopped))
+                {
+                    seen.Add(inst.InstanceId);
+                    stopped.CloudState = inst.State;
+                }
+                continue;
+            }
             // 기본 접속 주소는 사설 IP (없으면 공인). 공인 IP 는 따로 저장해 호스트별로 골라 쓴다
             var address = inst.PrivateIp.Length > 0 ? inst.PrivateIp : inst.PublicIp;
             if (address.Length == 0 || inst.InstanceId.Length == 0) continue;
@@ -82,7 +91,10 @@ public static class CloudSync
                 updated++;
             }
 
-            h.Label = inst.Name;
+            // 사용자가 이름을 바꾼 호스트는 유지 (마지막으로 받은 클라우드 이름과 다르면 사용자가 바꾼 것)
+            if (string.IsNullOrWhiteSpace(h.Label) || h.CloudName == null || h.Label == h.CloudName) h.Label = inst.Name;
+            h.CloudName = inst.Name;
+            // 새 호스트: 프로필 기본 Vault 는 접속 때 적용되므로 여기서 따로 넣지 않는다
             h.Address = address;
             h.PrivateIp = inst.PrivateIp.Length > 0 ? inst.PrivateIp : null;
             h.PublicIp = inst.PublicIp.Length > 0 ? inst.PublicIp : null;   // EIP 를 떼면 사라짐

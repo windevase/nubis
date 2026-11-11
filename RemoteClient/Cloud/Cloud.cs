@@ -41,7 +41,10 @@ public sealed class CloudProfile : INotifyPropertyChanged
 
     public string DefaultUsername { get; set; } = "";
     public string? ProtectedDefaultPassword { get; set; }
-    /// <summary>이 프로필 서버들의 포트. null 이면 설정의 기본 포트(Settings → 기본 포트)를 따른다</summary>
+    /// <summary>이 프로필 서버들의 기본 Vault 계정 (Linux/SSH · Windows/RDP 따로). 호스트에 직접 고른 계정이 우선</summary>
+    public Guid? SshVaultId { get; set; }
+    public Guid? RdpVaultId { get; set; }
+    /// <summary>이 프로필 서버들의 포트 서버들의 포트. null 이면 설정의 기본 포트(Settings → 기본 포트)를 따른다</summary>
     public int? SshPort { get; set; }
     public int? RdpPort { get; set; }
     public bool UsePublicIp { get; set; }

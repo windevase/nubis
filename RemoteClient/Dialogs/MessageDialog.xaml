@@ -36,6 +36,8 @@
                      VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed"/>
 
             <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
+                <Button x:Name="ExtraButton" Style="{StaticResource GhostButton}" MinWidth="88" Margin="0,0,8,0"
+                        Click="OnExtra" Visibility="Collapsed"/>
                 <Button x:Name="SecondaryButton" Style="{StaticResource GhostButton}" MinWidth="88" Margin="0,0,8,0"
                         Click="OnSecondary" Visibility="Collapsed"/>
                 <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}" MinWidth="88" Click="OnPrimary"/>

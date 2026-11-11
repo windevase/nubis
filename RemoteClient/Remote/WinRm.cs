@@ -112,7 +112,7 @@ public static class WinRm
     }
 
     private static string Trim(string s) =>
-        s.Length <= MaxOutput ? s : s[..MaxOutput] + $"\n... (출력이 길어 {s.Length - MaxOutput}자 생략)";
+        SshExec.ClipOutput(s, MaxOutput);
 
     // ------------------------------------------------------------------
     // WS-Management 셸: Create → Command → Receive(반복) → Signal → Delete

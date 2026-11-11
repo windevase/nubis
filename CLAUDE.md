@@ -26,7 +26,9 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 | 위치 | 역할 |
 |---|---|
 | `MainWindow.xaml(.cs)` | 창 초기화·사이드바 전환·창 제어. 화면별 코드는 partial 로 나눔 ↓ |
-| `MainWindow.Hosts.cs` / `.HostEditor.cs` / `.Vault.cs` / `.Settings.cs` / `.Cloud.cs` / `.Tabs.cs` | 호스트 목록(가상화 카드) · 호스트 편집 패널 · Vault 페이지 · Settings 페이지 · 클라우드 페이지·동기화 · 세션 탭 |
+| `MainWindow.Hosts.cs` / `.HostEditor.cs` / `.Vault.cs` / `.Settings.cs` / `.Cloud.cs` / `.Tabs.cs` | 호스트 목록(가상화 카드·즐겨찾기/최근 접속·검색 키보드 선택) · 호스트 편집 패널 · Vault 페이지 · Settings 페이지 · 클라우드 페이지·동기화·자동 동기화 · 세션 탭(우클릭 메뉴·끌어서 순서·단축키) |
+| `MainWindow.Groups.cs` / `.Preferences.cs` | 그룹 우클릭 일괄 작업(Vault 계정·공인/사설 IP·모두 연결) / 기본 Vault 계정·편의 설정. 계정 우선순위는 `HostEntry.ResolveVault` 한 곳에서 정한다 |
+| `MainWindow.Selection.cs` + `Core\BulkEdit.cs` + `Dialogs\BulkEditDialog` | 카드 여러 개 선택(Ctrl/Shift+클릭·Ctrl+A, 선택 막대·선택 메뉴) / 일괄 편집 적용 로직(화면 무관, `BulkEditTests`) / 일괄 편집 창 |
 | `Claude\MainWindow.ClaudePanel.cs` | Claude 패널(ConPTY 로 `claude` CLI), 현재 탭 알려주기 hook(`active-session.txt`) |
 | `Claude\MainWindow.McpTools.cs` | **MCP 도구 등록 목록 전체** (`BuildTools`, `ExtraTools`) + 기본 도구·설정 변경 구현. 새 도구는 여기에 등록 |
 | `Claude\MainWindow.Mcp*.cs` | 도구 구현: `McpHosts`(호스트 추가·수정·삭제, Vault 목록, 클라우드 동기화) · `McpDiagnostics`(test_connection, wait_for_output) · `McpSftp` · `McpCapture` · `McpRunCommand` |

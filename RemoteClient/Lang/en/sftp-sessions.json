@@ -32,7 +32,6 @@
   "편집기를 열지 못했습니다: {0}": "Could not open the editor: {0}",
   "{0} 에 업로드": "Upload to {0}",
   "{0} 에 업로드할 파일": "Files to upload to {0}",
-  "이미 있는 항목 {0}개를 덮어쓸까요?\n\n": "Overwrite {0} existing item(s)?\n\n",
   "업로드": "Upload",
   "업로드 준비 ({0}개, {1})": "Preparing upload ({0} item(s), {1})",
   "업로드 {0}  ({1} / {2})": "Uploading {0}  ({1} / {2})",
@@ -80,7 +79,6 @@
   "Enter 키를 누르면 계정을 다시 입력합니다.": "Press Enter to enter the account again.",
   "({0}) 호스트키를 저장했으니 다시 연결합니다...": "({0}) Host key saved, reconnecting...",
   "연결 실패: {0}": "Connection failed: {0}",
-  "Enter 키를 누르면 다시 연결합니다.": "Press Enter to reconnect.",
   "새 호스트키 저장: {0} {1}": "New host key saved: {0} {1}",
   "처음 접속하는 서버입니다": "First connection to this server",
   "{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.": "Trust and save the host key of {0}?\nYou won't be asked again on later connections.",
@@ -88,6 +86,5 @@
   "저장된 값과 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 새 키로 교체하고 접속할까요?": "It differs from the saved key. Unless the server was reinstalled or the IP now points to a different server, this may be a man-in-the-middle attack.\nReplace it with the new key and connect anyway?",
   "{0}\n저장된 값: {1}\n현재 값:   {2}": "{0}\nSaved:   {1}\nCurrent: {2}",
   "오류: {0}": "Error: {0}",
-  "연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다.": "The connection was closed. Press Enter to reconnect.",
   "터미널 화면(WebView2)을 초기화하지 못했습니다.\n{0}\n\nMicrosoft Edge WebView2 런타임 설치 여부를 확인한 뒤 탭을 다시 여세요.": "Could not initialize the terminal view (WebView2).\n{0}\n\nCheck that the Microsoft Edge WebView2 Runtime is installed, then reopen the tab."
 }

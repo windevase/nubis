@@ -70,6 +70,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     }
 
     public void FocusSession() => _term.FocusTerminal();
+    public void Reconnect() { if (_status == SessionStatus.Disconnected) Start(); }
     public async Task<string?> ReadTerminalAsync(int lines) => await _term.ReadBufferAsync(lines);
     public async Task<string?> GetSelectionAsync() => await _term.GetSelectionAsync();
 

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -170,8 +171,12 @@ public sealed class XtermView : UserControl
             case "paste":
                 try
                 {
-                    if (Clipboard.ContainsText())
-                        Post(new { t = "paste", d = Clipboard.GetText().Replace("\r\n", "\r") });
+                    if (!Clipboard.ContainsText()) break;
+                    var text = Clipboard.GetText().Replace("\r\n", "\r").Replace('\n', '\r');
+                    // 여러 줄은 줄마다 바로 실행될 수 있어 확인 (서버가 bracketed paste 를 켰으면 실행되지 않으므로 묻지 않음)
+                    var bracketed = m.TryGetProperty("bp", out var bp) && bp.ValueKind == JsonValueKind.True;
+                    if (!bracketed && SettingsStore.Current.ConfirmMultilinePaste && !ConfirmPaste(text)) { FocusTerminal(); break; }
+                    Post(new { t = "paste", d = text });
                 }
                 catch { }
                 break;
@@ -186,6 +191,16 @@ public sealed class XtermView : UserControl
         }
     }
 
+    /// <summary>여러 줄(마지막 줄바꿈 포함) 붙여넣기 확인. 붙여넣어도 되면 true</summary>
+    private bool ConfirmPaste(string text)
+    {
+        var lines = text.TrimEnd('\r').Split('\r');
+        if (lines.Length <= 1 && !text.EndsWith('\r')) return true;
+        var preview = string.Join("\n", lines.Take(12)) + (lines.Length > 12 ? "\n..." : "");
+        return Dialog.Show(Window.GetWindow(this), L.F("{0}줄을 붙여넣을까요?\n줄마다 Enter 가 들어가 바로 실행될 수 있습니다.", lines.Length),
+            L.T("여러 줄 붙여넣기"), MessageBoxButton.YesNo, MessageBoxImage.Warning, preview) == MessageBoxResult.Yes;
+    }
+
     private void OnSettingsChanged() => Dispatcher.BeginInvoke(ApplySettings);
 
     private void ApplySettings()
@@ -198,7 +213,7 @@ public sealed class XtermView : UserControl
         Post(new
         {
             t = "settings", theme = theme.ToXterm(), fontSize = s.FontSize, fontFamily = s.FontFamily, autoContrast = s.AutoContrast,
-            hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords,
+            hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste,
         });
     }
 

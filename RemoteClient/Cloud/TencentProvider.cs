@@ -43,7 +43,6 @@ public sealed class TencentProvider : ICloudProvider
         var list = Directory.Exists(TccliDir)
             ? Directory.GetFiles(TccliDir, "*.credential")
                 .Select(f => Path.GetFileNameWithoutExtension(f))
-                .Where(n => !n.Equals("default", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(n => n)
                 .Select(n => new CloudCandidate(n, n.ToUpperInvariant()))
                 .ToList()

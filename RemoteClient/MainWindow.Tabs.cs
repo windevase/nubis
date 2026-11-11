@@ -51,7 +51,8 @@ public partial class MainWindow
     /// </summary>
     private void SaveEnteredCredentials(HostEntry saved, string user, string password)
     {
-        if (VaultStore.Get(saved.VaultId) is { HasPassword: true } entry && string.IsNullOrEmpty(saved.ProtectedPassword))
+        var vaultId = saved.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId));
+        if (VaultStore.Get(vaultId) is { HasPassword: true } entry && string.IsNullOrEmpty(saved.ProtectedPassword))
         {
             entry.Password = password;
             SaveVault(entry);
@@ -79,7 +80,6 @@ public partial class MainWindow
         _tabs.Add(tab);
         SessionsHost.Children.Add(tab.View);
         SelectTab(tab);
-        Dispatcher.BeginInvoke(() => TabsScroll.ScrollToRightEnd(), DispatcherPriority.Loaded);
         return tab;
     }
 
@@ -112,6 +112,11 @@ public partial class MainWindow
             case "prevtab": CycleTab(-1); break;
             case "claude": ToggleClaude(); break;
             case "localterm": OpenLocalTerminal(); break;
+            case "closetab": if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur }); break;
+            case "search": FocusSearch(); break;
+            default:
+                if (key.StartsWith("tab") && int.TryParse(key[3..], out var n)) SelectTabNumber(n);
+                break;
         }
     });
 
@@ -126,6 +131,9 @@ public partial class MainWindow
         SessionsHost.Visibility = Visibility.Visible;
         HomeTab.Background = Brushes.Transparent;
         Dispatcher.BeginInvoke(() => tab.Session.FocusSession(), DispatcherPriority.Input);
+        // 넘친 탭도 고르면 화면 안으로
+        Dispatcher.BeginInvoke(() => (TabsList.ItemContainerGenerator.ContainerFromItem(tab) as FrameworkElement)?.BringIntoView(),
+            DispatcherPriority.Loaded);
         UpdateActiveContext();
     }
 
@@ -136,6 +144,23 @@ public partial class MainWindow
         HomeView.Visibility = Visibility.Visible;
         HomeTab.Background = (Brush)FindResource("CardBg");
         UpdateActiveContext();
+    }
+
+    /// <summary>연결 중인 탭은 닫기 전에 확인 (Settings 에서 끌 수 있음). 닫아도 되면 true</summary>
+    private bool ConfirmCloseTabs(IReadOnlyCollection<SessionTab> tabs)
+    {
+        var live = tabs.Count(t => t.Status == SessionStatus.Connected && t.Protocol != Protocol.Local);
+        if (live == 0 || !SettingsStore.Current.ConfirmCloseTab) return true;
+        var msg = tabs.Count == 1
+            ? L.F("'{0}' 연결을 끊고 탭을 닫을까요?", tabs.First().Title)
+            : L.F("연결 중인 세션 {0}개를 끊고 탭 {1}개를 닫을까요?", live, tabs.Count);
+        return Dialog.Show(this, msg, L.T("탭 닫기"), MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+    }
+
+    private void CloseTabs(IReadOnlyCollection<SessionTab> tabs)
+    {
+        if (tabs.Count == 0 || !ConfirmCloseTabs(tabs)) return;
+        foreach (var t in tabs.ToList()) CloseTab(t);
     }
 
     private void CloseTab(SessionTab tab)
@@ -163,14 +188,14 @@ public partial class MainWindow
         // 휠 클릭으로 탭 닫기
         if (e.ChangedButton == MouseButton.Middle && (sender as FrameworkElement)?.DataContext is SessionTab t)
         {
-            CloseTab(t);
+            CloseTabs(new[] { t });
             e.Handled = true;
         }
     }
 
     private void OnTabClose(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is SessionTab t) CloseTab(t);
+        if ((sender as FrameworkElement)?.DataContext is SessionTab t) CloseTabs(new[] { t });
         e.Handled = true;
     }
 
@@ -186,10 +211,141 @@ public partial class MainWindow
         }
         else if (ctrl && shift && e.Key == Key.A) { ToggleClaude(); e.Handled = true; }
         else if (ctrl && shift && e.Key == Key.T) { OpenLocalTerminal(); e.Handled = true; }
-        else if (e.Key == Key.Escape && EditorLayer.Visibility == Visibility.Visible)
+        else if (ctrl && shift && e.Key == Key.W)
         {
-            CloseEditor();
+            if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur });
             e.Handled = true;
         }
+        else if (ctrl && !shift && e.Key is >= Key.D1 and <= Key.D9 && Keyboard.FocusedElement is not TextBox and not PasswordBox)
+        {
+            SelectTabNumber(e.Key - Key.D0);
+            e.Handled = true;
+        }
+        else if (ctrl && (e.Key == Key.K || (e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)))
+        {
+            FocusSearch();
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.S && EditorLayer.Visibility == Visibility.Visible)
+        {
+            SaveEditor();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && EditorLayer.Visibility == Visibility.Visible)
+        {
+            TryCloseEditor();
+            e.Handled = true;
+        }
+        else if (!shift && HandleSelectionKey(e)) e.Handled = true;
     }
+
+    /// <summary>Ctrl+1~8 = 그 번호 탭, Ctrl+9 = 마지막 탭 (브라우저와 같음)</summary>
+    private void SelectTabNumber(int n)
+    {
+        if (_tabs.Count == 0) { SelectHome(); return; }
+        if (n >= 9) SelectTab(_tabs[^1]);
+        else if (n - 1 < _tabs.Count) SelectTab(_tabs[n - 1]);
+    }
+
+    /// <summary>Ctrl+K / Ctrl+F (터미널에서는 Ctrl+Shift+K): 홈으로 가서 검색창에 포커스</summary>
+    private void FocusSearch()
+    {
+        SelectHome();
+        NavHosts.IsChecked = true;
+        Dispatcher.BeginInvoke(() => { SearchBox.Focus(); SearchBox.SelectAll(); }, DispatcherPriority.Input);
+    }
+
+    // ---------- 탭 줄: 휠 스크롤 · 넘친 탭 목록 ----------
+
+    private void OnTabsWheel(object sender, MouseWheelEventArgs e)
+    {
+        TabsScroll.ScrollToHorizontalOffset(TabsScroll.HorizontalOffset - e.Delta);
+        e.Handled = true;
+    }
+
+    private void OnTabsScrollChanged(object sender, ScrollChangedEventArgs e) =>
+        TabListButton.Visibility = TabsScroll.ScrollableWidth > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+    private void OnTabListClick(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = TabListButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        for (var i = 0; i < _tabs.Count; i++)
+        {
+            var t = _tabs[i];
+            var item = new MenuItem
+            {
+                Header = (i < 8 ? $"{i + 1}  " : "    ") + t.Title + (t.Status == SessionStatus.Disconnected ? L.T("  (끊김)") : ""),
+                FontWeight = t.IsSelected ? FontWeights.SemiBold : FontWeights.Normal,
+            };
+            item.Click += (_, _) => SelectTab(t);
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    // ---------- 탭 우클릭 메뉴 ----------
+
+    private void OnTabMenuOpened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu { PlacementTarget: FrameworkElement { DataContext: SessionTab tab } } menu) return;
+        menu.Items.Clear();
+        void Add(string header, Action act, bool enabled = true)
+        {
+            var item = new MenuItem { Header = header, IsEnabled = enabled };
+            item.Click += (_, _) => act();
+            menu.Items.Add(item);
+        }
+        var idx = _tabs.IndexOf(tab);
+        var disconnected = _tabs.Where(t => t.Status == SessionStatus.Disconnected).ToList();
+        Add(L.T("다시 연결"), () => { SelectTab(tab); tab.Session.Reconnect(); }, tab.Status == SessionStatus.Disconnected);
+        if (tab.Host != null) Add(L.T("같은 호스트로 새 탭"), () => Connect(tab.Host));
+        if (tab.Protocol == Protocol.Local) Add(L.T("새 PowerShell 탭"), OpenLocalTerminal);
+        if (tab.View is RdpSessionView rdp) Add(L.T("전체 화면"), () => { SelectTab(tab); rdp.EnterFullScreen(); }, rdp.IsConnected);
+        Add(L.T("탭 이름 바꾸기..."), () =>
+        {
+            if (PromptDialog.Ask(this, L.T("탭 이름 바꾸기"), L.T("새 이름"), tab.Title) is { Length: > 0 } name) tab.Title = name;
+        });
+        if (tab.Host != null && _hosts.Contains(tab.Host)) Add(L.T("호스트 편집"), () => { SelectHome(); OpenEditor(tab.Host); });
+        menu.Items.Add(new Separator());
+        Add(L.T("닫기"), () => CloseTabs(new[] { tab }));
+        Add(L.T("다른 탭 모두 닫기"), () => CloseTabs(_tabs.Where(t => t != tab).ToList()), _tabs.Count > 1);
+        Add(L.T("오른쪽 탭 모두 닫기"), () => CloseTabs(_tabs.Skip(idx + 1).ToList()), idx < _tabs.Count - 1);
+        Add(L.T("끊긴 탭 모두 다시 연결"), () => { foreach (var t in disconnected) t.Session.Reconnect(); }, disconnected.Count > 0);
+        Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
+    }
+
+    // ---------- 탭 끌어서 순서 바꾸기 ----------
+
+    private Point _tabDragStart;
+    private SessionTab? _tabDragging;
+
+    private void OnTabDragStart(object sender, MouseButtonEventArgs e)
+    {
+        _tabDragStart = e.GetPosition(this);
+        _tabDragging = (sender as FrameworkElement)?.DataContext as SessionTab;
+    }
+
+    private void OnTabDragMove(object sender, MouseEventArgs e)
+    {
+        if (_tabDragging == null || e.LeftButton != MouseButtonState.Pressed) return;
+        var d = e.GetPosition(this) - _tabDragStart;
+        if (Math.Abs(d.X) < SystemParameters.MinimumHorizontalDragDistance * 2) return;
+        var tab = _tabDragging;
+        _tabDragging = null;
+        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(typeof(SessionTab), tab), DragDropEffects.Move);
+    }
+
+    private void OnTabDragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent(typeof(SessionTab)) ? DragDropEffects.Move : DragDropEffects.None;
+        if (e.Data.GetData(typeof(SessionTab)) is SessionTab dragged && (sender as FrameworkElement)?.DataContext is SessionTab over && dragged != over)
+        {
+            var from = _tabs.IndexOf(dragged);
+            var to = _tabs.IndexOf(over);
+            if (from >= 0 && to >= 0) _tabs.Move(from, to);
+        }
+        e.Handled = true;
+    }
+
+    private void OnTabDrop(object sender, DragEventArgs e) => e.Handled = true;
 }

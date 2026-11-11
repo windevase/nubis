@@ -22,6 +22,7 @@ public sealed class RdpAxHost : AxHost
     public event Action? LoginComplete;
     public event Action<int>? Disconnected;
     public event Action<int>? FatalError;
+    public event Action? LeftFullScreen;
 
     public RdpAxHost() : base(Clsid)
     {
@@ -46,7 +47,7 @@ public sealed class RdpAxHost : AxHost
     /// <summary>이벤트 구독 해제 (풀에 반납할 때 이전 탭과의 연결을 끊는다)</summary>
     public void ClearHandlers()
     {
-        Connecting = null; Connected = null; LoginComplete = null; Disconnected = null; FatalError = null;
+        Connecting = null; Connected = null; LoginComplete = null; Disconnected = null; FatalError = null; LeftFullScreen = null;
     }
 
     /// <summary>
@@ -70,6 +71,7 @@ public sealed class RdpAxHost : AxHost
         [DispId(2)] void OnConnected();
         [DispId(3)] void OnLoginComplete();
         [DispId(4)] void OnDisconnected(int discReason);
+        [DispId(6)] void OnLeaveFullScreenMode();
         [DispId(10)] void OnFatalError(int errorCode);
     }
 
@@ -101,6 +103,7 @@ public sealed class RdpAxHost : AxHost
     public static void Release(RdpAxHost ax)
     {
         ax.ClearHandlers();
+        try { if ((bool)ax.Ocx.FullScreen) ax.Ocx.FullScreen = false; } catch { }
         try { if ((int)ax.Ocx.Connected != 0) ax.Ocx.Disconnect(); } catch { }
         if (ax.IsDisposed || Pool.Count >= MaxPooled) { ax.Shutdown(); return; }
         Pool.Push(ax);   // 부모에서 떼어도 WinForms 주차 창이 핸들을 유지한다
@@ -116,5 +119,6 @@ public sealed class RdpAxHost : AxHost
         public void OnLoginComplete() => _owner.LoginComplete?.Invoke();
         public void OnDisconnected(int discReason) => _owner.Disconnected?.Invoke(discReason);
         public void OnFatalError(int errorCode) => _owner.FatalError?.Invoke(errorCode);
+        public void OnLeaveFullScreenMode() => _owner.LeftFullScreen?.Invoke();
     }
 }

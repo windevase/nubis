@@ -234,6 +234,37 @@ public sealed class AppSettings
     public string? Language { get; set; }
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
+
+    /// <summary>기본 Vault 계정: 계정을 따로 지정하지 않은 모든 호스트가 쓴다 (SSH · RDP 따로)</summary>
+    public Guid? DefaultSshVaultId { get; set; }
+    public Guid? DefaultRdpVaultId { get; set; }
+
+    // ----- 화면 상태 기억 -----
+    /// <summary>창 위치·크기 (Normal 상태 기준)와 최대화 여부</summary>
+    public double[]? WindowBounds { get; set; }
+    public bool WindowMaximized { get; set; }
+    /// <summary>Claude 패널 폭</summary>
+    public double ClaudePanelWidth { get; set; } = 520;
+    /// <summary>접어 둔 직접 등록 그룹 / 펼쳐 둔 클라우드 그룹 키</summary>
+    public List<string> CollapsedGroups { get; set; } = new();
+    public List<string> ExpandedCloudGroups { get; set; } = new();
+
+    // ----- 편의 -----
+    /// <summary>호스트 목록 맨 위에 최근 접속 그룹 표시</summary>
+    public bool ShowRecent { get; set; } = true;
+    /// <summary>연결 중인 탭을 닫을 때 확인</summary>
+    public bool ConfirmCloseTab { get; set; } = true;
+    /// <summary>여러 줄 붙여넣기 전에 확인</summary>
+    public bool ConfirmMultilinePaste { get; set; } = true;
+    /// <summary>터미널: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 (Windows Terminal 방식)</summary>
+    public bool SmartCopyPaste { get; set; } = true;
+    /// <summary>SSH 연결이 끊기면 자동으로 다시 연결 (0 = 끔)</summary>
+    public bool SshAutoReconnect { get; set; }
+    /// <summary>클라우드 자동 동기화: 앱 시작 시 · N분마다 (0 = 끔)</summary>
+    public bool CloudSyncOnStart { get; set; }
+    public int CloudSyncIntervalMinutes { get; set; }
+    /// <summary>SFTP 다운로드가 끝나면 탐색기 열기</summary>
+    public bool SftpOpenFolderAfterDownload { get; set; } = true;
 }
 
 /// <summary>
@@ -276,6 +307,14 @@ public static class SettingsStore
         try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
         catch { }
         Changed?.Invoke();
+    }
+
+    /// <summary>화면 상태(창 크기·그룹 접힘 등) 저장 — 열린 터미널에 설정을 다시 보내지 않는다</summary>
+    public static void UpdateState(Action<AppSettings> change)
+    {
+        change(Current);
+        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
+        catch { }
     }
 
     /// <summary>공통 설정 변경 (언어·로그인)</summary>

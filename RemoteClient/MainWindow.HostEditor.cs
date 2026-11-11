@@ -19,11 +19,15 @@ public partial class MainWindow
 {
     // =================== 편집 패널 ===================
 
-    private void OpenEditor(HostEntry? h)
+    /// <param name="template">새 호스트를 이 값으로 채워 연다 (복제). 저장할 때만 목록에 추가된다</param>
+    private void OpenEditor(HostEntry? h, HostEntry? template = null)
     {
         _editing = h;
-        EditorTitle.Text = h == null ? "New Host" : "Edit Host";
+        _template = h == null ? template : null;
+        EditorTitle.Text = h == null ? (template != null ? L.T("호스트 복제") : L.T("새 호스트")) : L.T("호스트 편집");
         DeleteButton.Visibility = h == null ? Visibility.Collapsed : Visibility.Visible;
+        EditorError.Text = "";
+        h ??= template;
 
         var proto = h?.Protocol ?? Protocol.Ssh;
         EdPort.Text = (h?.Port ?? HostEntry.PreferredPort(proto)).ToString();
@@ -41,6 +45,7 @@ public partial class MainWindow
         EdKey.Text = h?.KeyPath ?? "";
         _edVaultId = h?.VaultId;
         UpdateAuthUi();
+        _editorSnapshot = EditorSnapshot();
 
         NavHosts.IsChecked = true;
         EditorLayer.Visibility = Visibility.Visible;
@@ -49,6 +54,23 @@ public partial class MainWindow
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         });
         Dispatcher.BeginInvoke(() => EdAddress.Focus(), DispatcherPriority.Input);
+    }
+
+    private HostEntry? _template;
+    private string _editorSnapshot = "";
+
+    /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
+    private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
+        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, _edVaultId);
+
+    /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
+    private void TryCloseEditor()
+    {
+        if (EditorLayer.Visibility != Visibility.Visible) return;
+        if (EditorSnapshot() != _editorSnapshot &&
+            Dialog.Show(this, L.T("저장하지 않은 변경 내용이 있습니다. 버리고 닫을까요?"), L.T("호스트 편집"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        CloseEditor();
     }
 
     private void CloseEditor()
@@ -111,7 +133,7 @@ public partial class MainWindow
         }
 
         VaultHint.Text = v == null
-            ? L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.")
+            ? DefaultVaultHint(ssh)
             : L.T("이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.");
 
         // 직접 입력 칸: Vault 값을 쓰는지 바로 보이게
@@ -131,6 +153,25 @@ public partial class MainWindow
         KeyHint.Text = v?.HasKey == true
             ? L.T("Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요.")
             : L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
+    }
+
+    /// <summary>Vault 계정을 고르지 않았을 때 실제로 쓰일 기본 계정 안내 (프로필 기본 계정 · 설정의 기본 Vault)</summary>
+    private string DefaultVaultHint(bool ssh)
+    {
+        var probe = new HostEntry
+        {
+            Protocol = ssh ? Protocol.Ssh : Protocol.Rdp,
+            Password = EdPassword?.Password ?? "",
+            KeyPath = ssh && EdKey?.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null,
+            CloudProfileId = _editing?.CloudProfileId,
+        };
+        var profile = _profiles.FirstOrDefault(p => p.Id == probe.CloudProfileId);
+        var (id, source) = probe.ResolveVault(profile);
+        if (VaultStore.Get(id) is { } d)
+            return source == "profile"
+                ? L.F("지정하지 않으면 이 클라우드 프로필의 기본 계정 '{0}' 으로 로그인합니다.", d.Name)
+                : L.F("지정하지 않으면 기본 Vault 계정 '{0}' 으로 로그인합니다 (Settings → 기본 Vault 계정).", d.Name);
+        return L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.");
     }
 
     private void OnPickVault(object sender, RoutedEventArgs e)
@@ -159,10 +200,22 @@ public partial class MainWindow
     private HostEntry? SaveEditor()
     {
         var address = EdAddress.Text.Trim();
-        if (address.Length == 0) { EdAddress.Focus(); return null; }
-        if (!int.TryParse(EdPort.Text.Trim(), out var port) || port is < 1 or > 65535) { EdPort.Focus(); return null; }
+        if (address.Length == 0) { EditorError.Text = L.T("주소를 입력하세요."); EdAddress.Focus(); return null; }
+        if (address.Contains(' ') || address.Contains('@'))
+        {
+            EditorError.Text = L.T("주소에는 IP 또는 호스트명만 넣으세요. 사용자명은 아래 '사용자명' 칸에 넣습니다.");
+            EdAddress.Focus();
+            return null;
+        }
+        if (!int.TryParse(EdPort.Text.Trim(), out var port) || port is < 1 or > 65535)
+        {
+            EditorError.Text = L.T("포트는 1 ~ 65535 사이 숫자여야 합니다.");
+            EdPort.Focus();
+            return null;
+        }
+        EditorError.Text = "";
 
-        var h = _editing ?? new HostEntry();
+        var h = _editing ?? _template?.Clone() ?? new HostEntry();
         h.Protocol = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
         h.Address = address;
         if (h.PrivateIp != null) h.PrivateIp = address;
@@ -182,6 +235,7 @@ public partial class MainWindow
         h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
 
         if (_editing == null) _hosts.Add(h);
+        _template = null;
         SaveHosts();
         RefreshHosts();
         CloseEditor();
@@ -203,6 +257,21 @@ public partial class MainWindow
         if (_hosts.Count < before) CloseEditor();
     }
 
-    private void OnEditorClose(object sender, RoutedEventArgs e) => CloseEditor();
-    private void OnEditorDimClick(object sender, MouseButtonEventArgs e) => CloseEditor();
+    private void OnEditorClose(object sender, RoutedEventArgs e) => TryCloseEditor();
+    private void OnEditorDimClick(object sender, MouseButtonEventArgs e) => TryCloseEditor();
+
+    /// <summary>그룹 칸 옆 ▾: 이미 쓰는 그룹 이름 고르기 (오타로 그룹이 갈라지지 않게)</summary>
+    private void OnPickGroup(object sender, RoutedEventArgs e)
+    {
+        var names = KnownGroupNames();
+        var menu = new ContextMenu { PlacementTarget = EdGroup, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        if (names.Count == 0) menu.Items.Add(new MenuItem { Header = L.T("아직 만든 그룹이 없습니다"), IsEnabled = false });
+        foreach (var n in names)
+        {
+            var item = new MenuItem { Header = n };
+            item.Click += (_, _) => EdGroup.Text = n;
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
 }

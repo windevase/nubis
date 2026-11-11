@@ -48,6 +48,7 @@ public partial class MainWindow
         DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
         DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
         FontSizeText.Text = $"{s.FontSize}px";
+        RefreshPreferences();
 
         if (FontPanel.Children.Count == 0)
         {
@@ -315,6 +316,9 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.DataContext is KeyValuePair<string, string> kv)
         {
+            // 지우면 다음 접속 때 그 서버의 키를 처음 보는 키로 받아들인다 — 그 사이 키가 바뀌었어도 경고가 없으므로 확인
+            if (Dialog.Show(this, L.F("'{0}' 의 저장된 호스트키를 지울까요?\n다음 접속 때 서버가 보내는 키를 새로 신뢰합니다. 서버를 다시 설치해 키가 바뀐 경우에만 지우세요.", kv.Key),
+                    L.T("호스트키 삭제"), MessageBoxButton.YesNo, MessageBoxImage.Warning, kv.Value) != MessageBoxResult.Yes) return;
             KnownHostStore.Remove(kv.Key);
             RefreshKnownHosts();
         }

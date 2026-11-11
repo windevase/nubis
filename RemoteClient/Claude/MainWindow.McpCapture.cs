@@ -32,6 +32,24 @@ public partial class MainWindow
             throw new McpToolException("Nubis 창이 최소화되어 있어 화면을 캡처할 수 없습니다. 창을 열어 달라고 사용자에게 요청하세요.");
 
         var switched = !tab.IsSelected;
+        // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다
+        var previous = _tabs.FirstOrDefault(t => t.IsSelected);
+        try
+        {
+            return await CaptureCoreAsync(tab, maxWidth, switched);
+        }
+        finally
+        {
+            if (switched)
+            {
+                if (previous != null && _tabs.Contains(previous)) SelectTab(previous);
+                else SelectHome();
+            }
+        }
+    }
+
+    private async Task<McpImage> CaptureCoreAsync(SessionTab tab, int maxWidth, bool switched)
+    {
         if (switched)
         {
             // 가려진 RDP 화면은 갱신되지 않으므로 보이게 한 뒤 그려질 시간을 준다
@@ -95,6 +113,6 @@ public partial class MainWindow
         var kind = tab.Protocol switch { Protocol.Rdp => "RDP", Protocol.Ssh => "SSH", _ => "로컬" };
         return new McpImage(data, mime,
             $"[{target}] {kind} 화면 {crop.Width}x{crop.Height}" + (outW != crop.Width ? $" (축소 {outW}x{outH})" : "") +
-            (switched ? " — 캡처를 위해 이 탭으로 전환했습니다." : ""));
+            (switched ? " — 캡처를 위해 잠깐 이 탭으로 전환했다가 사용자가 보던 화면으로 되돌렸습니다." : ""));
     }
 }

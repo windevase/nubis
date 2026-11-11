@@ -70,22 +70,88 @@ public partial class MainWindow
             }
         }
 
-        var sshTask = SshExec.RunAsync(linux, command, timeout, CancellationToken.None);
-        var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, CancellationToken.None);
-        await Task.WhenAll(sshTask, winTask);
-        var results = sshTask.Result.Concat(winTask.Result).ToList();
+        // 실행 중에는 Claude 패널 위에 "실행 중 · 취소" 줄을 보여 준다 (Claude CLI 에서 Esc 를 눌러도 앱의 실행은 계속되므로)
+        using var cts = new CancellationTokenSource();
+        var started = DateTime.Now;
+        await OnUi(() => { BeginRunStatus(cts, L.F("서버 {0}대에서 명령 실행 중: {1}", targets.Count, FirstLine(command))); return 0; });
+        List<ExecResult> results;
+        try
+        {
+            var sshTask = SshExec.RunAsync(linux, command, timeout, cts.Token);
+            var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, cts.Token);
+            // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 이미 시작한 서버는 끝까지 돌 수 있음)
+            var all = Task.WhenAll(sshTask, winTask);
+            try { await Task.WhenAny(all, Task.Delay(Timeout.Infinite, cts.Token)); }
+            catch (OperationCanceledException) { }
+            if (!cts.IsCancellationRequested)
+            {
+                try { await all; }
+                catch (OperationCanceledException) { }
+            }
+            else _ = all.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            if (cts.IsCancellationRequested)
+            {
+                AuditLog.Write("run_command", labels, command, "승인·실행 후 사용자가 취소");
+                throw new McpToolException($"사용자가 실행을 취소했습니다 ({(DateTime.Now - started).TotalSeconds:0}초 경과). 이미 실행된 서버에서는 명령이 끝까지 돌았을 수 있습니다.");
+            }
+            results = sshTask.Result.Concat(winTask.Result).ToList();
+        }
+        finally
+        {
+            await OnUi(() => { EndRunStatus(cts); return 0; });
+        }
         var okCount = results.Count(r => r.Ok);
         AuditLog.Write("run_command", labels, command, $"{(autoApproved ? "자동 승인(읽기 전용)" : "승인")}·실행 (성공 {okCount} / 실패 {results.Count - okCount})");
 
         var sb = new StringBuilder($"실행 완료: 성공 {okCount} / 실패 {results.Count - okCount} (총 {results.Count}대)\n");
         if (skipped.Count > 0) sb.AppendLine("제외: " + string.Join("; ", skipped));
+        // 대수가 많으면 서버당 출력을 줄여 전체를 약 60,000자 안으로 (Claude 컨텍스트 절약)
+        var perHost = Math.Clamp(60_000 / Math.Max(1, results.Count), 1_000, 8_000);
         foreach (var r in results.OrderBy(r => r.Ok).ThenBy(r => r.Host.DisplayName))
         {
             sb.AppendLine();
             sb.AppendLine($"## {r.Host.DisplayName} ({r.Host.PrimaryAddress}{(r.Host.HasPublicIp ? $" / 공인 {r.Host.PublicIp}" : "")}) — {(r.ExitCode is { } c ? $"exit {c}" : "실패")}, {r.ElapsedMs / 1000.0:0.0}s");
-            if (r.Output.Length > 0) sb.AppendLine(r.Output.TrimEnd());
-            if (r.Error.Length > 0) sb.AppendLine("[stderr/오류] " + r.Error.TrimEnd());
+            if (r.Output.Length > 0) sb.AppendLine(SshExec.ClipOutput(r.Output.TrimEnd(), perHost));
+            if (r.Error.Length > 0) sb.AppendLine("[stderr/오류] " + SshExec.ClipOutput(r.Error.TrimEnd(), Math.Min(perHost, 4_000)));
         }
         return sb.ToString();
+    }
+
+    private static string FirstLine(string s)
+    {
+        var line = s.Replace("\r", "").Split('\n')[0].Trim();
+        return line.Length > 60 ? line[..60] + "…" : line;
+    }
+
+    // ----- 실행 중 표시 (Claude 패널 위) -----
+    private readonly List<(CancellationTokenSource Cts, string Text)> _runs = new();
+
+    private void BeginRunStatus(CancellationTokenSource cts, string text)
+    {
+        _runs.Add((cts, text));
+        UpdateRunBar();
+    }
+
+    private void EndRunStatus(CancellationTokenSource cts)
+    {
+        _runs.RemoveAll(r => r.Cts == cts);
+        UpdateRunBar();
+    }
+
+    private void UpdateRunBar()
+    {
+        RunBar.Visibility = _runs.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        RunBarText.Text = _runs.Count switch
+        {
+            0 => "",
+            1 => _runs[0].Text,
+            _ => L.F("명령 {0}건 실행 중", _runs.Count),
+        };
+    }
+
+    private void OnCancelRuns(object sender, RoutedEventArgs e)
+    {
+        foreach (var r in _runs) { try { r.Cts.Cancel(); } catch { } }
+        RunBarText.Text = L.T("취소하는 중...");
     }
 }

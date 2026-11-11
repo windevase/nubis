@@ -43,6 +43,12 @@ public partial class MainWindow : Window
         CloudSections.ItemsSource = _sections;
         UpdateProfileCounts();
         TabsList.ItemsSource = _tabs;
+        // 지난번 화면 상태: 그룹 접힘, Claude 패널 폭, 창 위치·크기
+        var st = SettingsStore.Current;
+        foreach (var k in st.CollapsedGroups) _collapsedLocal.Add(k);
+        foreach (var k in st.ExpandedCloudGroups) _expandedCloud.Add(k);
+        if (st.ClaudePanelWidth is >= 320 and <= 3000) _claudeWidth = st.ClaudePanelWidth;
+        RestoreWindowBounds(st);
         FooterText.Text = $"v{typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
         FooterText.ToolTip = L.F("데이터 폴더: {0}", AppPaths.DataDir);
 
@@ -60,6 +66,7 @@ public partial class MainWindow : Window
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             ConnectFromArgs();
             ShowOnboardingIfFirstRun();
+            StartCloudAutoSync(startup: true);
         };
         XtermView.Hotkey += OnTerminalHotkey;
     }
@@ -134,10 +141,37 @@ public partial class MainWindow : Window
             e.Cancel = true;
             return;
         }
+        SaveWindowState();
         foreach (var t in _tabs.ToList())
         {
             try { t.Session.CloseSession(); } catch { }
         }
         ShutdownClaude();
+    }
+
+    /// <summary>저장된 창 위치가 지금 화면 안에 있으면 그대로 연다 (모니터를 뺐으면 기본 위치)</summary>
+    private void RestoreWindowBounds(AppSettings st)
+    {
+        if (st.WindowBounds is not { Length: 4 } b || b[2] < MinWidth || b[3] < MinHeight) return;
+        var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+        var r = new Rect(b[0], b[1], b[2], b[3]);
+        // 제목 표시줄이 화면 안에 있어야 끌어 옮길 수 있다
+        if (!screen.IntersectsWith(new Rect(r.X + 40, r.Y, Math.Max(1, r.Width - 80), 40))) return;
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        (Left, Top, Width, Height) = (r.X, r.Y, r.Width, r.Height);
+        if (st.WindowMaximized) WindowState = WindowState.Maximized;
+    }
+
+    private void SaveWindowState()
+    {
+        var r = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
+        var claude = ClaudeColumn.ActualWidth > 0 ? ClaudeColumn.ActualWidth : _claudeWidth;
+        SettingsStore.UpdateState(s =>
+        {
+            if (!r.IsEmpty && r.Width > 0) s.WindowBounds = new[] { r.X, r.Y, r.Width, r.Height };
+            s.WindowMaximized = WindowState == WindowState.Maximized;
+            s.ClaudePanelWidth = Math.Round(claude);
+        });
     }
 }

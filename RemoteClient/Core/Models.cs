@@ -4,13 +4,14 @@ using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
+using System.Windows;
 using System.Windows.Media;
 
 namespace Nubis;
 
 public enum Protocol { Ssh, Rdp, Local }
 
-public sealed class HostEntry
+public sealed class HostEntry : INotifyPropertyChanged
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Label { get; set; } = "";
@@ -29,6 +30,8 @@ public sealed class HostEntry
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
     public DateTime? LastConnected { get; set; }
+    /// <summary>즐겨찾기 (호스트 목록 맨 위 "즐겨찾기" 그룹에도 표시)</summary>
+    public bool Favorite { get; set; }
 
     // ----- 접속용 사본에만 채워지는 값 (VaultStore.Apply). 저장하지 않는다 -----
     /// <summary>Vault 에서 꺼낸 개인키 내용</summary>
@@ -55,6 +58,8 @@ public sealed class HostEntry
     public string? CloudInstanceId { get; set; }
     public string? CloudState { get; set; }
     public string? CloudRegion { get; set; }
+    /// <summary>동기화로 받은 클라우드 이름. 사용자가 Label 을 이 값과 다르게 바꿨으면 동기화가 덮어쓰지 않는다</summary>
+    public string? CloudName { get; set; }
     public string? Purpose { get; set; }
     public string? Os { get; set; }
 
@@ -131,12 +136,38 @@ public sealed class HostEntry
     }
 
     /// <summary>
+    /// 이 호스트가 실제로 쓰는 Vault 계정. 우선순위:
+    /// 1) 호스트에 직접 고른 Vault 계정
+    /// 2) 호스트에 비밀번호·키 파일을 직접 적었으면 Vault 를 쓰지 않음
+    /// 3) 클라우드 프로필의 기본 Vault 계정 (SSH / RDP 따로)
+    /// 4) 프로필에 기본 사용자명·비밀번호를 적었으면 그 값 (Vault 안 씀)
+    /// 5) 설정의 기본 Vault 계정 (SSH / RDP 따로)
+    /// 지워진 Vault 계정은 건너뛴다.
+    /// </summary>
+    public Guid? EffectiveVaultId(CloudProfile? p) => ResolveVault(p).id;
+
+    /// <summary>EffectiveVaultId 와 그 출처 ("host" · "profile" · "default" · null)</summary>
+    public (Guid? id, string? source) ResolveVault(CloudProfile? p)
+    {
+        if (VaultId != null) return (VaultId, "host");
+        if (Protocol == Protocol.Local) return (null, null);
+        if (!string.IsNullOrEmpty(ProtectedPassword) || !string.IsNullOrWhiteSpace(KeyPath)) return (null, null);
+        var fromProfile = Protocol == Protocol.Rdp ? p?.RdpVaultId : p?.SshVaultId;
+        if (fromProfile != null && VaultStore.Get(fromProfile) != null) return (fromProfile, "profile");
+        if (p != null && (!string.IsNullOrEmpty(p.DefaultUsername) || !string.IsNullOrEmpty(p.ProtectedDefaultPassword))) return (null, null);
+        var s = SettingsStore.Current;
+        var global = Protocol == Protocol.Rdp ? s.DefaultRdpVaultId : s.DefaultSshVaultId;
+        return global != null && VaultStore.Get(global) != null ? (global, "default") : (null, null);
+    }
+
+    /// <summary>
     /// 접속용 계정을 채운 사본: Vault 항목을 쓰면 그 값을 먼저 채우고(호스트 설정이 우선),
     /// 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
     /// </summary>
     public HostEntry WithDefaults(CloudProfile? p)
     {
-        var c = UsesVault ? VaultStore.Apply(Clone()) : this;
+        var vid = EffectiveVaultId(p);
+        var c = vid != null ? VaultStore.Apply(Clone(), vid) : this;
         if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
         if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;
@@ -167,7 +198,34 @@ public sealed class HostEntry
         return port is >= 1 and <= 65535 ? port : DefaultPort(p);
     }
 
-    public HostEntry Clone() => (HostEntry)MemberwiseClone();
+    public HostEntry Clone()
+    {
+        var c = (HostEntry)MemberwiseClone();
+        c.PropertyChanged = null;
+        c._highlighted = false;
+        c._selected = false;
+        return c;
+    }
+
+    // ----- 화면 표시용: 키보드로 고른 카드 -----
+    private bool _highlighted;
+    [JsonIgnore]
+    public bool IsHighlighted
+    {
+        get => _highlighted;
+        set { if (_highlighted == value) return; _highlighted = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsHighlighted))); }
+    }
+    // ----- 화면 표시용: Ctrl/Shift+클릭으로 여러 개 고른 카드 -----
+    private bool _selected;
+    [JsonIgnore]
+    public bool IsSelected
+    {
+        get => _selected;
+        set { if (_selected == value) return; _selected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
+    }
+    [JsonIgnore] public Visibility FavoriteVisibility => Favorite ? Visibility.Visible : Visibility.Collapsed;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public sealed class HostGroup : INotifyPropertyChanged
@@ -180,7 +238,13 @@ public sealed class HostGroup : INotifyPropertyChanged
     /// <summary>클라우드 프로필 그룹이면 해당 프로필</summary>
     public CloudProfile? Profile { get; init; }
 
+    /// <summary>직접 등록한 그룹의 실제 Group 값 ("" = 그룹 없음)</summary>
+    public string GroupName { get; init; } = "";
     public bool IsCloud => Profile != null;
+    /// <summary>즐겨찾기 · 최근 접속처럼 다른 그룹의 호스트를 모아 보여주는 그룹</summary>
+    public bool IsVirtual => Key is "F:" or "R:";
+    public bool IsLocal => !IsCloud && !IsVirtual;
+    public string Glyph => Key switch { "F:" => "", "R:" => "", _ => "" };
     public string BadgeText => Profile?.ProviderText ?? "";
     public Brush? BadgeBrush => Profile?.ProviderBrush;
     public string CountText
@@ -253,6 +317,8 @@ public interface ISessionView
     System.Threading.Tasks.Task<string?> GetSelectionAsync();
     /// <summary>대화형 세션에 텍스트 입력. 불가능하면 false</summary>
     bool SendText(string text);
+    /// <summary>끊긴 세션 다시 연결 (연결 중이면 무시)</summary>
+    void Reconnect();
 }
 
 public sealed class SessionTab : INotifyPropertyChanged
@@ -262,7 +328,8 @@ public sealed class SessionTab : INotifyPropertyChanged
 
     /// <summary>MCP 에서 세션을 가리킬 때 쓰는 번호</summary>
     public int Id { get; init; }
-    public required string Title { get; init; }
+    private string _title = "";
+    public required string Title { get => _title; set { _title = value; OnChanged(); } }
     public required Protocol Protocol { get; init; }
     public required System.Windows.FrameworkElement View { get; init; }
     /// <summary>원본 호스트 (로컬 터미널이면 null)</summary>

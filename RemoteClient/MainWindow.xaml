@@ -15,12 +15,16 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolVis"/>
+        <!-- 세션 탭 우클릭 메뉴 (항목은 열 때 만듦) -->
+        <ContextMenu x:Key="TabMenu" Opened="OnTabMenuOpened"/>
         <!-- 세션 탭 -->
         <DataTemplate x:Key="TabTemplate">
             <Border x:Name="bd" Height="30" Margin="4,5,0,5" CornerRadius="8" Padding="12,0,4,0"
-                    Background="Transparent" Cursor="Hand" MinWidth="150" MaxWidth="230"
-                    WindowChrome.IsHitTestVisibleInChrome="True"
-                    MouseLeftButtonUp="OnTabClick" MouseDown="OnTabMouseDown">
+                    Background="Transparent" Cursor="Hand" MinWidth="120" MaxWidth="230"
+                    WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="{Binding Title}"
+                    ContextMenu="{StaticResource TabMenu}" AllowDrop="True"
+                    MouseLeftButtonUp="OnTabClick" MouseDown="OnTabMouseDown"
+                    PreviewMouseLeftButtonDown="OnTabDragStart" MouseMove="OnTabDragMove" DragOver="OnTabDragOver" Drop="OnTabDrop">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -55,17 +59,23 @@
             <MenuItem Header="{l:Tr '연결'}" Click="OnMenuConnect"/>
             <MenuItem Header="{l:Tr '공인 IP로 연결'}" Tag="public" Click="OnMenuConnectPublic"/>
             <MenuItem Header="{l:Tr '사설 IP로 연결'}" Tag="private" Click="OnMenuConnectPrivate"/>
+            <MenuItem Header="{l:Tr '즐겨찾기에 추가'}" Tag="fav" Click="OnMenuFavorite"/>
             <MenuItem Header="{l:Tr '편집'}" Click="OnMenuEdit"/>
             <MenuItem Header="{l:Tr '복제'}" Click="OnMenuDuplicate"/>
             <MenuItem Header="{l:Tr '삭제'}" Click="OnMenuDelete"/>
         </ContextMenu>
 
+        <!-- 그룹 헤더 우클릭 메뉴 (항목은 열 때 그룹에 맞게 만듦) -->
+        <ContextMenu x:Key="GroupMenu" Opened="OnGroupMenuOpened"/>
+
+
         <!-- 호스트 카드 -->
         <DataTemplate x:Key="HostCardTemplate">
             <Border x:Name="card" Width="290" Height="74" Margin="0,0,12,12" CornerRadius="10"
+                    BorderThickness="1.5" BorderBrush="Transparent"
                     Background="{StaticResource CardBg}" Cursor="Hand" MouseLeftButtonDown="OnCardMouseDown"
                     ToolTip="{Binding ToolTipText, Mode=OneTime}" Opacity="{Binding CardOpacity, Mode=OneTime}"
-                    ContextMenu="{StaticResource HostCardMenu}">
+                    ContextMenu="{StaticResource HostCardMenu}" ContextMenuOpening="OnCardContextMenuOpening">
 
                 <Grid Margin="14,0,10,0">
                     <Grid.ColumnDefinitions>
@@ -78,12 +88,23 @@
                                    Foreground="#0B0D14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="12,0,6,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding DisplayName, Mode=OneTime}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="&#xE735;" FontFamily="{StaticResource IconFont}" FontSize="11"
+                                       Foreground="#F5B740" Margin="0,0,6,0" VerticalAlignment="Center"
+                                       Visibility="{Binding FavoriteVisibility, Mode=OneTime}"/>
+                            <TextBlock Text="{Binding DisplayName, Mode=OneTime}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
                         <TextBlock Text="{Binding Subtitle, Mode=OneTime}" FontSize="12" Foreground="{StaticResource SubText}"
                                    Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
                     <Button x:Name="editBtn" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE70F;"
                             Visibility="Hidden" Click="OnEditHost" ToolTip="{l:Tr '편집'}"/>
+                    <!-- 여러 개 선택했을 때 표시 -->
+                    <Border x:Name="checkMark" Grid.Column="2" Width="22" Height="22" CornerRadius="11" Background="{StaticResource Accent}"
+                            VerticalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False">
+                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="#0B0D14"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
@@ -91,6 +112,18 @@
                     <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
                     <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
                 </Trigger>
+                <!-- 검색창에서 ↑↓ 로 고른 카드 (Enter 로 연결) -->
+                <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
+                    <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                    <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                </DataTrigger>
+                <!-- Ctrl/Shift+클릭으로 고른 카드 -->
+                <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                    <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                    <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                    <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="editBtn" Property="Visibility" Value="Collapsed"/>
+                </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
     </Window.Resources>
@@ -118,8 +151,9 @@
                 </StackPanel>
             </Border>
 
+            <!-- 탭이 넘치면 휠로 가로 스크롤, 오른쪽 목록 버튼으로 모든 탭 보기 -->
             <ScrollViewer Grid.Column="1" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled"
-                          x:Name="TabsScroll">
+                          x:Name="TabsScroll" PreviewMouseWheel="OnTabsWheel" ScrollChanged="OnTabsScrollChanged">
                 <ItemsControl x:Name="TabsList" ItemTemplate="{StaticResource TabTemplate}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -130,6 +164,9 @@
             </ScrollViewer>
 
             <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <Button x:Name="TabListButton" Style="{StaticResource IconButton}" Content="&#xE70D;" Width="30" Height="30" Margin="4,0,2,0"
+                        FontSize="10" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True" Click="OnTabListClick"
+                        ToolTip="{l:Tr '모든 탭 보기'}"/>
                 <Button Style="{StaticResource IconButton}" Content="&#xE710;" Width="30" Height="30" Margin="0,0,6,0"
                         WindowChrome.IsHitTestVisibleInChrome="True" Click="OnNewLocalTerminal" ToolTip="{l:Tr '로컬 PowerShell (Ctrl+Shift+T)'}"/>
                 <Button Style="{StaticResource GhostButton}" Height="30" Padding="12,0" Margin="0,0,10,0"
@@ -178,6 +215,18 @@
                     </Grid>
                 </Border>
                 <ContentControl x:Name="ClaudeHost" Grid.Row="1"/>
+                <!-- Claude 의 run_command 실행 중 표시 + 취소 -->
+                <Border x:Name="RunBar" Grid.Row="1" VerticalAlignment="Top" Background="#2A2410" BorderBrush="#5A4A1A"
+                        BorderThickness="0,0,0,1" Padding="12,6,8,6" Visibility="Collapsed">
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Content="{l:Tr '취소'}" Padding="10,3"
+                                FontSize="12" Click="OnCancelRuns"/>
+                        <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True" Width="40" Height="3" Margin="0,0,10,0"
+                                     VerticalAlignment="Center"/>
+                        <TextBlock x:Name="RunBarText" Foreground="#F5B740" FontSize="12" VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
+                </Border>
             </Grid>
 
             <!-- 홈(호스트 목록) -->
@@ -233,14 +282,40 @@
                     </Grid>
 
                     <Grid Grid.Row="1" Margin="28,18,28,8">
-                        <Button Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnNewHost" Padding="14,8">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
-                                           Foreground="{StaticResource Accent}"/>
-                                <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Button>
-                        <TextBlock x:Name="CountText" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubText}"/>
+                        <Grid x:Name="HostToolbar">
+                            <Button Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnNewHost" Padding="14,8">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
+                                               Foreground="{StaticResource Accent}"/>
+                                    <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <TextBlock x:Name="CountText" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubText}"
+                                       ToolTip="{l:Tr 'Ctrl+클릭 · Shift+클릭으로 카드를 여러 개 골라 한 번에 편집할 수 있습니다 (Ctrl+A 전체 선택)'}"/>
+                        </Grid>
+                        <!-- 카드를 여러 개 골랐을 때: 일괄 작업 막대 -->
+                        <Border x:Name="SelectionBar" Visibility="Collapsed" Background="{StaticResource CardBg}" CornerRadius="8"
+                                BorderBrush="{StaticResource Accent}" BorderThickness="1" Padding="12,4" Margin="0,-3">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="12"
+                                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="SelectionText" DockPanel.Dock="Left" Margin="8,0,16,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="11" Click="OnSelectionClear"
+                                            ToolTip="{l:Tr '선택 해제 (Esc)'}"/>
+                                </StackPanel>
+                                <WrapPanel VerticalAlignment="Center">
+                                    <Button Style="{StaticResource PrimaryButton}" Content="{l:Tr '일괄 편집...'}" Padding="14,6" FontSize="12" Margin="0,0,6,0"
+                                            Click="OnSelectionEdit"/>
+                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '연결'}" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                                            Click="OnSelectionConnect"/>
+                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '삭제'}" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                                            Click="OnSelectionDelete"/>
+                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '더 보기 ▾'}" Padding="12,6" FontSize="12"
+                                            Click="OnSelectionMore"/>
+                                </WrapPanel>
+                            </DockPanel>
+                        </Border>
                     </Grid>
 
                     <!-- 호스트 목록: 그룹 헤더와 "카드 한 줄"을 행으로 만든 가상화 목록 (수백 대여도 보이는 줄만 그림) -->
@@ -275,7 +350,8 @@
                                 <DataTemplate DataType="{x:Type local:HostGroup}">
                                     <StackPanel Margin="0,4,0,0">
                                             <Border x:Name="header" Background="Transparent" Cursor="Hand" CornerRadius="8"
-                                                    Padding="6,6,8,6" Margin="-6,0,12,10" MouseLeftButtonUp="OnGroupHeaderClick">
+                                                    Padding="6,6,8,6" Margin="-6,0,12,10" MouseLeftButtonUp="OnGroupHeaderClick"
+                                                    ContextMenu="{StaticResource GroupMenu}" ToolTip="{l:Tr '클릭: 접기·펼치기 · 우클릭: 그룹 전체에 Vault 계정·공인/사설 IP 적용, 모두 연결'}">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="Auto"/>
@@ -291,6 +367,9 @@
                                                             Padding="6,1" Margin="4,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
                                                         <TextBlock Text="{Binding BadgeText}" FontSize="10.5" FontWeight="Bold" Foreground="#0B0D14"/>
                                                     </Border>
+                                                    <TextBlock x:Name="glyph" Grid.Column="1" Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}"
+                                                               FontSize="12" Foreground="#F5B740" Margin="4,0,0,0" VerticalAlignment="Center"
+                                                               Visibility="Collapsed"/>
                                                     <TextBlock Grid.Column="2" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
                                                                Foreground="{StaticResource Text}" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                                     <TextBlock Grid.Column="3" Text="{Binding CountText}" FontSize="12"
@@ -315,6 +394,9 @@
                                         <DataTrigger Binding="{Binding IsCloud}" Value="True">
                                             <Setter TargetName="badge" Property="Visibility" Value="Visible"/>
                                             <Setter TargetName="syncBtn" Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsVirtual}" Value="True">
+                                            <Setter TargetName="glyph" Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
@@ -351,7 +433,7 @@
                     <Grid>
                         <StackPanel Margin="0,0,160,0">
                             <TextBlock Text="Vault" FontSize="20" FontWeight="SemiBold"/>
-                            <TextBlock Text="{l:Tr '여러 호스트가 함께 쓰는 로그인 계정(사용자명 + 비밀번호 / SSH 키)입니다. 호스트 편집의 \'로그인 계정\' 에서 고르면, 여기서 값을 바꿀 때 그 호스트들에 모두 적용됩니다. Windows DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀립니다.'}"
+                            <TextBlock Text="{l:Tr '여러 호스트가 함께 쓰는 로그인 계정(사용자명 + 비밀번호 / SSH 키)입니다. 호스트 편집의 \'로그인 계정\' 에서 고르면, 여기서 값을 바꿀 때 그 호스트들에 모두 적용됩니다. \'기본 계정\' 으로 지정하면 계정을 정하지 않은 모든 호스트가 쓰고, 호스트 목록의 그룹 우클릭으로 그룹 전체에 한 번에 지정할 수 있습니다. Windows DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀립니다.'}"
                                        Foreground="{StaticResource SubText}" Margin="0,6,0,18" TextWrapping="Wrap"/>
                         </StackPanel>
                         <Button Style="{StaticResource PrimaryButton}" Content="{l:Tr '계정 추가'}" HorizontalAlignment="Right" VerticalAlignment="Top"
@@ -379,6 +461,10 @@
                                                                 VerticalAlignment="Center">
                                                             <TextBlock Text="{Binding MethodsText}" FontSize="10.5" Foreground="{StaticResource SubText}"/>
                                                         </Border>
+                                                        <Border Background="#2A2410" CornerRadius="5" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                                                Visibility="{Binding DefaultBadgeVisibility}">
+                                                            <TextBlock Text="{Binding DefaultBadge}" FontSize="10.5" Foreground="#F5B740"/>
+                                                        </Border>
                                                         <TextBlock Text="{Binding UsedByText}" FontSize="11" Foreground="{StaticResource SubText}"
                                                                    Margin="8,0,0,0" VerticalAlignment="Center"/>
                                                     </StackPanel>
@@ -389,6 +475,10 @@
                                                     <Button Style="{StaticResource GhostButton}" Content="{l:Tr '공개키 복사'}" Margin="0,0,8,0"
                                                             Visibility="{Binding CopyVisibility}" Click="OnVaultCopyPublic"
                                                             ToolTip="{l:Tr '서버의 ~/.ssh/authorized_keys 에 붙여넣을 공개키'}"/>
+                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '호스트 보기'}" Margin="0,0,8,0" Click="OnVaultShowHosts"
+                                                            ToolTip="{l:Tr '이 계정으로 로그인하는 호스트만 호스트 목록에 표시'}"/>
+                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '기본 계정'}" Margin="0,0,8,0" Click="OnVaultSetDefault"
+                                                            ToolTip="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 쓰는 기본 계정으로 지정'}"/>
                                                     <Button Style="{StaticResource GhostButton}" Content="{l:Tr '수정'}" Margin="0,0,8,0" Click="OnVaultEdit"/>
                                                     <Button Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}" Tag="#2A1A22" Click="OnVaultDelete"/>
                                                 </StackPanel>
@@ -570,7 +660,59 @@
                         <Button Style="{StaticResource GhostButton}" Content="{l:Tr '시작하기 안내 다시 보기'}" HorizontalAlignment="Left" Margin="0,12,0,0"
                                 Click="OnShowOnboarding"/>
 
-                        <TextBlock Text="{l:Tr '터미널 테마'}" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,4"/>
+                        <TextBlock Text="{l:Tr '기본 Vault 계정'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
+                        <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
+                                   Text="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 이 계정으로 로그인합니다. 우선순위: 호스트에 고른 계정·직접 입력한 값 → 클라우드 프로필 기본 계정 → 여기 기본 계정. 호스트 목록에서 그룹을 우클릭하면 그룹 전체에 다른 계정을 지정할 수 있습니다.'}"/>
+                        <Grid MaxWidth="640" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="130"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition/>
+                                <RowDefinition/>
+                            </Grid.RowDefinitions>
+                            <TextBlock Text="{l:Tr 'SSH (Linux)'}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="DefSshVaultText" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,8">
+                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="ssh" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
+                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="ssh" Click="OnDefaultVaultClear"/>
+                            </StackPanel>
+                            <TextBlock Grid.Row="1" Text="{l:Tr 'RDP (Windows)'}" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="DefRdpVaultText" Grid.Row="1" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0">
+                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="rdp" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
+                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="rdp" Click="OnDefaultVaultClear"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock Text="{l:Tr '호스트 목록 · 탭'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
+                        <CheckBox x:Name="ShowRecentBox" Click="OnPrefClick" Margin="0,0,0,10">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr '최근 접속 그룹 표시'}"/>
+                                <Run Text="{l:Tr '  최근 30일 안에 접속한 호스트를 맨 위에 (카드 우클릭 → 즐겨찾기는 항상 맨 위)'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <CheckBox x:Name="ConfirmCloseBox" Click="OnPrefClick">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr '연결 중인 탭을 닫을 때 확인'}"/>
+                                <Run Text="{l:Tr '  X · 휠 클릭 · Ctrl+Shift+W 로 잘못 닫는 것 방지'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <TextBlock Text="{l:Tr '단축키: Ctrl+K 호스트 검색 (↑↓ 로 고르고 Enter 로 연결) · Ctrl+1~9 탭 이동 · Ctrl+Tab 다음 탭 · Ctrl+Shift+W 탭 닫기 · 탭 우클릭: 다시 연결 · 복제 · 이름 바꾸기 · 다른 탭 닫기'}"
+                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,12,0,0" TextWrapping="Wrap"/>
+
+                        <TextBlock Text="{l:Tr '클라우드 자동 동기화'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
+                        <TextBlock Text="{l:Tr '새 서버·바뀐 IP 를 자동으로 반영합니다. 일부 리전 조회가 실패하면 그 회차에는 지우지 않습니다.'}"
+                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                        <CheckBox x:Name="CloudSyncStartBox" Content="{l:Tr '앱을 시작할 때 전체 동기화'}" Click="OnPrefClick" Margin="0,0,0,10"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{l:Tr '주기적으로 동기화 (분, 0 = 끔, 최소 5)'}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBox x:Name="CloudSyncIntervalBox" Width="90" Tag="0" LostFocus="OnCloudSyncIntervalChanged"/>
+                        </StackPanel>
+
+                        <TextBlock Text="{l:Tr '터미널 테마'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
                         <TextBlock Text="{l:Tr '선택하면 열려 있는 SSH 터미널에도 바로 적용됩니다.'}" Foreground="{StaticResource SubText}" Margin="0,0,0,14"/>
                         <ItemsControl x:Name="ThemeList">
                             <ItemsControl.ItemsPanel>
@@ -637,6 +779,38 @@
                             </TextBlock>
                         </CheckBox>
 
+                        <TextBlock Text="{l:Tr '터미널 글꼴'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
+                        <WrapPanel x:Name="FontPanel"/>
+                        <Button Style="{StaticResource GhostButton}" Content="{l:Tr '다른 글꼴...'}" HorizontalAlignment="Left" Click="OnOtherFont"
+                                ToolTip="{l:Tr '설치된 글꼴 이름을 직접 입력'}"/>
+
+                        <TextBlock Text="{l:Tr '글꼴 크기'}" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,4"/>
+                        <TextBlock Text="{l:Tr '터미널에서 Ctrl+휠 · Ctrl+= · Ctrl+- 로 그 탭만 잠깐 키우고 줄일 수 있습니다 (Ctrl+0 = 원래 크기).'}"
+                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Style="{StaticResource GhostButton}" Content="&#xE738;" FontFamily="{StaticResource IconFont}"
+                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontSmaller"/>
+                            <TextBlock x:Name="FontSizeText" Width="56" TextAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
+                            <Button Style="{StaticResource GhostButton}" Content="&#xE710;" FontFamily="{StaticResource IconFont}"
+                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontBigger"/>
+                        </StackPanel>
+
+                        <TextBlock Text="{l:Tr '터미널 사용'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
+                        <CheckBox x:Name="SmartCopyBox" Click="OnPrefClick" Margin="0,0,0,10">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr 'Ctrl+C 로 복사 · Ctrl+V 로 붙여넣기'}"/>
+                                <Run Text="{l:Tr '  글자를 선택했을 때만 Ctrl+C 가 복사 (선택이 없으면 실행 중인 명령 중단). Windows Terminal 과 같음'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <CheckBox x:Name="PasteConfirmBox" Click="OnPrefClick">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr '여러 줄 붙여넣기 전에 확인'}"/>
+                                <Run Text="{l:Tr '  줄마다 바로 실행되는 사고 방지 (우클릭 붙여넣기 포함)'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
+                        <TextBlock Text="{l:Tr '터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 호스트 검색'}"
+                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,12,0,0" TextWrapping="Wrap"/>
+
                         <TextBlock Text="{l:Tr '구문 강조'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
                         <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
                                    Text="{l:Tr '출력 내용은 그대로 두고 화면에 색만 덧입힙니다. 서버가 이미 색을 준 글자와 vim·htop 같은 전체 화면 프로그램은 건드리지 않습니다.'}"/>
@@ -661,6 +835,12 @@
                         </CheckBox>
 
                         <TextBlock Text="SSH" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
+                        <CheckBox x:Name="SshAutoReconnectBox" Click="OnPrefClick" Margin="0,0,0,10">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr '연결이 끊기면 자동으로 다시 연결'}"/>
+                                <Run Text="{l:Tr '  네트워크 끊김·절전 후 2·4·8·16·32초 간격으로 5번까지 (인증 실패는 다시 시도하지 않음)'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
                         <CheckBox x:Name="SshKeyPromptBox" Click="OnSshKeyPromptClick">
                             <TextBlock>
                                 <Run Text="{l:Tr '처음 접속하는 서버의 호스트키 확인'}"/>
@@ -681,6 +861,7 @@
                                 <Run Text="{l:Tr '  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (셸이 현재 폴더를 알려줄 때 — OSC 7). 안 되면 패널의 터미널 버튼으로 이동'}" Foreground="{StaticResource SubText}"/>
                             </TextBlock>
                         </CheckBox>
+                        <CheckBox x:Name="SftpOpenFolderBox" Click="OnPrefClick" Margin="0,10,0,0" Content="{l:Tr '다운로드가 끝나면 탐색기에서 폴더 열기'}"/>
                         <TextBlock Text="{l:Tr '파일 편집기'}" Margin="0,16,0,4"/>
                         <TextBlock Text="{l:Tr 'SFTP 파일을 더블클릭하면 이 프로그램으로 열고, 저장할 때마다 서버에 자동으로 올린다. 비우면 Windows 기본 프로그램'}"
                                    Foreground="{StaticResource SubText}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
@@ -770,17 +951,6 @@
                             </TextBlock>
                         </CheckBox>
 
-                        <TextBlock Text="{l:Tr '터미널 글꼴'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <WrapPanel x:Name="FontPanel"/>
-
-                        <TextBlock Text="{l:Tr '글꼴 크기'}" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,12"/>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource GhostButton}" Content="&#xE738;" FontFamily="{StaticResource IconFont}"
-                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontSmaller"/>
-                            <TextBlock x:Name="FontSizeText" Width="56" TextAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
-                            <Button Style="{StaticResource GhostButton}" Content="&#xE710;" FontFamily="{StaticResource IconFont}"
-                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontBigger"/>
-                        </StackPanel>
                     </StackPanel>
                 </ScrollViewer>
 
@@ -794,10 +964,22 @@
                         </Border.RenderTransform>
                         <DockPanel>
                             <Grid DockPanel.Dock="Top" Margin="24,20,16,6">
-                                <TextBlock x:Name="EditorTitle" Text="New Host" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="EditorTitle" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" HorizontalAlignment="Right" Click="OnEditorClose"/>
                             </Grid>
 
+                            <TextBlock x:Name="EditorError" DockPanel.Dock="Bottom" Foreground="#F0616D" FontSize="12" Margin="24,0,24,8"
+                                       TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <Trigger Property="Text" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="24,14">
                                 <Grid>
                                     <Button x:Name="DeleteButton" Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}"
@@ -846,7 +1028,16 @@
                                     <TextBox x:Name="EdLabel" Tag="{l:Tr '비워두면 주소가 표시됩니다'}"/>
 
                                     <TextBlock Text="{l:Tr '그룹'}" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="EdGroup" Tag="{l:Tr '예: Production, Staging, Web'}"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="EdGroup" Tag="{l:Tr '예: Production, Staging, Web'}"/>
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="&#xE70D;" FontFamily="{StaticResource IconFont}"
+                                                FontSize="10" Width="38" Height="38" Padding="0" Margin="8,0,0,0" Click="OnPickGroup"
+                                                ToolTip="{l:Tr '기존 그룹에서 고르기'}"/>
+                                    </Grid>
 
                                     <!-- 로그인: Vault 계정(선택) + 직접 입력(비우면 Vault 값) -->
                                     <TextBlock Text="{l:Tr '로그인 계정'}" Style="{StaticResource FieldLabel}"/>

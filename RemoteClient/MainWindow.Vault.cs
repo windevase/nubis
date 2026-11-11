@@ -22,8 +22,21 @@ public partial class MainWindow
     private void RefreshVault()
     {
         var entries = VaultStore.All();
+        // 기본 계정(설정·프로필)으로 쓰는 호스트도 센다
+        var used = _hosts.Select(h => h.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)))
+            .Where(id => id != null).GroupBy(id => id!.Value).ToDictionary(g => g.Key, g => g.Count());
+        var s = SettingsStore.Current;
         foreach (var v in entries)
-            v.UsedBy = _hosts.Count(h => h.VaultId == v.Id);
+        {
+            v.UsedBy = used.GetValueOrDefault(v.Id);
+            v.DefaultBadge = (s.DefaultSshVaultId == v.Id, s.DefaultRdpVaultId == v.Id) switch
+            {
+                (true, true) => L.T("기본 (SSH · RDP)"),
+                (true, false) => L.T("SSH 기본"),
+                (false, true) => L.T("RDP 기본"),
+                _ => "",
+            };
+        }
         VaultList.ItemsSource = entries;
         VaultEmpty.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }

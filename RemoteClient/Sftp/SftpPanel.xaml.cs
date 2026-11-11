@@ -250,19 +250,22 @@ public partial class SftpPanel : UserControl
         try
         {
             var c = await ClientAsync();
-            BeginTransfer(L.T("삭제 중..."), 0);
-            await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink); });
+            var ct = BeginTransfer(L.T("삭제 중..."), 0);
+            await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink, ct); }, ct);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("삭제")); }
         finally { EndTransfer(null); }
         await NavigateAsync(_cwd);
     }
 
-    private static void DeleteRecursive(SftpClient c, string path, bool isDir)
+    /// <summary>항목 하나씩 지우면서 취소 버튼을 확인한다 (이미 지운 것은 되돌릴 수 없음)</summary>
+    private static void DeleteRecursive(SftpClient c, string path, bool isDir, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         if (!isDir) { c.DeleteFile(path); return; }
         foreach (var f in c.ListDirectory(path).Where(f => f.Name is not "." and not ".."))
-            DeleteRecursive(c, f.FullName, f.IsDirectory && !f.IsSymbolicLink);
+            DeleteRecursive(c, f.FullName, f.IsDirectory && !f.IsSymbolicLink, ct);
         c.DeleteDirectory(path);
     }
 

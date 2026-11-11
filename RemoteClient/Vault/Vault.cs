@@ -106,6 +106,9 @@ public sealed class VaultEntry
     /// <summary>이 항목을 쓰는 호스트 수 (목록 표시 때 채움)</summary>
     [JsonIgnore] public int UsedBy { get; set; }
     [JsonIgnore] public string UsedByText => UsedBy == 0 ? L.T("쓰는 호스트 없음") : L.F("호스트 {0}개", UsedBy);
+    /// <summary>설정의 기본 계정이면 "SSH 기본" 등 (목록 표시 때 채움)</summary>
+    [JsonIgnore] public string DefaultBadge { get; set; } = "";
+    [JsonIgnore] public Visibility DefaultBadgeVisibility => DefaultBadge.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     [JsonIgnore] public Visibility CopyVisibility => HasKey && !string.IsNullOrEmpty(PublicKey) ? Visibility.Visible : Visibility.Collapsed;
 }
 
@@ -179,9 +182,9 @@ public static class VaultStore
     /// - SSH 키: 호스트에 키 파일이 없으면 계정의 키(+키 암호). RDP 는 키를 쓰지 않는다
     /// 항목이 지워졌으면 무시한다.
     /// </summary>
-    public static HostEntry Apply(HostEntry copy)
+    public static HostEntry Apply(HostEntry copy, Guid? id = null)
     {
-        if (Get(copy.VaultId) is not { } v) return copy;
+        if (Get(id ?? copy.VaultId) is not { } v) return copy;
         if (string.IsNullOrWhiteSpace(copy.Username)) copy.Username = v.Username;
         if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = v.ProtectedPassword;
         if (copy.Protocol == Protocol.Ssh && string.IsNullOrWhiteSpace(copy.KeyPath) && v.HasKey)

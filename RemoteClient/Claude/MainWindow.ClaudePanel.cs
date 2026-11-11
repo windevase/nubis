@@ -99,7 +99,9 @@ public partial class MainWindow
         {
             var exe = FindClaude();
             if (exe == null)
-                return "cmd.exe /d /k echo " + L.T("Claude Code CLI(claude) 를 찾을 수 없습니다. 설치: npm install -g @anthropic-ai/claude-code");
+                // /c 로 바로 끝내면 패널이 "Enter 키를 누르면 다시 시작" 을 보여 주고, Enter 때 다시 찾는다 (설치 후 앱 재시작 불필요)
+                return "cmd.exe /d /c \"echo " + L.T("Claude Code CLI(claude) 를 찾을 수 없습니다.") + " & echo. & echo   npm install -g @anthropic-ai/claude-code & echo. & echo " +
+                       L.T("설치한 뒤 이 패널에서 Enter 를 누르면 다시 찾습니다.") + "\"";
             var args = $"--mcp-config \"{configPath}\" --settings \"{guardPath}\" --allowedTools mcp__{McpServer.ServerName}";
             // 시작하기의 "Claude 에게 묻기": 첫 질문으로 대화를 시작한다 (한 번만)
             if (_pendingClaudePrompt is { Length: > 0 } first) { args += $" \"{SafePromptArg(first)}\""; _pendingClaudePrompt = null; }

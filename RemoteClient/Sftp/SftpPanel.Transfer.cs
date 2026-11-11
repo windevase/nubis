@@ -36,6 +36,11 @@ public partial class SftpPanel
             DropHintText.Text = L.F("{0} 에 업로드", DropTarget(e));
             DropHint.Visibility = Visibility.Visible;
         }
+        else if (_busy && e.Data.GetDataPresent(DataFormats.FileDrop))
+        {
+            DropHintText.Text = L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 놓아 주세요.");
+            DropHint.Visibility = Visibility.Visible;
+        }
         else DropHint.Visibility = Visibility.Collapsed;
         e.Handled = true;
     }
@@ -45,7 +50,8 @@ public partial class SftpPanel
     private async void OnDrop(object sender, DragEventArgs e)
     {
         DropHint.Visibility = Visibility.Collapsed;
-        if (_busy || _cwd.Length == 0 || IsOwnDrag(e.Data)) return;
+        if (_busy) { ShowBusyHint(); return; }
+        if (_cwd.Length == 0 || IsOwnDrag(e.Data)) return;
         var target = DropTarget(e);
         // 다른 SFTP 패널에서 끌어온 경우 여기서 GetData 가 원본 서버에서 임시 폴더로 받아 온다 (서버 간 복사)
         if (e.Data.GetData(DataFormats.FileDrop) is string[] paths && paths.Length > 0) await UploadAsync(paths, target);
@@ -82,10 +88,17 @@ public partial class SftpPanel
                 else if (File.Exists(p)) files.Add((p, Combine(target, name), new FileInfo(p).Length));
             }
 
-            var existing = await Task.Run(() => localPaths.Select(p => Combine(target, Path.GetFileName(p.TrimEnd('\\')))).Where(c.Exists).ToList());
-            if (existing.Count > 0 && Dialog.Show(Window.GetWindow(this)!,
-                    L.F("이미 있는 항목 {0}개를 덮어쓸까요?\n\n", existing.Count) + string.Join("\n", existing.Take(10)),
-                    L.T("업로드"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            // 이미 있는 파일 (폴더 안의 파일까지): 덮어쓰기 / 건너뛰기 / 취소
+            var existing = await Task.Run(() => files.Where(f => c.Exists(f.Remote)).Select(f => f.Remote).ToHashSet());
+            if (existing.Count > 0)
+            {
+                var choice = Dialog.Choose(Window.GetWindow(this), L.F("서버에 같은 이름의 파일이 {0}개 있습니다.", existing.Count), L.T("업로드"),
+                    L.T("덮어쓰기"), L.T("건너뛰기"), L.T("취소"), MessageBoxImage.Question,
+                    string.Join("\n", existing.Take(15)) + (existing.Count > 15 ? "\n..." : ""));
+                if (choice is -1 or 2) return;
+                if (choice == 1) files = files.Where(f => !existing.Contains(f.Remote)).ToList();
+            }
+            if (files.Count == 0 && dirs.Count == 0) return;
 
             var total = files.Sum(f => f.Size);
             long done = 0;
@@ -96,8 +109,7 @@ public partial class SftpPanel
                 TransferText.Text = L.F("업로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
                 var baseDone = done;
                 var progress = new Progress<Renci.SshNet.UploadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesUploaded, total));
-                await using (var fs = File.OpenRead(local))
-                    await c.UploadFileAsync(fs, remote, true, progress, ct);
+                await UploadOneAsync(c, local, remote, progress, ct);
                 done += size;
                 SetProgress(done, total);
             }
@@ -152,7 +164,7 @@ public partial class SftpPanel
         if (files == null) return;
         if (openWhenDone && files.Count == 1)
             Process.Start(new ProcessStartInfo(files[0]) { UseShellExecute = true });
-        else
+        else if (SettingsStore.Current.SftpOpenFolderAfterDownload)
             Process.Start(new ProcessStartInfo("explorer.exe", $"\"{localDir}\"") { UseShellExecute = true });
     }
 
@@ -189,8 +201,19 @@ public partial class SftpPanel
                 TransferText.Text = L.F("다운로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
                 var baseDone = done;
                 var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesDownloaded, total));
-                await using (var fs = File.Create(local))
-                    await c.DownloadFileAsync(remote, fs, progress, ct);
+                // 받는 중에는 .part 로 쓰고 다 받은 뒤 이름을 바꾼다 (취소·실패 때 반쯤 받은 파일이 남지 않게)
+                var part = local + ".part";
+                try
+                {
+                    await using (var fs = File.Create(part))
+                        await c.DownloadFileAsync(remote, fs, progress, ct);
+                    File.Move(part, local, overwrite: true);
+                }
+                catch
+                {
+                    try { File.Delete(part); } catch { }
+                    throw;
+                }
                 done += size;
                 SetProgress(done, total);
             }
@@ -201,5 +224,62 @@ public partial class SftpPanel
         catch (OperationCanceledException) { EndTransfer(L.T("다운로드를 취소했습니다.")); }
         catch (Exception ex) { EndTransfer(L.F("다운로드 실패: {0}", ex.Message)); }
         return null;
+    }
+
+    private async void ShowBusyHint()
+    {
+        TransferBar.Visibility = Visibility.Visible;
+        var before = TransferText.Text;
+        TransferText.Text = L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
+        await Task.Delay(2500);
+        if (_busy && TransferText.Text == L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 시도하세요.")) TransferText.Text = before;
+    }
+
+    /// <summary>
+    /// 파일 하나 올리기. 취소·실패 때 서버에 반쯤 쓴 파일이 남지 않게:
+    /// - 새 파일: 그대로 올리고, 중간에 멈추면 지운다
+    /// - 이미 있는 파일: 임시 이름으로 올린 뒤 원래 파일의 권한(·소유자)을 옮기고 이름을 바꿔 교체한다. 멈추면 원래 파일은 그대로
+    /// </summary>
+    private static async Task UploadOneAsync(SftpClient c, string local, string remote, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct)
+    {
+        var old = await Task.Run(() => c.Exists(remote) ? c.GetAttributes(remote) : null, ct);
+        var dest = old == null ? remote : remote + ".nubis-upload";
+        try
+        {
+            await using (var fs = File.OpenRead(local))
+                await c.UploadFileAsync(fs, dest, true, progress, ct);
+        }
+        catch
+        {
+            await Task.Run(() => { try { c.DeleteFile(dest); } catch { } });
+            throw;
+        }
+        if (old == null) return;
+
+        await Task.Run(() =>
+        {
+            try
+            {
+                var a = c.GetAttributes(dest);
+                a.OwnerCanRead = old.OwnerCanRead; a.OwnerCanWrite = old.OwnerCanWrite; a.OwnerCanExecute = old.OwnerCanExecute;
+                a.GroupCanRead = old.GroupCanRead; a.GroupCanWrite = old.GroupCanWrite; a.GroupCanExecute = old.GroupCanExecute;
+                a.OthersCanRead = old.OthersCanRead; a.OthersCanWrite = old.OthersCanWrite; a.OthersCanExecute = old.OthersCanExecute;
+                c.SetAttributes(dest, a);
+            }
+            catch { /* 권한을 못 옮겨도 교체는 진행 */ }
+            try
+            {
+                var a = c.GetAttributes(dest);
+                if (a.UserId != old.UserId || a.GroupId != old.GroupId) { a.UserId = old.UserId; a.GroupId = old.GroupId; c.SetAttributes(dest, a); }
+            }
+            catch { /* root 가 아니면 소유자는 못 바꾼다 */ }
+            try { c.RenameFile(dest, remote, true); }   // posix-rename: 원자적 교체 (OpenSSH)
+            catch
+            {
+                // posix-rename 미지원 서버: 원본을 지우고 이름 바꾸기
+                c.DeleteFile(remote);
+                c.RenameFile(dest, remote);
+            }
+        }, CancellationToken.None);
     }
 }

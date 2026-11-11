@@ -74,6 +74,18 @@ public static class SshExec
 {
     private const int MaxOutput = 8000;
 
+    /// <summary>
+    /// 긴 출력은 앞부분 1/4 과 뒷부분 3/4 만 남긴다 (오류·결과는 보통 끝에 있으므로).
+    /// 가운데 생략한 글자 수를 표시한다.
+    /// </summary>
+    public static string ClipOutput(string s, int max)
+    {
+        if (s.Length <= max) return s;
+        var head = max / 4;
+        var tail = max - head;
+        return s[..head] + $"\n... (출력이 길어 가운데 {s.Length - max}자 생략) ...\n" + s[^tail..];
+    }
+
     public static async Task<List<ExecResult>> RunAsync(IEnumerable<HostEntry> hosts, string command, int timeoutSec, CancellationToken ct)
     {
         using var gate = new SemaphoreSlim(10);
@@ -176,6 +188,6 @@ public static class SshExec
     private static string Trim(string? s)
     {
         s ??= "";
-        return s.Length <= MaxOutput ? s : s[..MaxOutput] + $"\n... (출력이 길어 {s.Length - MaxOutput}자 생략)";
+        return ClipOutput(s, MaxOutput);
     }
 }

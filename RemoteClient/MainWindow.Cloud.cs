@@ -41,11 +41,25 @@ public partial class MainWindow
     private void OnGroupHeaderClick(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not HostGroup g) return;
-        g.IsCollapsed = !g.IsCollapsed;
+        if (e.ChangedButton != MouseButton.Left) return;
+        SetGroupCollapsed(g, !g.IsCollapsed);
+        RebuildRows();
+        SaveGroupState();
+    }
+
+    private void SetGroupCollapsed(HostGroup g, bool collapsed)
+    {
+        g.IsCollapsed = collapsed;
         var set = g.IsCloud ? _expandedCloud : _collapsedLocal;
         if (g.IsCloud ^ g.IsCollapsed) set.Add(g.Key); else set.Remove(g.Key);
-        RebuildRows();
     }
+
+    /// <summary>그룹 접힘 상태를 설정에 저장 (다시 시작해도 유지)</summary>
+    private void SaveGroupState() => SettingsStore.UpdateState(s =>
+    {
+        s.CollapsedGroups = _collapsedLocal.ToList();
+        s.ExpandedCloudGroups = _expandedCloud.ToList();
+    });
 
     private async void OnGroupSync(object sender, RoutedEventArgs e)
     {
@@ -58,9 +72,34 @@ public partial class MainWindow
         if ((sender as FrameworkElement)?.DataContext is CloudProfile p) await SyncProfileAsync(p);
     }
 
-    private async void OnSyncAll(object sender, RoutedEventArgs e)
+    private async void OnSyncAll(object sender, RoutedEventArgs e) => await SyncAllAsync();
+
+    private System.Windows.Threading.DispatcherTimer? _cloudSyncTimer;
+
+    /// <summary>설정의 자동 동기화: 앱 시작 때 한 번 · N분마다 (Settings 에서 바꾸면 다시 부른다)</summary>
+    private void StartCloudAutoSync(bool startup = false)
     {
-        if (_profiles.Count == 0) return;
+        var s = SettingsStore.Current;
+        _cloudSyncTimer?.Stop();
+        if (s.CloudSyncIntervalMinutes > 0)
+        {
+            _cloudSyncTimer ??= new System.Windows.Threading.DispatcherTimer();
+            _cloudSyncTimer.Interval = TimeSpan.FromMinutes(Math.Max(5, s.CloudSyncIntervalMinutes));
+            _cloudSyncTimer.Tick -= OnCloudSyncTick;
+            _cloudSyncTimer.Tick += OnCloudSyncTick;
+            _cloudSyncTimer.Start();
+        }
+        if (startup && s.CloudSyncOnStart) _ = SyncAllAsync();
+    }
+
+    private async void OnCloudSyncTick(object? sender, EventArgs e) => await SyncAllAsync();
+
+    private bool _syncingAll;
+
+    private async Task SyncAllAsync()
+    {
+        if (_profiles.Count == 0 || _syncingAll) return;
+        _syncingAll = true;
         SyncAllButton.IsEnabled = false;
         SyncAllButton.Content = L.T("동기화 중...");
         try
@@ -74,6 +113,7 @@ public partial class MainWindow
         }
         finally
         {
+            _syncingAll = false;
             SyncAllButton.IsEnabled = true;
             SyncAllButton.Content = L.T("전체 동기화");
         }
@@ -173,7 +213,11 @@ public partial class MainWindow
 
     private void OnProfileSettings(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not CloudProfile p) return;
+        if ((sender as FrameworkElement)?.DataContext is CloudProfile p) EditProfile(p);
+    }
+
+    private void EditProfile(CloudProfile p)
+    {
         var (oldSsh, oldRdp, oldPublic) = (p.EffectiveSshPort, p.EffectiveRdpPort, p.UsePublicIp);
         if (!ProfileDialog.Edit(this, p)) return;
         // 기본 접속 주소(사설/공인)를 바꾸면 공인 IP 가 있는 서버 전체에 적용
@@ -266,12 +310,25 @@ public partial class MainWindow
             section.Message = L.T("먼저 프로필을 추가하세요. (같은 SSO 포털을 쓰는 프로필은 한 번 로그인으로 모두 사용 가능)");
             return;
         }
-        var cmd = CloudProviders.Get(section.Provider).LoginCommand(p);
+        section.Message = StartLogin(section.Provider, p);
+    }
+
+    /// <summary>그룹 우클릭 "CLI 로그인": 그 프로필로 로그인 (SSO 포털이 여러 개여도 프로필마다 로그인 가능)</summary>
+    private void RunProviderLogin(CloudProfile p)
+    {
+        var msg = StartLogin(p.Provider, p);
+        p.StatusText = msg;
+        SectionOf(p).Message = msg;
+    }
+
+    private static string StartLogin(CloudProvider provider, CloudProfile? p)
+    {
+        var cmd = CloudProviders.Get(provider).LoginCommand(p);
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/k {cmd}") { UseShellExecute = true });
-            section.Message = L.F("새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.", cmd);
+            return L.F("새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.", cmd);
         }
-        catch (Exception ex) { section.Message = L.F("실행 실패: {0}", ex.Message); }
+        catch (Exception ex) { return L.F("실행 실패: {0}", ex.Message); }
     }
 }

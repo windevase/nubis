@@ -16,7 +16,6 @@
   "이 프로필의 서버 목록을 다시 가져옵니다": "Re-fetch the server list for this profile",
   "등록된 호스트가 없습니다": "No hosts yet",
   "NEW HOST 로 SSH / RDP 서버를 추가하거나, 위 검색창에 user@host 를 입력해 바로 접속하세요.": "Add an SSH / RDP server with NEW HOST, or type user@host in the search box above to connect right away.",
-  "여러 호스트가 함께 쓰는 로그인 계정(사용자명 + 비밀번호 / SSH 키)입니다. 호스트 편집의 '로그인 계정' 에서 고르면, 여기서 값을 바꿀 때 그 호스트들에 모두 적용됩니다. Windows DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀립니다.": "Login accounts (username + password / SSH key) shared by multiple hosts. Pick one under 'Login account' when editing a host, and changes made here apply to all of those hosts. Encrypted with Windows DPAPI, so they can only be decrypted on this PC under this Windows account.",
   "계정 추가": "Add account",
   "아직 저장된 계정이 없습니다.": "No saved accounts yet.",
   "공개키 복사": "Copy public key",
