@@ -147,10 +147,10 @@ Accounts, ports and IP choice are not applied to local PowerShell entries. An ac
 | Action | How |
 |---|---|
 | Copy | Select by dragging, then right-click, `Ctrl+Shift+C`, or `Ctrl+C` while text is selected |
-| Paste | Right-click with nothing selected, `Ctrl+V`, `Ctrl+Shift+V` or `Shift+Insert`. Multi-line text asks first with a preview (not when the server has bracketed paste on) |
+| Paste | Right-click with nothing selected, `Ctrl+V`, `Ctrl+Shift+V` or `Shift+Insert`. Multi-line text asks first with a preview (not when the server has bracketed paste on). Inside full-screen programs such as vim or htop, `Ctrl+V` goes to the program (vim block selection and so on) — paste with `Ctrl+Shift+V` |
 | Find in output | `Ctrl+Shift+F` → type, then `Enter` (next) · `Shift+Enter` (previous) · `Esc` |
 | Font size (this tab only) | `Ctrl+wheel`, `Ctrl+=` / `Ctrl+-`, `Ctrl+0` to reset |
-| Reconnect | Press Enter in a disconnected tab, or right-click the tab → Reconnect / Reconnect all disconnected tabs. Automatic reconnect (2·4·8·16·32 s, 5 tries) can be turned on in Settings |
+| Reconnect | Press Enter in a disconnected tab, or right-click the tab → Reconnect / Reconnect all disconnected tabs. Automatic reconnect (2·4·8·16·32 s, 5 tries) can be turned on in Settings — it does not reconnect after a clean `exit` or a rejected host key |
 | Switch tabs | `Ctrl+Tab` / `Ctrl+Shift+Tab`, `Ctrl+1~8` (that tab), `Ctrl+9` (last) — works even when the terminal has focus |
 
 To send `Ctrl+C` / `Ctrl+V` straight to the shell instead, turn them off under Settings → Terminal.
@@ -185,6 +185,7 @@ When you drag out, the download starts the moment you release the mouse button. 
 
 - If files with the same names exist on the server (including inside folders), choose **Overwrite / Skip / Cancel**.
 - An existing file is uploaded under a temporary name, given the original's permissions, then swapped in — so if you cancel or the upload fails, **the original file stays intact**. A new file that stops halfway is removed.
+  - Symbolic links, folders where you can write the file but not create new files (such as some config files), and servers that cannot rename over a file are overwritten in place instead.
 - Downloads are written to `.part` and renamed when complete. Opening File Explorer afterwards can be turned off in Settings.
 - Dropping files during another transfer tells you a transfer is in progress. Deleting can also be cancelled (items already deleted can't be restored).
 
@@ -471,7 +472,7 @@ Settings are saved as soon as you change them. The **Claude** column shows wheth
 
 | Setting | Default | Behavior | Claude |
 |---|---|---|---|
-| Reconnect automatically when disconnected | Off | Up to 5 tries at 2·4·8·16·32 s. Authentication failures are not retried | No |
+| Reconnect automatically when disconnected | Off | When the connection drops with an error: up to 5 tries at 2·4·8·16·32 s. Authentication failures, a clean exit such as `exit`, and rejected host keys are not retried | No |
 | Confirm host keys of new servers | Off | When on, the key of a server you have not seen before is shown in a confirmation prompt. When off, it is saved and you connect. **A changed key always triggers a warning, whatever this setting** | With approval |
 
 ### 11.4 SFTP

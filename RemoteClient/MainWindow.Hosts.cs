@@ -115,14 +115,26 @@ public partial class MainWindow
     /// 검색어 한 단어가 호스트와 맞는지. 이름·주소(사설/공인)·사용자·그룹·프로토콜·인스턴스 ID·리전·OS·용도·프로필 이름.
     /// "vault:이름" 은 그 Vault 계정을 쓰는 호스트 (기본 계정으로 쓰는 경우 포함)
     /// </summary>
+    /// <summary>검색어 한 단어로 쓰는 Vault 이름 (검색어는 공백으로 나뉘므로 공백을 _ 로)</summary>
+    internal static string VaultSearchName(string name) => name.Trim().Replace(' ', '_');
+
+    /// <summary>
+    /// "vault:이름" 검색: 이름이 정확히 같은 Vault 계정이 있으면 그 계정만 (이름이 겹치는 다른 계정 제외),
+    /// 없으면 부분 일치 (사용자가 일부만 입력한 경우)
+    /// </summary>
+    internal static bool VaultNameMatches(string vaultName, string query, IEnumerable<string> allNames)
+    {
+        var vn = VaultSearchName(vaultName);
+        if (string.Equals(vn, query, StringComparison.CurrentCultureIgnoreCase)) return true;
+        return !allNames.Any(n => string.Equals(VaultSearchName(n), query, StringComparison.CurrentCultureIgnoreCase))
+               && vn.Contains(query, StringComparison.CurrentCultureIgnoreCase);
+    }
+
     private static bool MatchesSearch(HostEntry h, string q, Dictionary<Guid, CloudProfile> profiles)
     {
         var profile = h.CloudProfileId is { } pid && profiles.TryGetValue(pid, out var p) ? p : null;
         if (q.StartsWith("vault:", StringComparison.OrdinalIgnoreCase))
-        {
-            var name = q[6..];
-            return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && Contains(v.Name, name);
-        }
+            return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && VaultNameMatches(v.Name, q[6..], VaultStore.All().Select(e => e.Name));
         return Contains(h.DisplayName, q) || Contains(h.Address, q) || Contains(h.PrivateIp, q) || Contains(h.PublicIp, q) ||
                Contains(h.Username, q) || Contains(h.Group, q) || Contains(h.ProtocolText, q) ||
                Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.Purpose, q) ||

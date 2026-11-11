@@ -114,7 +114,7 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry v) return;
         NavHosts.IsChecked = true;
-        SearchBox.Text = "vault:" + v.Name.Split(' ')[0];
+        SearchBox.Text = "vault:" + VaultSearchName(v.Name);
         _searchTimer?.Stop();
         RefreshHosts();
     }

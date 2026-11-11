@@ -205,6 +205,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         try
         {
             _hostKeyAccepted = false;
+            _hostKeyRejected = false;
             await Task.Run(() =>
             {
                 var client = new SshClient(SshAuth.Build(_host, user, password)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
@@ -272,6 +273,14 @@ public sealed class SshSessionView : UserControl, ISessionView
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
         }
+        catch (Exception) when (_hostKeyRejected)
+        {
+            // 사용자가 호스트키를 거부함 — 네트워크 오류가 아니다. 공인 IP 재시도·자동 재연결을 하지 않는다
+            // (공인 IP 는 known_hosts 의 다른 항목이라 확인 없이 새 키로 신뢰돼 경고를 우회하게 된다)
+            _term.Info(L.T("호스트키를 신뢰하지 않아 연결하지 않았습니다. Enter 키를 누르면 다시 시도합니다."), "31");
+            DisposeSsh();
+            SetStatus(SessionStatus.Disconnected);
+        }
         catch (Exception ex) when (_hostKeyAccepted && !_retriedAfterHostKey)
         {
             // 호스트키 확인 창을 읽는 동안 키 교환 시간이 초과될 수 있음 — 키는 저장됐으니 한 번 자동 재시도
@@ -307,7 +316,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         }
     }
 
-    private bool _askCredentials, _hostKeyAccepted, _retriedAfterHostKey, _triedPublic;
+    private bool _askCredentials, _hostKeyAccepted, _hostKeyRejected, _retriedAfterHostKey, _triedPublic;
     private int _autoAttempts;
     private const int MaxAutoAttempts = 5;
 
@@ -368,8 +377,12 @@ public sealed class SshSessionView : UserControl, ISessionView
         var ok = Dispatcher.Invoke(() =>
             Dialog.Show(Window.GetWindow(this), msg, title, MessageBoxButton.YesNo, icon, detail) == MessageBoxResult.Yes);
         if (ok) { KnownHostStore.Set(key, fp); _hostKeyAccepted = true; }
-        // 거부한 키는 기록해 둔다 — Claude 일괄 실행·SFTP 의 "처음 보는 키 자동 신뢰" 가 이 키를 받아들이지 않도록
-        else if (KnownHostStore.Get(key) == null) KnownHostStore.Set(key, KnownHostStore.RejectedMark(fp));
+        else
+        {
+            _hostKeyRejected = true;
+            // 거부한 키는 기록해 둔다 — Claude 일괄 실행·SFTP 의 "처음 보는 키 자동 신뢰" 가 이 키를 받아들이지 않도록
+            if (KnownHostStore.Get(key) == null) KnownHostStore.Set(key, KnownHostStore.RejectedMark(fp));
+        }
         e.CanTrust = ok;
     }
 
@@ -392,7 +405,8 @@ public sealed class SshSessionView : UserControl, ISessionView
         _term.Write("\r\n");
         if (reason != null) _term.Info(L.F("오류: {0}", reason), "31");
         _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"), "33");
-        Dispatcher.BeginInvoke(() => ScheduleAutoReconnect());
+        // 자동 재연결은 오류로 끊긴 경우만. 셸이 정상 종료(exit·logout, reason == null)했으면 다시 붙지 않는다
+        if (reason != null) Dispatcher.BeginInvoke(() => ScheduleAutoReconnect());
     }
 
     private void DisposeSsh()

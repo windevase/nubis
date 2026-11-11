@@ -78,22 +78,11 @@ public partial class MainWindow
             : L.F("'{0}' 의 {1} 호스트 {2}개가 이 계정으로 로그인합니다.", g.Name, proto == Protocol.Rdp ? "RDP" : "SSH", targets.Count);
         if (VaultPickerDialog.Pick(this, current, proto, sub) is not { } id || VaultStore.Get(id) is not { } v) return;
 
-        // 호스트에 직접 적은 값은 Vault 보다 우선 — 지울지 묻는다
-        var own = targets.Where(HasOwnCredentials).ToList();
-        var clearOwn = false;
-        if (own.Count > 0)
-        {
-            var choice = Dialog.Choose(this,
-                L.F("이 중 {0}개 호스트에는 사용자명·비밀번호·키 파일을 직접 적어 두어 그 값이 Vault 보다 우선합니다.\n직접 적은 값을 지우고 '{1}' 계정만 쓸까요?", own.Count, v.Name),
-                L.T("Vault 계정 지정"), L.T("지우고 Vault 계정 사용"), L.T("직접 적은 값 유지"), L.T("취소"),
-                MessageBoxImage.Question, string.Join("\n", own.Take(15).Select(h => h.DisplayName)) + (own.Count > 15 ? "\n..." : ""));
-            if (choice is -1 or 2) return;
-            clearOwn = choice == 0;
-        }
+        if (AskClearOwnCredentials(targets, v) is not { } clearOwn) return;
 
         foreach (var h in targets)
         {
-            if (clearOwn) ClearOwnCredentials(h);
+            if (clearOwn) BulkEdit.ClearCredentials(h);
             // 클라우드 그룹: 호스트는 프로필 기본값을 따르게 비워 둔다
             h.VaultId = g.IsCloud ? null : id;
         }
@@ -107,14 +96,19 @@ public partial class MainWindow
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
     }
 
-    private static bool HasOwnCredentials(HostEntry h) =>
-        !string.IsNullOrWhiteSpace(h.Username) || !string.IsNullOrEmpty(h.ProtectedPassword) || !string.IsNullOrWhiteSpace(h.KeyPath);
-
-    private static void ClearOwnCredentials(HostEntry h)
+    /// <summary>
+    /// Vault 계정을 지정할 호스트 중 직접 적은 계정(그 값이 Vault 보다 우선)이 있으면 지울지 묻는다.
+    /// 지우면 true, 유지하면 false, 취소면 null. 해당 호스트가 없으면 묻지 않고 false
+    /// </summary>
+    private bool? AskClearOwnCredentials(IReadOnlyList<HostEntry> targets, VaultEntry v)
     {
-        h.Username = "";
-        h.ProtectedPassword = null;
-        h.KeyPath = null;
+        var own = targets.Where(BulkEdit.HasOwnCredentials).ToList();
+        if (own.Count == 0) return false;
+        var choice = Dialog.Choose(this,
+            L.F("이 중 {0}개 호스트에는 사용자명·비밀번호·키 파일을 직접 적어 두어 그 값이 Vault 보다 우선합니다.\n직접 적은 값을 지우고 '{1}' 계정만 쓸까요?", own.Count, v.Name),
+            L.T("Vault 계정 지정"), L.T("지우고 Vault 계정 사용"), L.T("직접 적은 값 유지"), L.T("취소"),
+            MessageBoxImage.Question, string.Join("\n", own.Take(15).Select(h => h.DisplayName)) + (own.Count > 15 ? "\n..." : ""));
+        return choice switch { 0 => true, 1 => false, _ => null };
     }
 
     private void ClearGroupVault(HostGroup g)

@@ -256,7 +256,10 @@ public sealed class AppSettings
     public bool ConfirmCloseTab { get; set; } = true;
     /// <summary>여러 줄 붙여넣기 전에 확인</summary>
     public bool ConfirmMultilinePaste { get; set; } = true;
-    /// <summary>터미널: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 (Windows Terminal 방식)</summary>
+    /// <summary>
+    /// 터미널: 선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 (Windows Terminal 방식).
+    /// vim·htop 같은 전체 화면 프로그램 안에서는 Ctrl+V 를 프로그램에 그대로 보낸다
+    /// </summary>
     public bool SmartCopyPaste { get; set; } = true;
     /// <summary>SSH 연결이 끊기면 자동으로 다시 연결 (0 = 끔)</summary>
     public bool SshAutoReconnect { get; set; }

@@ -70,7 +70,9 @@
     setZoom(zoom + (e.deltaY < 0 ? 1 : -1));
   }, { passive: false });
 
-  // 복사/붙여넣기: Ctrl+Shift+C / Ctrl+Shift+V, (설정) 선택 있을 때 Ctrl+C · Ctrl+V, 우클릭(선택 있으면 복사, 없으면 붙여넣기)
+  // 복사/붙여넣기: Ctrl+Shift+C / Ctrl+Shift+V, 우클릭(선택 있으면 복사, 없으면 붙여넣기)
+  // (설정) Ctrl+C 는 선택이 있을 때만 복사, Ctrl+V 는 붙여넣기 — 단 vim·htop 같은 전체 화면 프로그램(대체 화면 버퍼)
+  // 안에서는 Ctrl+V 를 프로그램에 그대로 보낸다 (vim 의 블록 선택 등)
   term.attachCustomKeyEventHandler(ev => {
     if (ev.type !== 'keydown') return true;
     if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyC') {
@@ -81,7 +83,7 @@
     if (ev.shiftKey && ev.code === 'Insert') { requestPaste(); return false; }
     if (smartCopy && ev.ctrlKey && !ev.shiftKey && !ev.altKey) {
       if (ev.code === 'KeyC' && term.hasSelection()) { post({ t: 'copy', d: term.getSelection() }); term.clearSelection(); return false; }
-      if (ev.code === 'KeyV') { requestPaste(); return false; }
+      if (ev.code === 'KeyV' && term.buffer.active.type !== 'alternate') { requestPaste(); return false; }
     }
     // 글자 크기: Ctrl+= / Ctrl+- / Ctrl+0 (이 탭만)
     if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && (ev.code === 'Equal' || ev.code === 'NumpadAdd')) { setZoom(zoom + 1); return false; }
@@ -132,6 +134,21 @@
   }
   function closeFind() { findBox.style.display = 'none'; findPos = null; findCount.textContent = ''; term.clearSelection(); term.focus(); }
 
+  /**
+   * 한 줄의 글자와 각 글자의 화면 칸 위치·폭. 한글·한자 같은 넓은 글자는 2칸이라
+   * 문자열 위치(translateToString)를 그대로 칸 위치로 쓰면 강조가 어긋난다
+   */
+  function lineCells(line) {
+    let s = ''; const col = [], wid = [];
+    for (let x = 0; x < line.length; x++) {
+      const cell = line.getCell(x); if (!cell) break;
+      const w = cell.getWidth(); if (w === 0) continue;   // 넓은 글자의 뒤쪽 칸
+      const ch = cell.getChars() || ' ';
+      for (let k = 0; k < ch.length; k++) { s += ch[k]; col.push(x); wid.push(w); }
+    }
+    return { s: s.replace(/\s+$/, ''), col, wid };
+  }
+
   /** 대소문자 무시, 줄 단위로 찾기. dir: 1 = 아래(다음), -1 = 위(이전) */
   function find(dir) {
     const q = findText.value.toLowerCase();
@@ -141,9 +158,14 @@
     const hits = [];
     for (let y = 0; y < total; y++) {
       const line = b.getLine(y); if (!line) continue;
-      const s = line.translateToString(true).toLowerCase();
+      const c = lineCells(line);
+      const s = c.s.toLowerCase();
       let i = s.indexOf(q);
-      while (i >= 0) { hits.push({ y, x: i }); i = s.indexOf(q, i + 1); }
+      while (i >= 0) {
+        const last = i + q.length - 1;
+        hits.push({ y, x: c.col[i], len: c.col[last] + c.wid[last] - c.col[i] });
+        i = s.indexOf(q, i + 1);
+      }
     }
     if (hits.length === 0) { findCount.textContent = '0'; term.clearSelection(); return; }
     let idx;
@@ -156,7 +178,7 @@
     }
     const h = hits[idx];
     findPos = h;
-    term.select(h.x, h.y, q.length);
+    term.select(h.x, h.y, h.len);
     term.scrollToLine(Math.max(0, h.y - Math.floor(term.rows / 2)));
     findCount.textContent = (idx + 1) + '/' + hits.length;
   }

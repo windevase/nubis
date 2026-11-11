@@ -26,6 +26,9 @@ public partial class MainWindow
     {
         // 클라우드 호스트는 비어 있는 계정을 프로필 기본 계정으로 채우고, 사설/공인 중 실제 접속 주소로
         var host = saved.ForConnection(_profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId), usePublic);
+        // 세션은 주소(공인 IP 재시도)·계정을 바꿔 쓰므로 저장된 원본이 아니라 항상 사본을 넘긴다
+        // (ForConnection 은 바꿀 것이 없으면 원본을 그대로 돌려준다)
+        if (ReferenceEquals(host, saved)) host = saved.Clone();
         var viaPublic = saved.HasPublicIp && host.Address == saved.PublicIp && saved.PublicIp != saved.PrimaryAddress;
         // 접속 때 입력한 계정 저장 (목록에 있는 호스트만. 빠른 접속은 저장 안 함)
         Action<string, string>? save = _hosts.Contains(saved) ? (u, p) => SaveEnteredCredentials(saved, u, p) : null;
@@ -45,18 +48,18 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 접속 때 입력해 로그인에 성공한 계정을 저장. 호스트가 Vault 계정의 비밀번호를 쓰고 있었으면(호스트에 직접 적은
-    /// 비밀번호가 없고 Vault 계정에 비밀번호가 있음) 그 Vault 계정의 비밀번호를 바꾼다 — 서버 비밀번호가 바뀐 경우로,
-    /// 같은 계정을 쓰는 다른 호스트에도 적용된다. 사용자명이 Vault 와 같으면 호스트에는 비워 둔다(계속 Vault 를 따름).
+    /// 접속 때 입력해 로그인에 성공한 계정을 저장. <see cref="CredentialSaveTarget"/> 이 Vault 계정을 고르면 그 계정의
+    /// 비밀번호를 바꾸고(서버 비밀번호가 바뀐 경우 — 같은 계정을 쓰는 다른 호스트에도 적용), 아니면 호스트에만 저장한다.
     /// </summary>
     private void SaveEnteredCredentials(HostEntry saved, string user, string password)
     {
-        var vaultId = saved.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId));
-        if (VaultStore.Get(vaultId) is { HasPassword: true } entry && string.IsNullOrEmpty(saved.ProtectedPassword))
+        var profile = _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
+        if (CredentialSaveTarget(saved, profile, user) is { } entry)
         {
             entry.Password = password;
             SaveVault(entry);
-            saved.Username = user == entry.Username && string.IsNullOrWhiteSpace(saved.Username) ? "" : user;
+            // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
+            if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
         }
         else
         {
@@ -65,6 +68,19 @@ public partial class MainWindow
         }
         SaveHosts();
         RefreshHosts();
+    }
+
+    /// <summary>
+    /// 접속 때 입력한 계정으로 바꿀 Vault 계정. 호스트가 <b>직접 고른</b> Vault 계정의 비밀번호를 쓰고 있었고
+    /// (호스트에 직접 적은 비밀번호 없음) 입력한 사용자명이 그 계정과 같을 때만. 다른 사용자명을 입력했거나
+    /// 프로필·설정의 기본 계정(여러 호스트가 함께 씀)이면 null — 호스트에만 저장해 다른 호스트의 로그인을 깨뜨리지 않는다.
+    /// </summary>
+    internal static VaultEntry? CredentialSaveTarget(HostEntry saved, CloudProfile? profile, string user)
+    {
+        var (vaultId, source) = saved.ResolveVault(profile);
+        if (source != "host" || !string.IsNullOrEmpty(saved.ProtectedPassword)) return null;
+        return VaultStore.Get(vaultId) is { HasPassword: true } entry && string.Equals(user, entry.Username, StringComparison.Ordinal)
+            ? entry : null;
     }
 
     private HostEntry WithProfileDefaults(HostEntry h) =>

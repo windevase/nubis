@@ -43,12 +43,7 @@ public sealed class BulkEdit
         if (remote)
         {
             if (SetVault) h.VaultId = VaultId;
-            if (ClearOwnCredentials)
-            {
-                h.Username = "";
-                h.ProtectedPassword = null;
-                h.KeyPath = null;
-            }
+            if (ClearOwnCredentials) ClearCredentials(h);
             if (Username != null) h.Username = Username.Trim();
             if (Port is >= 1 and <= 65535) h.Port = Port.Value;
             if (UsePublicIp != null && h.HasPublicIp) h.UsePublicIp = UsePublicIp.Value;
@@ -56,5 +51,17 @@ public sealed class BulkEdit
         if (Favorite != null) h.Favorite = Favorite.Value;
 
         return before != (h.Group, h.VaultId, h.Username, h.ProtectedPassword, h.KeyPath, h.Port, h.UsePublicIp, h.Favorite);
+    }
+
+    /// <summary>호스트에 직접 적은 사용자명·비밀번호·키 파일이 있는지 (있으면 그 값이 Vault 보다 우선)</summary>
+    public static bool HasOwnCredentials(HostEntry h) =>
+        !string.IsNullOrWhiteSpace(h.Username) || !string.IsNullOrEmpty(h.ProtectedPassword) || !string.IsNullOrWhiteSpace(h.KeyPath);
+
+    /// <summary>호스트에 직접 적은 사용자명·비밀번호·키 파일을 지운다 (Vault 계정이 쓰이게)</summary>
+    public static void ClearCredentials(HostEntry h)
+    {
+        h.Username = "";
+        h.ProtectedPassword = null;
+        h.KeyPath = null;
     }
 }

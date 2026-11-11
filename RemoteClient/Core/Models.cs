@@ -149,7 +149,7 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// <summary>EffectiveVaultId 와 그 출처 ("host" · "profile" · "default" · null)</summary>
     public (Guid? id, string? source) ResolveVault(CloudProfile? p)
     {
-        if (VaultId != null) return (VaultId, "host");
+        if (VaultId != null && VaultStore.Get(VaultId) != null) return (VaultId, "host");
         if (Protocol == Protocol.Local) return (null, null);
         if (!string.IsNullOrEmpty(ProtectedPassword) || !string.IsNullOrWhiteSpace(KeyPath)) return (null, null);
         var fromProfile = Protocol == Protocol.Rdp ? p?.RdpVaultId : p?.SshVaultId;

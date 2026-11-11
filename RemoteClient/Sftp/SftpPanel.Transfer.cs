@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Renci.SshNet;
+using Renci.SshNet.Common;
 using Renci.SshNet.Sftp;
 
 namespace Nubis;
@@ -239,47 +240,72 @@ public partial class SftpPanel
     /// 파일 하나 올리기. 취소·실패 때 서버에 반쯤 쓴 파일이 남지 않게:
     /// - 새 파일: 그대로 올리고, 중간에 멈추면 지운다
     /// - 이미 있는 파일: 임시 이름으로 올린 뒤 원래 파일의 권한(·소유자)을 옮기고 이름을 바꿔 교체한다. 멈추면 원래 파일은 그대로
+    /// 임시 파일 방식이 안 되는 경우는 원래 파일에 바로 덮어쓴다 (예전 방식):
+    /// - 심볼릭 링크 (이름을 바꾸면 링크가 일반 파일로 바뀜 → 링크가 가리키는 파일에 써야 함)
+    /// - 파일은 쓸 수 있지만 폴더에 새 파일을 못 만드는 곳 (예: /etc/app/config.yml)
+    /// - 이름 바꾸기 실패 — 원본을 먼저 지우지 않는다
     /// </summary>
     private static async Task UploadOneAsync(SftpClient c, string local, string remote, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct)
     {
         var old = await Task.Run(() => c.Exists(remote) ? c.GetAttributes(remote) : null, ct);
-        var dest = old == null ? remote : remote + ".nubis-upload";
-        try
+        if (old == null)
         {
-            await using (var fs = File.OpenRead(local))
-                await c.UploadFileAsync(fs, dest, true, progress, ct);
+            try { await UploadToAsync(c, local, remote, progress, ct); }
+            catch { await Task.Run(() => { try { c.DeleteFile(remote); } catch { } }); throw; }
+            return;
+        }
+        if (old.IsSymbolicLink) { await UploadToAsync(c, local, remote, progress, ct); return; }
+
+        var temp = remote + ".nubis-upload";
+        try { await UploadToAsync(c, local, temp, progress, ct); }
+        catch (OperationCanceledException)
+        {
+            await Task.Run(() => { try { c.DeleteFile(temp); } catch { } });
+            throw;
+        }
+        catch (Exception ex) when (ex is SftpPermissionDeniedException or SftpPathNotFoundException)
+        {
+            // 폴더에 임시 파일을 만들 수 없음 → 원래 파일에 바로 덮어쓰기
+            await Task.Run(() => { try { c.DeleteFile(temp); } catch { } });
+            await UploadToAsync(c, local, remote, progress, ct);
+            return;
         }
         catch
         {
-            await Task.Run(() => { try { c.DeleteFile(dest); } catch { } });
+            await Task.Run(() => { try { c.DeleteFile(temp); } catch { } });
             throw;
         }
-        if (old == null) return;
 
-        await Task.Run(() =>
+        var replaced = await Task.Run(() =>
         {
             try
             {
-                var a = c.GetAttributes(dest);
+                var a = c.GetAttributes(temp);
                 a.OwnerCanRead = old.OwnerCanRead; a.OwnerCanWrite = old.OwnerCanWrite; a.OwnerCanExecute = old.OwnerCanExecute;
                 a.GroupCanRead = old.GroupCanRead; a.GroupCanWrite = old.GroupCanWrite; a.GroupCanExecute = old.GroupCanExecute;
                 a.OthersCanRead = old.OthersCanRead; a.OthersCanWrite = old.OthersCanWrite; a.OthersCanExecute = old.OthersCanExecute;
-                c.SetAttributes(dest, a);
+                c.SetAttributes(temp, a);
             }
             catch { /* 권한을 못 옮겨도 교체는 진행 */ }
             try
             {
-                var a = c.GetAttributes(dest);
-                if (a.UserId != old.UserId || a.GroupId != old.GroupId) { a.UserId = old.UserId; a.GroupId = old.GroupId; c.SetAttributes(dest, a); }
+                var a = c.GetAttributes(temp);
+                if (a.UserId != old.UserId || a.GroupId != old.GroupId) { a.UserId = old.UserId; a.GroupId = old.GroupId; c.SetAttributes(temp, a); }
             }
             catch { /* root 가 아니면 소유자는 못 바꾼다 */ }
-            try { c.RenameFile(dest, remote, true); }   // posix-rename: 원자적 교체 (OpenSSH)
-            catch
-            {
-                // posix-rename 미지원 서버: 원본을 지우고 이름 바꾸기
-                c.DeleteFile(remote);
-                c.RenameFile(dest, remote);
-            }
+            try { c.RenameFile(temp, remote, true); return true; }   // posix-rename: 원자적 교체 (OpenSSH)
+            catch { return false; }
         }, CancellationToken.None);
+        if (replaced) return;
+
+        // posix-rename 미지원 등으로 교체 실패: 원본은 건드리지 않았으니 원본에 바로 덮어쓰고 임시 파일을 지운다
+        try { await UploadToAsync(c, local, remote, progress, ct); }
+        finally { await Task.Run(() => { try { c.DeleteFile(temp); } catch { } }); }
+    }
+
+    private static async Task UploadToAsync(SftpClient c, string local, string path, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct)
+    {
+        await using var fs = File.OpenRead(local);
+        await c.UploadFileAsync(fs, path, true, progress, ct);
     }
 }

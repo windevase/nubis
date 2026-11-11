@@ -159,19 +159,9 @@ public partial class MainWindow
         if (VaultPickerDialog.Pick(this, current, proto, L.F("고른 호스트 {0}개가 이 계정으로 로그인합니다.", targets.Count)) is not { } id
             || VaultStore.Get(id) is not { } v) return;
 
-        // 호스트에 직접 적은 값은 Vault 보다 우선 — 지울지 묻는다 (그룹 일괄 지정과 같은 방식)
-        var edit = new BulkEdit { SetVault = true, VaultId = id };
-        var own = targets.Where(HasOwnCredentials).ToList();
-        if (own.Count > 0)
-        {
-            var choice = Dialog.Choose(this,
-                L.F("이 중 {0}개 호스트에는 사용자명·비밀번호·키 파일을 직접 적어 두어 그 값이 Vault 보다 우선합니다.\n직접 적은 값을 지우고 '{1}' 계정만 쓸까요?", own.Count, v.Name),
-                L.T("Vault 계정 지정"), L.T("지우고 Vault 계정 사용"), L.T("직접 적은 값 유지"), L.T("취소"),
-                MessageBoxImage.Question, string.Join("\n", own.Take(15).Select(h => h.DisplayName)) + (own.Count > 15 ? "\n..." : ""));
-            if (choice is -1 or 2) return;
-            edit.ClearOwnCredentials = choice == 0;
-        }
-        ApplyToSelected(edit, targets);
+        // 호스트에 직접 적은 값은 Vault 보다 우선 — 지울지 묻는다 (그룹 일괄 지정과 같은 창)
+        if (AskClearOwnCredentials(targets, v) is not { } clearOwn) return;
+        ApplyToSelected(new BulkEdit { SetVault = true, VaultId = id, ClearOwnCredentials = clearOwn }, targets);
     }
 
     private void BulkEditSelected()
