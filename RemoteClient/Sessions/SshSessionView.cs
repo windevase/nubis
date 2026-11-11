@@ -40,6 +40,11 @@ public sealed class SshSessionView : UserControl, ISessionView
     private bool _sftpAutoTried;
     /// <summary>셸이 OSC 7 로 마지막에 알려준 현재 폴더</summary>
     private string? _lastCwd;
+    /// <summary>OSC 7 이 없을 때 화면 프롬프트로 알아낸 현재 폴더 (TerminalCwd.Resolve)</summary>
+    private string? _promptCwd;
+    // Enter 뒤 출력이 잠시 멈추면(새 프롬프트가 뜬 것) 화면에서 현재 폴더를 다시 읽는다
+    private readonly System.Windows.Threading.DispatcherTimer _cwdTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
+    private volatile bool _cwdCheckPending;
 
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
     public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
@@ -77,21 +82,41 @@ public sealed class SshSessionView : UserControl, ISessionView
             _lastCwd = cwd;
             if (SettingsStore.Current.SftpFollowTerminal && _sftp is { IsVisible: true }) _ = _sftp.FollowAsync(cwd);
         };
+        _cwdTimer.Tick += async (_, _) => { _cwdTimer.Stop(); await CheckPromptCwdAsync(); };
     }
 
-    /// <summary>패널을 연 뒤, 패널이 열리기 전에 셸이 알려준 현재 폴더가 있으면 그리로</summary>
+    /// <summary>패널을 연 뒤, 패널이 열리기 전에 알아낸 터미널 현재 폴더가 있으면 그리로</summary>
     private async System.Threading.Tasks.Task OpenSftpAsync(SftpPanel panel)
     {
         await panel.OpenAsync();
-        if (SettingsStore.Current.SftpFollowTerminal && _lastCwd != null) await panel.FollowAsync(_lastCwd);
+        if (!SettingsStore.Current.SftpFollowTerminal) return;
+        if ((_lastCwd ?? _promptCwd ?? await TerminalCwdAsync()) is { } cwd) await panel.FollowAsync(cwd);
     }
 
-    /// <summary>터미널 현재 폴더: OSC 7 로 받은 값, 없으면 화면 마지막 프롬프트에서 읽기</summary>
+    /// <summary>터미널 현재 폴더: OSC 7 로 받은 값, 없으면 화면 프롬프트에서 읽기</summary>
     private async System.Threading.Tasks.Task<string?> TerminalCwdAsync()
     {
         if (_lastCwd != null) return _lastCwd;
-        var screen = await _term.ReadBufferAsync(5);
-        return XtermView.PromptPath(screen, _sftp?.Home ?? "/");
+        if (_sftp == null || _sftp.Home == "/") return _promptCwd;   // 홈 폴더를 아직 모름
+        var screen = await _term.ReadBufferAsync(8);
+        return TerminalCwd.Resolve(screen, _sftp.Home, _promptCwd ?? _sftp.Home) ?? _promptCwd;
+    }
+
+    /// <summary>OSC 7 을 보내지 않는 셸(대부분의 서버 기본 bash): 명령 실행 뒤 새 프롬프트에서 폴더를 읽어 따라간다</summary>
+    private async System.Threading.Tasks.Task CheckPromptCwdAsync()
+    {
+        if (!_cwdCheckPending) return;
+        _cwdCheckPending = false;
+        if (_lastCwd != null || !SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true }) return;
+        if (await TerminalCwdAsync() is not { } cwd || cwd == _promptCwd) return;
+        _promptCwd = cwd;
+        await _sftp.FollowAsync(cwd);
+    }
+
+    private void ScheduleCwdCheck()
+    {
+        _cwdTimer.Stop();
+        _cwdTimer.Start();
     }
 
     private FrameworkElement BuildToolStrip()
@@ -153,7 +178,11 @@ public sealed class SshSessionView : UserControl, ISessionView
 
     private void OnInput(string d)
     {
-        if (_shell != null && _status == SessionStatus.Connected) SendRaw(d);
+        if (_shell != null && _status == SessionStatus.Connected)
+        {
+            SendRaw(d);
+            if (d.Contains('\r') && _lastCwd == null) { _cwdCheckPending = true; ScheduleCwdCheck(); }
+        }
         else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r')) _ = ConnectAsync();
     }
 
@@ -244,6 +273,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             SetStatus(SessionStatus.Connected);
             _askCredentials = false;
             _autoAttempts = 0;
+            _promptCwd = null;   // 새 셸은 홈 폴더에서 시작
             _authUser = user;
             _authPassword = password;
             // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
@@ -396,6 +426,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             text = new string(chars);
         }
         _term.Write(text);
+        if (_cwdCheckPending) Dispatcher.BeginInvoke(ScheduleCwdCheck);   // 출력이 이어지는 동안은 미룬다
     }
 
     private void OnDisconnected(string? reason)

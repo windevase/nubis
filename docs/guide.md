@@ -167,11 +167,14 @@ When an SSH sign-in succeeds, the SFTP panel attaches on the left automatically.
 ### 5.1 Browsing
 
 - Type a path, or double-click a folder. Backspace goes up, F5 refreshes, and the home button goes to your home folder.
-- **Follow the terminal folder** — when you `cd` in the terminal, the panel moves to the same folder. This needs the shell to report its current folder (OSC 7). If yours does not, add this to `~/.bashrc` on the server:
+- **Follow the terminal folder** — when you `cd` in the terminal, the panel moves to the same folder. Nubis reads the folder from the prompt after each command, so the default prompts work without any server setup:
+  - `user@host:/path$` (Ubuntu, Debian) — the path is read from the prompt.
+  - `[user@host folder]$` (Amazon Linux, RHEL, CentOS) — only the folder name is shown, so Nubis works out the path from the `cd` you ran and follows only when the name matches. `cd -` and paths with variables are not followed.
+  - For any other prompt, have the shell report its folder (OSC 7) by adding this to `~/.bashrc` on the server. When OSC 7 is present it is always used:
   ```bash
   PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"'
   ```
-  If the shell cannot report it, click the **terminal icon** button in the panel. It reads the path from the prompt (`user@host:/path$`) and moves there.
+  The **terminal icon** button in the panel moves to the terminal folder on demand.
 
 ### 5.2 Upload and download
 
@@ -480,7 +483,7 @@ Settings are saved as soon as you change them. The **Claude** column shows wheth
 | Setting | Default | Behavior | Claude |
 |---|---|---|---|
 | Open the SFTP panel on SSH connect | On | Attaches the SFTP panel on the left after a successful sign-in | Yes |
-| Follow the terminal folder | On | Moves the panel to the current folder the shell reports with OSC 7 | Yes |
+| Follow the terminal folder | On | Moves the panel to the terminal's current folder (read from the prompt, or OSC 7) | Yes |
 | Open the folder in Explorer after downloading | On | Turn off to stop opening the folder after downloads | No |
 | File editor | Windows default app | The program that opens files you double-click. The "VS Code" button sets it in one click | No |
 
@@ -574,7 +577,7 @@ The **Known Hosts** sidebar page lists the host-key fingerprints of SSH servers 
 | The host list is empty | Whether you signed in with a different account (per-account profiles; the sign-in section of Settings shows the current profile). Whether you ran an older version |
 | "Could not read the settings file" | The file was copied from another PC or is damaged. The original is kept as `*.corrupt-<date>` |
 | Warning that the host key changed | If you reinstalled the server, delete the key in Known Hosts and connect again. If not, it may be a man-in-the-middle attack — do not connect |
-| The SFTP panel does not follow the terminal folder | Whether the server shell sends OSC 7 ([5.1](#51-browsing)). Use the terminal icon button in the panel |
+| The SFTP panel does not follow the terminal folder | Customized prompts that show neither the path nor `[user@host folder]` cannot be read — enable OSC 7 ([5.1](#51-browsing)). Use the terminal icon button in the panel |
 | An edited file is not uploaded | Check the status line at the bottom of the panel. You may have chosen "No" because the server file changed, or you may lack permission. Save again to retry |
 | Claude panel says "claude not found" | Run `npm install -g @anthropic-ai/claude-code`, then press Enter in the panel (it looks again) |
 | Claude looks at the wrong tab | The tab you are viewing is sent with each question. Switch tabs, then send a new message |

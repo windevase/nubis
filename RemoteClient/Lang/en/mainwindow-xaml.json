@@ -49,7 +49,7 @@
   "SSH 접속 시 SFTP 패널 자동 열기": "Open SFTP panel automatically on SSH connect",
   "  로그인에 성공하면 왼쪽에 원격 파일 목록을 붙인다": "  After a successful login, shows the remote file list on the left",
   "터미널 폴더 따라가기": "Follow terminal folder",
-  "  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (셸이 현재 폴더를 알려줄 때 — OSC 7). 안 되면 패널의 터미널 버튼으로 이동": "  When you cd in the terminal, the SFTP panel follows (if the shell reports its current folder — OSC 7). Otherwise, use the panel's terminal button",
+  "  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (프롬프트 또는 OSC 7 로 현재 폴더를 읽음). 안 되면 패널의 터미널 버튼으로 이동": "  When you cd in the terminal, the SFTP panel follows (the folder is read from the prompt or OSC 7). Otherwise, use the panel's terminal button",
   "파일 편집기": "File editor",
   "SFTP 파일을 더블클릭하면 이 프로그램으로 열고, 저장할 때마다 서버에 자동으로 올린다. 비우면 Windows 기본 프로그램": "Double-clicking an SFTP file opens it in this program, and each save is uploaded to the server automatically. Leave empty to use the Windows default program",
   "Windows 기본 프로그램": "Windows default program",

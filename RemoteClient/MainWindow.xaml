@@ -858,7 +858,7 @@
                         <CheckBox x:Name="SftpFollowBox" Click="OnSftpOptionClick">
                             <TextBlock TextWrapping="Wrap">
                                 <Run Text="{l:Tr '터미널 폴더 따라가기'}"/>
-                                <Run Text="{l:Tr '  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (셸이 현재 폴더를 알려줄 때 — OSC 7). 안 되면 패널의 터미널 버튼으로 이동'}" Foreground="{StaticResource SubText}"/>
+                                <Run Text="{l:Tr '  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (프롬프트 또는 OSC 7 로 현재 폴더를 읽음). 안 되면 패널의 터미널 버튼으로 이동'}" Foreground="{StaticResource SubText}"/>
                             </TextBlock>
                         </CheckBox>
                         <CheckBox x:Name="SftpOpenFolderBox" Click="OnPrefClick" Margin="0,10,0,0" Content="{l:Tr '다운로드가 끝나면 탐색기에서 폴더 열기'}"/>

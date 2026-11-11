@@ -77,7 +77,7 @@ public partial class SftpPanel : UserControl
         var p = _getTerminalCwd == null ? null : await _getTerminalCwd();
         if (string.IsNullOrEmpty(p))
         {
-            ShowStatus(L.T("터미널 현재 폴더를 알 수 없습니다. 프롬프트가 user@host:/경로$ 형식이 아니고, 셸이 현재 폴더를 알려주지 않습니다(OSC 7)."));
+            ShowStatus(L.T("터미널 현재 폴더를 알 수 없습니다. 프롬프트에서 경로를 읽을 수 없고, 셸이 현재 폴더를 알려주지 않습니다(OSC 7)."));
             return;
         }
         await NavigateAsync(p);

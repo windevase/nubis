@@ -65,7 +65,7 @@ public static class SettingsCatalog
             false, s => s.DefaultRdpPort, v => Int(v, 1, 65535), (s, v) => s.DefaultRdpPort = (int)v),
         new("SftpAutoOpen", "SSH 접속 시 SFTP 패널 자동 열기", "bool", "",
             false, s => s.SftpAutoOpen, Bool, (s, v) => s.SftpAutoOpen = (bool)v),
-        new("SftpFollowTerminal", "SFTP 패널이 터미널 폴더 따라가기", "bool", "셸이 OSC 7 로 현재 폴더를 알려줄 때",
+        new("SftpFollowTerminal", "SFTP 패널이 터미널 폴더 따라가기", "bool", "명령 실행 뒤 프롬프트(user@host:/경로$, [user@host 폴더]$)나 OSC 7 로 현재 폴더를 알아냄",
             false, s => s.SftpFollowTerminal, Bool, (s, v) => s.SftpFollowTerminal = (bool)v),
         // SftpEditor(편집기 프로그램 경로)는 넣지 않는다 — 바꿀 수 있으면 파일을 열 때 임의 프로그램을 실행시키는 통로가 된다
         new("RdpCertWarning", "RDP 서버 인증서 경고", "bool", "끄면 인증서를 확인할 수 없는 서버에도 경고 없이 접속 (보안 설정 — 사용자 승인 필요)",
