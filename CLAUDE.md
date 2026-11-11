@@ -9,12 +9,12 @@ Windows 용 SSH / RDP / SFTP 원격 접속 클라이언트 (WPF, .NET 10). 클�
 ```powershell
 .\build.ps1            # Debug 빌드 후 실행 (RemoteClient\bin\Debug\net10.0-windows\Nubis.exe)
 .\build.ps1 test       # xUnit (tests\Nubis.Tests)
-.\build.ps1 publish    # publish\Nubis.exe 자체 포함 단일 exe (+ wwwroot\) + dist\ 포터블 zip·SHA256SUMS.txt
+.\build.ps1 publish    # publish\ 자체 포함 폴더형 (Nubis.exe + Nubis.dll + 런타임 DLL + wwwroot\) + dist\ 포터블 zip·SHA256SUMS.txt
 ```
 
 - 직접 `dotnet` 을 부를 때는 `$env:DOTNET_ROOT="$env:LOCALAPPDATA\Microsoft\dotnet"` 를 설정해야 빌드된 exe/테스트 exe 가 실행된다.
-- 네이티브 DLL 은 **exe 에 넣지 않는다** (`IncludeNativeLibrariesForSelfExtract=false`, exe 옆에 `*_cor3.dll`·`WebView2Loader.dll` 등). 넣으면 실행 때 `%TEMP%\.net\` 에 풀어 불러오는데, 이 동작을 VirusTotal 샌드박스(CAPE)·SentinelOne 이 악성으로 판정했다.
-- 단일 exe **압축(EnableCompressionInSingleFile)은 쓰지 않는다** — 실행할 때마다 DLL 을 메모리에 풀어 약 100MB 를 더 쓴다. ReadyToRun 도 효과 대비 크기만 커져 뺐다 (exe 약 180MB 가 정상).
+- **단일 파일(PublishSingleFile)은 쓰지 않는다** — 번들 exe 를 백신·샌드박스(VirusTotal CAPE·SentinelOne 등)가 드로퍼로 오탐하는 일이 잦아 0.2.4 이후 폴더형으로 바꿨다. 다시 단일 파일·압축·`IncludeNativeLibrariesForSelfExtract` 로 돌리지 않는다. ReadyToRun 도 효과 대비 크기만 커져 뺐다.
+- 릴리스 VirusTotal 검사는 `tools\vt-scan.ps1` (Nubis.exe·Nubis.dll·zip, 탐지 엔진·진단명을 Actions 실행 요약에 표로). 이미 나온 릴리스 재검사는 `vt-scan` 워크플로 수동 실행.
 - **사용자가 `publish\Nubis.exe` 를 실행 중이면 publish 가 파일 잠금으로 실패한다.** 사용자의 Nubis 를 종료하지 말고, 닫아 달라고 요청한다. 확인:
   `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like '*\publish\Nubis.exe'`
 - 변경 후에는 빌드 경고 0 · 테스트 전체 통과를 확인한다.

@@ -32,7 +32,7 @@ Nubis is a Windows remote-access client. It gathers your cloud servers by profil
 | Item | Details |
 |---|---|
 | OS | Windows 10 / 11 (64-bit) |
-| Runtime | None needed — the release exe is a single file that bundles .NET |
+| Runtime | None needed — the release folder includes .NET |
 | WebView2 | Included with Windows 10/11 (used for the terminal) |
 | Claude panel (optional) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
 | Cloud import (optional) | A credential profile for each cloud you use — the ones created by the `aws`, `tccli`, `gcloud` and `az` CLIs |
@@ -40,10 +40,10 @@ Nubis is a Windows remote-access client. It gathers your cloud servers by profil
 ### 1.2 Installation
 
 1. Extract the release zip (`Nubis-<version>-portable-win-x64.zip`) to any folder.
-2. Run `Nubis.exe` from that folder. Keep the `wwwroot\` folder next to the exe; the terminal needs it.
-3. To build from source, run `.\build.ps1 publish` in the repository. This creates `publish\Nubis.exe`.
+2. Run `Nubis.exe` from that folder. Keep all the files in the folder together (DLLs and `wwwroot\`); the exe does not run on its own.
+3. To build from source, run `.\build.ps1 publish` in the repository. This creates the `publish\` folder.
 
-Nubis is a portable app with no installer. Your data is stored in `%APPDATA%\Nubis`, not in the exe folder, so to update you only replace the exe.
+Nubis is a portable app with no installer. Your data is stored in `%APPDATA%\Nubis`, not in the app folder, so to update you replace the whole app folder with the new one (delete the old folder first rather than extracting over it).
 
 > **Note** Starting with this version, data files are encrypted. After you run the new version once, do not go back to a 0.1.x version. Older versions cannot read the encrypted files and start with an empty list.
 

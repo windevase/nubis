@@ -58,7 +58,7 @@ WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) · [xterm.js](htt
 ```powershell
 .\build.ps1            # Debug build, then run
 .\build.ps1 test       # automated tests
-.\build.ps1 publish    # publish\Nubis.exe + dist\ portable zip
+.\build.ps1 publish    # publish\ (Nubis.exe + DLLs, self-contained) + dist\ portable zip
 ```
 
 ## Code signing policy

@@ -15,6 +15,8 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7   # tools/vt-scan.ps1
+
       - name: 릴리스 파일 받기
         env:
           GH_TOKEN: ${{ github.token }}
@@ -22,12 +24,13 @@ jobs:
           gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p '*.zip' -D scan
           unzip -q scan/*.zip -d scan/x
           cp scan/x/Nubis/Nubis.exe scan/
-          sha256sum scan/*.zip scan/Nubis.exe
+          # 폴더형 배포는 앱 코드가 Nubis.dll 에 있다 (예전 단일 파일 릴리스에는 없음)
+          if [ -f scan/x/Nubis/Nubis.dll ]; then cp scan/x/Nubis/Nubis.dll scan/; fi
+          sha256sum scan/*.zip scan/Nubis.*
 
-      - uses: crazy-max/ghaction-virustotal@v5
-        with:
-          vt_api_key: ${{ secrets.VT_API_KEY }}
-          files: |
-            scan/*.zip
-            scan/Nubis.exe
-          request_rate: 4   # 무료 공개 API 한도 (분당 4회)
+      - name: VirusTotal 검사
+        shell: pwsh
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        # 이미 검사된 파일도 최신 엔진으로 다시 분석한다. 결과는 실행 요약에 표로 남는다
+        run: ./tools/vt-scan.ps1 -Rescan -Path (Get-ChildItem scan -File).FullName

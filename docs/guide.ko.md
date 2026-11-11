@@ -32,7 +32,7 @@ Nubis 는 클라우드 서버를 프로필별로 모아 SSH · RDP · SFTP 로 �
 | 항목 | 내용 |
 |---|---|
 | OS | Windows 10 / 11 (64비트) |
-| 런타임 | 필요 없음 — 배포용 exe 는 .NET 을 포함한 단일 파일 |
+| 런타임 | 필요 없음 — 배포 폴더에 .NET 이 포함되어 있음 |
 | WebView2 | Windows 10/11 에 기본 포함 (터미널 화면에 사용) |
 | Claude 패널 (선택) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
 | 클라우드 가져오기 (선택) | 쓰는 클라우드의 인증 프로필 — `aws`, `tccli`, `gcloud`, `az` CLI 로 만들어 둔 것 |
@@ -40,10 +40,10 @@ Nubis 는 클라우드 서버를 프로필별로 모아 SSH · RDP · SFTP 로 �
 ### 1.2 설치
 
 1. 배포 zip(`Nubis-<버전>-portable-win-x64.zip`)을 원하는 폴더에 풉니다.
-2. 폴더 안의 `Nubis.exe` 를 실행합니다. `wwwroot\` 폴더는 터미널 화면에 쓰이므로 exe 와 같은 폴더에 둡니다.
-3. 소스로 직접 빌드하려면 저장소에서 `.\build.ps1 publish` 를 실행합니다 (`publish\Nubis.exe` 생성).
+2. 폴더 안의 `Nubis.exe` 를 실행합니다. 폴더 안의 파일(DLL 과 `wwwroot\`)은 모두 함께 두어야 하며, exe 만 따로 옮기면 실행되지 않습니다.
+3. 소스로 직접 빌드하려면 저장소에서 `.\build.ps1 publish` 를 실행합니다 (`publish\` 폴더 생성).
 
-설치 프로그램이 없는 포터블 앱입니다. 사용자 데이터는 exe 폴더가 아니라 `%APPDATA%\Nubis` 에 저장되므로, 새 버전은 exe 만 바꾸면 됩니다.
+설치 프로그램이 없는 포터블 앱입니다. 사용자 데이터는 앱 폴더가 아니라 `%APPDATA%\Nubis` 에 저장되므로, 새 버전은 앱 폴더를 통째로 새 것으로 바꾸면 됩니다 (기존 폴더 위에 덮어 풀지 말고 지운 뒤 풉니다).
 
 > **주의** 이 버전부터 데이터 파일이 암호화됩니다. 새 버전으로 한 번 실행한 뒤에는 0.1.x 버전으로 돌아가지 마세요 (암호화된 파일을 읽지 못해 빈 목록으로 시작합니다).
 

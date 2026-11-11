@@ -58,7 +58,7 @@ WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) · WebView2 위의
 ```powershell
 .\build.ps1            # Debug 빌드 후 실행
 .\build.ps1 test       # 자동 테스트
-.\build.ps1 publish    # publish\Nubis.exe + dist\ 포터블 zip
+.\build.ps1 publish    # publish\ (Nubis.exe + DLL, .NET 포함) + dist\ 포터블 zip
 ```
 
 ## 코드 서명 정책

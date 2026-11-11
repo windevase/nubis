@@ -20,6 +20,8 @@
     <Copyright>Copyright (c) 2026 windevase. MIT License.</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <!-- 폴더형 배포: .NET·패키지의 다국어 리소스 폴더(cs, de, ja ...)는 앱이 지원하는 언어만 남긴다 -->
+    <SatelliteResourceLanguages>en;ko</SatelliteResourceLanguages>
   </PropertyGroup>
 
   <ItemGroup>

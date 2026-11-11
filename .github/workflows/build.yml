@@ -51,13 +51,10 @@ jobs:
 
       - name: VirusTotal 검사 (v* 태그)
         if: startsWith(github.ref, 'refs/tags/v') && env.VT_API_KEY != ''
-        uses: crazy-max/ghaction-virustotal@v5
-        with:
-          vt_api_key: ${{ env.VT_API_KEY }}
-          files: |
-            publish/Nubis.exe
-            dist/*.zip
-          request_rate: 4   # 무료 공개 API 한도 (분당 4회)
+        # 검사 결과(탐지 엔진·진단명)는 실행 요약에 표로 남는다. 검사가 실패해도 릴리스 설명 갱신은 계속한다
+        continue-on-error: true
+        shell: pwsh
+        run: ./tools/vt-scan.ps1 -Path publish/Nubis.exe, publish/Nubis.dll, (Get-Item dist/*.zip).FullName
 
       - name: 릴리스 설명에 SHA256 · VirusTotal 링크
         if: startsWith(github.ref, 'refs/tags/v')
