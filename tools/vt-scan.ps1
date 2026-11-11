@@ -41,9 +41,17 @@ function Send-File([string]$File) {
         if ($u.Code -ne 200) { throw "upload_url 실패: HTTP $($u.Code)" }
         $uploadUri = $u.Body.data
     }
-    $r = Invoke-Vt POST $uploadUri @{ file = Get-Item $File }
-    if ($r.Code -ne 200) { throw "업로드 실패: HTTP $($r.Code) $($r.Body.error.message)" }
-    $r.Body.data.id
+    # 업로드는 curl 로 — Invoke-RestMethod -Form 의 multipart(filename* 등)를 대용량 업로드 주소가 HTTP 400 으로 거부했다.
+    # API 키는 명령줄에 남지 않게 헤더 파일로 넘긴다
+    $hdr = New-TemporaryFile; $resp = New-TemporaryFile
+    try {
+        [IO.File]::WriteAllText($hdr, "x-apikey: $($env:VT_API_KEY)")
+        $script:lastCall = Get-Date
+        $code = & curl -sS -o $resp -w "%{http_code}" -H "@$hdr" -F "file=@$((Resolve-Path $File).Path)" $uploadUri
+        $body = Get-Content $resp -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+        if ($code -ne "200") { throw "업로드 실패: HTTP $code $($body.error.message)" }
+        $body.data.id
+    } finally { Remove-Item $hdr, $resp -ErrorAction SilentlyContinue }
 }
 
 function Wait-Analysis([string]$Id) {
