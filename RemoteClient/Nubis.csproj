@@ -22,6 +22,9 @@
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <!-- 폴더형 배포: .NET·패키지의 다국어 리소스 폴더(cs, de, ja ...)는 앱이 지원하는 언어만 남긴다 -->
     <SatelliteResourceLanguages>en;ko</SatelliteResourceLanguages>
+    <!-- PE 헤더에 실제 빌드 시각을 넣는다. 재현 가능 빌드(기본값)는 이 칸에 해시를 넣어
+         샌드박스가 "컴파일 시각 조작(timestomp)" 으로 표시한다 -->
+    <Deterministic>false</Deterministic>
   </PropertyGroup>
 
   <ItemGroup>

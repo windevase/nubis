@@ -54,7 +54,9 @@ jobs:
         # 검사 결과(탐지 엔진·진단명)는 실행 요약에 표로 남는다. 검사가 실패해도 릴리스 설명 갱신은 계속한다
         continue-on-error: true
         shell: pwsh
-        run: ./tools/vt-scan.ps1 -Path publish/Nubis.exe, publish/Nubis.dll, (Get-Item dist/*.zip).FullName
+        # Nubis.dll 은 따로 올리지 않는다 — 샌드박스가 DLL 을 단독 exe 로 실행하다 죽어 의심 행동으로 표시한다.
+        # 앱 코드(Nubis.dll)는 zip 검사에 포함된다
+        run: ./tools/vt-scan.ps1 -Path publish/Nubis.exe, (Get-Item dist/*.zip).FullName
 
       - name: 릴리스 설명에 SHA256 · VirusTotal 링크
         if: startsWith(github.ref, 'refs/tags/v')
@@ -66,7 +68,9 @@ jobs:
           $lines = @('', '### Checksums · VirusTotal', '', '| File | SHA256 | Scan |', '|---|---|---|')
           foreach ($l in Get-Content dist/SHA256SUMS.txt) {
             $hash, $name = $l -split '\s+', 2
-            $lines += "| ``$name`` | ``$hash`` | [VirusTotal](https://www.virustotal.com/gui/file/$hash) |"
+            # Nubis.dll 은 VT 에 따로 올리지 않으므로 해시만 (zip 검사에 포함)
+            $scan = if ($name -like '*Nubis.dll') { 'in zip' } else { "[VirusTotal](https://www.virustotal.com/gui/file/$hash)" }
+            $lines += "| ``$name`` | ``$hash`` | $scan |"
           }
           $body = gh release view $env:GITHUB_REF_NAME --json body --jq .body
           (@($body) + $lines) -join "`n" | Set-Content -Encoding utf8 notes.md

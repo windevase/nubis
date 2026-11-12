@@ -24,8 +24,8 @@ jobs:
           gh release download "${{ inputs.tag }}" -R "${{ github.repository }}" -p '*.zip' -D scan
           unzip -q scan/*.zip -d scan/x
           cp scan/x/Nubis/Nubis.exe scan/
-          # 폴더형 배포는 앱 코드가 Nubis.dll 에 있다 (예전 단일 파일 릴리스에는 없음)
-          if [ -f scan/x/Nubis/Nubis.dll ]; then cp scan/x/Nubis/Nubis.dll scan/; fi
+          # Nubis.dll 은 따로 올리지 않는다 — 샌드박스가 DLL 을 단독 exe 로 실행하다 죽어
+          # 의심 행동으로 표시한다. 앱 코드(Nubis.dll)는 zip 검사에 포함된다
           sha256sum scan/*.zip scan/Nubis.*
 
       - name: VirusTotal 검사
