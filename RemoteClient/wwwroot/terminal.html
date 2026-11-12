@@ -340,10 +340,39 @@
   // 전체 화면 프로그램 종료 등으로 일반 화면으로 돌아오면 이어서 스캔
   term.buffer.onBufferChange(() => queueScan());
 
+  // 프롬프트 감시 (OSC 7 없는 셸의 SFTP 따라가기): Enter 친 줄부터 커서 줄까지를 출력이 그려질 때마다 알려준다.
+  // 그려진 뒤(write 콜백)에 읽으므로 새 프롬프트를 놓치지 않고, Enter 이전 화면(지난 프롬프트)은 보내지 않는다.
+  let watchMark = null, watchUntil = 0, watchQueued = false;
+  function sendWatch() {
+    watchQueued = false;
+    if (!watchMark) return;
+    if (watchMark.isDisposed || performance.now() > watchUntil) { stopWatch(); return; }
+    const b = term.buffer.active;
+    const cur = b.baseY + b.cursorY;
+    if (cur <= watchMark.line) return;   // 아직 Enter 줄에 머무름
+    const out = [];
+    for (let y = Math.max(watchMark.line, cur - 50); y <= cur; y++) {
+      const line = b.getLine(y);
+      if (line) out.push(line.translateToString(true));
+    }
+    post({ t: 'screen', d: out.join('\n') });
+  }
+  function stopWatch() { if (watchMark) watchMark.dispose(); watchMark = null; }
+  function afterWrite() {
+    queueScan();
+    if (watchMark && !watchQueued) { watchQueued = true; requestAnimationFrame(sendWatch); }
+  }
+
   window.chrome.webview.addEventListener('message', e => {
     const m = e.data;
     switch (m.t) {
-      case 'out': term.write(m.d, queueScan); break;
+      case 'out': term.write(m.d, afterWrite); break;
+      case 'watch':
+        // 이미 지켜보는 중이면(앞 명령의 프롬프트가 오기 전에 다음 명령을 친 경우) 시작 줄은 그대로 두고 시간만 늘린다
+        if (!watchMark || watchMark.isDisposed || performance.now() > watchUntil) { stopWatch(); watchMark = term.registerMarker(0); }
+        watchUntil = performance.now() + (m.ms || 10000);
+        break;
+      case 'unwatch': stopWatch(); break;
       case 'paste': term.paste(m.d); break;
       case 'focus': term.focus(); break;
       case 'settings': applySettings(m); break;

@@ -34,6 +34,12 @@ public sealed class XtermView : UserControl
     public event Action<uint, uint>? Resized;
     /// <summary>셸이 OSC 7 로 알려준 현재 폴더 (원격 경로)</summary>
     public event Action<string>? CwdChanged;
+    /// <summary>WatchPrompt 이후 출력이 그려질 때마다: Enter 친 줄부터 커서 줄까지의 화면</summary>
+    public event Action<string>? PromptScreen;
+
+    /// <summary>지금 커서 줄(Enter 친 명령 줄)부터 출력을 지켜보며 PromptScreen 을 올린다 (ms 동안)</summary>
+    public void WatchPrompt(int ms = 10000) => Post(new { t = "watch", ms });
+    public void StopWatchPrompt() => Post(new { t = "unwatch" });
 
     /// <summary>"file://host/home/a%20b" → "/home/a b". 형식이 아니면 null</summary>
     public static string? ParseOsc7(string data)
@@ -187,6 +193,10 @@ public sealed class XtermView : UserControl
 
             case "cwd":
                 if (ParseOsc7(m.GetProperty("d").GetString() ?? "") is { } cwd) CwdChanged?.Invoke(cwd);
+                break;
+
+            case "screen":
+                PromptScreen?.Invoke(m.GetProperty("d").GetString() ?? "");
                 break;
         }
     }

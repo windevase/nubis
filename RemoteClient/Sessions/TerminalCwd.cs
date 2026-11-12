@@ -32,6 +32,9 @@ public static class TerminalCwd
         var name = last.Groups["d"].Value;
         if (name == "~") return home;
         if (name == "/") return "/";
+        // 이름이 지금 폴더와 같으면 그대로 — 이미 옮긴 뒤 같은 화면을 다시 읽어 cd 를 한 번 더 적용하지 않게
+        // (같은 이름의 하위 폴더로 cd 한 경우는 놓친다)
+        if (current != null && Leaf(current) == name) return current;
 
         // 새 프롬프트 바로 위쪽에서 cd 를 실행한 프롬프트 줄 찾기
         for (var i = lines.Count - 2; i >= 0; i--)

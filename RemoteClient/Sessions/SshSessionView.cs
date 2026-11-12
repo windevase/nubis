@@ -42,9 +42,9 @@ public sealed class SshSessionView : UserControl, ISessionView
     private string? _lastCwd;
     /// <summary>OSC 7 이 없을 때 화면 프롬프트로 알아낸 현재 폴더 (TerminalCwd.Resolve)</summary>
     private string? _promptCwd;
-    // Enter 뒤 출력이 잠시 멈추면(새 프롬프트가 뜬 것) 화면에서 현재 폴더를 다시 읽는다
-    private readonly System.Windows.Threading.DispatcherTimer _cwdTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
-    private volatile bool _cwdCheckPending;
+    /// <summary>Enter 뒤 새 프롬프트를 기다리는 중 (XtermView.WatchPrompt)</summary>
+    private bool _watchingPrompt;
+    private string? _lastPromptScreen;
 
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
     public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
@@ -82,7 +82,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _lastCwd = cwd;
             if (SettingsStore.Current.SftpFollowTerminal && _sftp is { IsVisible: true }) _ = _sftp.FollowAsync(cwd);
         };
-        _cwdTimer.Tick += async (_, _) => { _cwdTimer.Stop(); await CheckPromptCwdAsync(); };
+        _term.PromptScreen += OnPromptScreen;
     }
 
     /// <summary>패널을 연 뒤, 패널이 열리기 전에 알아낸 터미널 현재 폴더가 있으면 그리로</summary>
@@ -97,26 +97,34 @@ public sealed class SshSessionView : UserControl, ISessionView
     private async System.Threading.Tasks.Task<string?> TerminalCwdAsync()
     {
         if (_lastCwd != null) return _lastCwd;
-        if (_sftp == null || _sftp.Home == "/") return _promptCwd;   // 홈 폴더를 아직 모름
+        if (_sftp is not { IsOpen: true }) return _promptCwd;   // 홈 폴더를 아직 모름
         var screen = await _term.ReadBufferAsync(8);
         return TerminalCwd.Resolve(screen, _sftp.Home, _promptCwd ?? _sftp.Home) ?? _promptCwd;
     }
 
-    /// <summary>OSC 7 을 보내지 않는 셸(대부분의 서버 기본 bash): 명령 실행 뒤 새 프롬프트에서 폴더를 읽어 따라간다</summary>
-    private async System.Threading.Tasks.Task CheckPromptCwdAsync()
+    /// <summary>Enter 친 뒤: OSC 7 을 보내지 않는 셸(대부분의 서버 기본 bash)이면 새 프롬프트가 그려지길 기다린다</summary>
+    private void OnCommandEntered()
     {
-        if (!_cwdCheckPending) return;
-        _cwdCheckPending = false;
-        if (_lastCwd != null || !SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true }) return;
-        if (await TerminalCwdAsync() is not { } cwd || cwd == _promptCwd) return;
-        _promptCwd = cwd;
-        await _sftp.FollowAsync(cwd);
+        if (_lastCwd != null || !SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true, IsOpen: true }) return;
+        _watchingPrompt = true;
+        _term.WatchPrompt();
     }
 
-    private void ScheduleCwdCheck()
+    /// <summary>
+    /// 출력이 그려질 때마다 (첫 Enter 줄 ~ 커서 줄). 새 프롬프트가 보이면 그 폴더로 따라간다.
+    /// 감시는 마지막 Enter 뒤 일정 시간 이어진다 — 앞 명령의 프롬프트가 오기 전에 다음 cd 를 친 경우도 마지막 프롬프트까지 따라간다.
+    /// </summary>
+    private void OnPromptScreen(string screen)
     {
-        _cwdTimer.Stop();
-        _cwdTimer.Start();
+        if (!_watchingPrompt || _sftp == null) return;
+        if (_lastCwd != null) { _watchingPrompt = false; _term.StopWatchPrompt(); return; }   // 셸이 OSC 7 을 보내기 시작함
+        // 화면이 그대로인데 다시 오는 경우(벨 등) — 같은 cd 를 이미 옮긴 폴더 기준으로 한 번 더 계산하지 않게
+        if (screen == _lastPromptScreen) return;
+        _lastPromptScreen = screen;
+        if (TerminalCwd.Resolve(screen, _sftp.Home, _promptCwd ?? _sftp.Home) is not { } cwd) return;   // 아직 명령 실행 중
+        if (cwd == _promptCwd) return;   // 폴더 그대로 (패널에서 직접 옮겨 둔 위치는 건드리지 않음)
+        _promptCwd = cwd;
+        if (_lastCwd == null && SettingsStore.Current.SftpFollowTerminal && _sftp.IsVisible) _ = _sftp.FollowAsync(cwd);
     }
 
     private FrameworkElement BuildToolStrip()
@@ -181,7 +189,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         if (_shell != null && _status == SessionStatus.Connected)
         {
             SendRaw(d);
-            if (d.Contains('\r') && _lastCwd == null) { _cwdCheckPending = true; ScheduleCwdCheck(); }
+            if (d.Contains('\r')) OnCommandEntered();
         }
         else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r')) _ = ConnectAsync();
     }
@@ -274,6 +282,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _askCredentials = false;
             _autoAttempts = 0;
             _promptCwd = null;   // 새 셸은 홈 폴더에서 시작
+            _lastPromptScreen = null;
             _authUser = user;
             _authPassword = password;
             // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
@@ -426,7 +435,6 @@ public sealed class SshSessionView : UserControl, ISessionView
             text = new string(chars);
         }
         _term.Write(text);
-        if (_cwdCheckPending) Dispatcher.BeginInvoke(ScheduleCwdCheck);   // 출력이 이어지는 동안은 미룬다
     }
 
     private void OnDisconnected(string? reason)

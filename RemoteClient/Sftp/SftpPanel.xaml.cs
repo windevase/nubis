@@ -64,11 +64,13 @@ public partial class SftpPanel : UserControl
 
     /// <summary>원격 홈 폴더 (연결 전이면 "/")</summary>
     public string Home => _home;
+    /// <summary>연결해서 목록을 한 번 이상 열었음 (Home 이 실제 값)</summary>
+    public bool IsOpen => _cwd.Length > 0;
 
-    /// <summary>터미널이 cd 한 폴더로 따라가기 (전송 중이거나 이미 그 폴더면 무시)</summary>
+    /// <summary>터미널이 cd 한 폴더로 따라가기 (전송 중이거나 이미 그 폴더로 가는 중이면 무시)</summary>
     public async Task FollowAsync(string path)
     {
-        if (_busy || _cwd.Length == 0 || path == _cwd) return;
+        if (_busy || _cwd.Length == 0 || path == (_navTarget ?? _cwd)) return;
         await NavigateAsync(path);
     }
 
@@ -111,26 +113,34 @@ public partial class SftpPanel : UserControl
         return client;
     }
 
+    // 이동 요청 번호 — 빠르게 연달아 이동하면(터미널에서 cd 를 이어서 친 경우) 마지막 요청의 목록만 화면에 반영
+    private int _navSeq;
+    private string? _navTarget;
+
     private async Task NavigateAsync(string path)
     {
+        var seq = ++_navSeq;
+        _navTarget = path;
         try
         {
             var c = await ClientAsync();
             var files = await Task.Run(() => c.ListDirectory(path).Where(f => f.Name is not "." and not "..").ToList());
-            var items = await Task.Run(() => files.Select(f =>
+            if (seq != _navSeq) return;
+            // 심볼릭 링크가 폴더인지는 링크마다 서버에 물어야 한다 — 차례로 물으면 /etc·/usr/lib 처럼 링크가 많은 폴더가 느려 병렬로
+            var linkIsDir = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+            await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, f =>
             {
-                var isDir = f.IsDirectory;
-                if (f.IsSymbolicLink)
-                {
-                    try { isDir = c.GetAttributes(f.FullName).IsDirectory; } catch { }
-                }
-                return new SftpItem
-                {
-                    Name = f.Name, FullName = f.FullName, IsDir = isDir, IsLink = f.IsSymbolicLink,
-                    Size = f.Length, Modified = f.LastWriteTime, Perms = Perms(f),
-                };
-            }).OrderByDescending(i => i.IsDir).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList());
+                try { linkIsDir[f.FullName] = c.GetAttributes(f.FullName).IsDirectory; } catch { }
+            }));
+            if (seq != _navSeq) return;
+            var items = files.Select(f => new SftpItem
+            {
+                Name = f.Name, FullName = f.FullName, IsLink = f.IsSymbolicLink,
+                IsDir = f.IsSymbolicLink && linkIsDir.TryGetValue(f.FullName, out var d) ? d : f.IsDirectory,
+                Size = f.Length, Modified = f.LastWriteTime, Perms = Perms(f),
+            }).OrderByDescending(i => i.IsDir).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
+            _navTarget = null;
             _cwd = path;
             PathBox.Text = path;
             FileList.ItemsSource = items;
@@ -138,6 +148,8 @@ public partial class SftpPanel : UserControl
         }
         catch (Exception ex)
         {
+            if (seq != _navSeq) return;   // 더 나중 이동이 진행 중
+            _navTarget = null;
             PathBox.Text = _cwd;
             ShowMessage(L.F("열 수 없습니다: {0}", ex.Message));
         }

@@ -35,12 +35,29 @@ public class TerminalCwdTests
     [InlineData("[root@web app]# cd /\n[root@web /]# ", "/")]
     [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd\n[ec2-user@ip-10-0-0-1 ~]$ ", "/home/ec2-user")]
     [InlineData("[ec2-user@ip-10-0-0-1 app]$ ls\na.txt b.txt\n[ec2-user@ip-10-0-0-1 app]$ ", "/home/ec2-user/app")]
-    [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd nope\n-bash: cd: nope: No such file or directory\n[ec2-user@ip-10-0-0-1 app]$ ", null)]
+    [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd nope\n-bash: cd: nope: No such file or directory\n[ec2-user@ip-10-0-0-1 app]$ ", "/home/ec2-user/app")]   // cd 실패: 그대로
     [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd -\n/tmp\n[ec2-user@ip-10-0-0-1 tmp]$ ", null)]       // 이전 폴더는 알 수 없음
     [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd logs\n[ec2-user@ip-10-0-0-1 logs]$ vi a", null)]    // 명령을 입력 중
     [InlineData("[ec2-user@ip-10-0-0-1 app]$ cd x\n[ec2-user@ip-10-0-0-1 y]$ ", null)]               // 이름이 맞지 않으면 믿지 않음
     public void 프롬프트와_cd_명령으로_현재_폴더를_추정한다(string screen, string? expected) =>
         Assert.Equal(expected, TerminalCwd.Resolve(screen, "/home/ec2-user", "/home/ec2-user/app"));
+
+    [Fact]
+    public void 이미_옮긴_뒤_같은_화면을_다시_읽어도_cd_를_두_번_적용하지_않는다()
+    {
+        const string screen = "[ec2-user@ip-10-0-0-1 app]$ cd logs\n[ec2-user@ip-10-0-0-1 logs]$ ";
+        var first = TerminalCwd.Resolve(screen, "/home/ec2-user", "/home/ec2-user/app");
+        Assert.Equal("/home/ec2-user/app/logs", first);
+        Assert.Equal(first, TerminalCwd.Resolve(screen, "/home/ec2-user", first));
+    }
+
+    [Fact]
+    public void 앞_명령의_프롬프트가_오기_전에_친_cd_도_마지막_프롬프트로_따라간다()
+    {
+        // 감시 화면은 첫 Enter 줄부터 — 프롬프트가 여러 개 보여도 마지막 것
+        const string screen = "demo@test:/$ cd pub\ndemo@test:/pub$ cd example\ndemo@test:/pub/example$ cd ..\ndemo@test:/pub$ ";
+        Assert.Equal("/pub", TerminalCwd.Resolve(screen, "/", "/pub/example"));
+    }
 
     [Theory]
     [InlineData("/a/b", "../c", "/a/c")]
