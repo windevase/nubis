@@ -299,7 +299,9 @@ public sealed class SshSessionView : UserControl, ISessionView
         // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)·질문 진행은 터미널에 보여준다
         var prompter = new AuthPrompter(
             req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
-            banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
+            banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"),
+            _source?.PromptAnswers?.Invoke(),
+            _source?.RememberAnswer is { } rememberAnswer ? (q, a) => Dispatcher.Invoke(() => rememberAnswer(q, a)) : null);
 
         try
         {

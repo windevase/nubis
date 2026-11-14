@@ -8,17 +8,25 @@ using Renci.SshNet.Common;
 namespace Nubis;
 
 /// <summary>서버가 묻는 인증 질문 (keyboard-interactive 의 OTP·비밀번호 변경 등) 한 묶음</summary>
-public sealed record AuthPromptRequest(string Title, string Instruction, IReadOnlyList<AuthPromptField> Fields);
+public sealed record AuthPromptRequest(string Title, string Instruction, IReadOnlyList<AuthPromptField> Fields)
+{
+    /// <summary>입력 창이 채운다: 질문별 "이 답 기억하기" 체크 (CanRemember 인 질문만)</summary>
+    public bool[] Remember { get; } = new bool[Fields.Count];
+}
 
 /// <param name="Secret">입력값을 가린다 (서버가 화면 표시(echo)를 끈 질문)</param>
-public sealed record AuthPromptField(string Label, bool Secret);
+/// <param name="CanRemember">"이 답 기억하기" 를 보여준다 (화면에 보이는 질문만 — OTP 코드처럼 가려지는 값은 기억하지 않음)</param>
+public sealed record AuthPromptField(string Label, bool Secret, bool CanRemember = false);
 
 /// <summary>
 /// 대화형 연결(SSH 탭·SFTP 패널)에서 서버의 인증 질문에 사용자가 답하게 한다.
 /// ask 는 SSH.NET 의 백그라운드 스레드에서 호출되므로 창은 호출하는 쪽이 UI 스레드로 넘겨 띄운다. null 이면 취소.
 /// 이 객체가 없는 비대화형 연결(run_command·SFTP 도구)은 비밀번호로 답할 수 없는 질문을 받으면 바로 실패한다.
 /// </summary>
-public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<string>? banner = null)
+/// <param name="remembered">호스트에 기억해 둔 답 (질문 → 답). 화면에 보이는 질문에만 쓴다</param>
+/// <param name="remember">"이 답 기억하기" 를 고른 답 저장 (null 이면 체크박스를 보이지 않음)</param>
+public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<string>? banner = null,
+    IReadOnlyDictionary<string, string>? remembered = null, Action<string, string>? remember = null)
 {
     /// <summary>인증 단계 대기 시간 — 사용자가 OTP 등을 입력하는 동안 연결 타임아웃(15초)에 걸리지 않게</summary>
     public static readonly TimeSpan AuthTimeout = TimeSpan.FromMinutes(3);
@@ -27,6 +35,8 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
 
     internal string[]? Ask(AuthPromptRequest r) => ask(r);
     internal Action<string>? Banner => banner;
+    internal string? Remembered(string prompt) => remembered != null && remembered.TryGetValue(prompt, out var a) ? a : null;
+    internal Action<string, string>? RememberAnswer => remember;
 
     /// <summary>서버 요구로 비밀번호를 바꿨으면 새 비밀번호 (연결 후 저장값 갱신용)</summary>
     public string? NewPassword { get; internal set; }
@@ -95,20 +105,29 @@ public static class SshAuth
     {
         var prompts = e.Prompts.OrderBy(p => p.Id).ToList();
         var auto = KbdAuth.AutoFill(prompts.Select(p => p.Request).ToList(), password, state);
-        var rest = prompts.Where((_, i) => auto[i] == null).ToList();
         for (var i = 0; i < prompts.Count; i++)
             if (auto[i] != null) prompts[i].Response = auto[i];
 
+        // 호스트에 기억해 둔 답 ("Choose [1] Push, or [2] TOTP" 같은 고정 선택). KbdAuth.CanUseRemembered 참고
+        var memo = new string?[prompts.Count];
+        if (prompter != null)
+            for (var i = 0; i < prompts.Count; i++)
+                if (auto[i] == null && prompter.Remembered(prompts[i].Request.Trim()) is { } a && KbdAuth.CanUseRemembered(prompts[i].IsEchoed, a))
+                    prompts[i].Response = memo[i] = a;
+        var rest = prompts.Where((_, i) => auto[i] == null && memo[i] == null).ToList();
+
         if (prompter != null)
         {
-            // OpenSSH 처럼 서버의 질문을 터미널에 보여준다 — 어느 단계에서 실패했는지 알 수 있게 (답한 값은 쓰지 않음)
-            prompter.LastAnsweredWithSavedPassword = rest.Count == 0 && prompts.Count > 0;
+            // OpenSSH 처럼 서버의 질문을 터미널에 보여준다 — 어느 단계에서 실패했는지 알 수 있게 (비밀번호·가려진 값은 쓰지 않음)
+            prompter.LastAnsweredWithSavedPassword = rest.Count == 0 && auto.Any(x => x != null) && memo.All(x => x == null);
             if (prompter.Banner is { } show)
             {
                 var lines = new List<string>();
                 if (!string.IsNullOrWhiteSpace(e.Instruction)) lines.Add(e.Instruction.Trim());
                 for (var i = 0; i < prompts.Count; i++)
-                    lines.Add(prompts[i].Request.Trim() + "  " + (auto[i] != null ? L.T("(비밀번호로 답함)") : L.T("(입력 창)")));
+                    lines.Add(prompts[i].Request.Trim() + "  " + (auto[i] != null ? L.T("(비밀번호로 답함)")
+                        : memo[i] != null ? (memo[i]!.Length == 0 ? L.T("(기억한 답: 빈 값)") : L.F("(기억한 답: {0})", memo[i]!))
+                        : L.T("(입력 창)")));
                 if (lines.Count > 0) show(string.Join("\n", lines));
             }
         }
@@ -117,10 +136,17 @@ public static class SshAuth
         if (prompter == null)
             throw new SshAuthenticationException(KbdAuth.NonInteractiveError(rest[0].Request, state.PasswordUsed));
 
+        var canRemember = prompter.RememberAnswer != null;
         var req = new AuthPromptRequest(L.T("서버가 추가 인증을 요구합니다"), e.Instruction?.Trim() ?? "",
-            rest.Select(p => new AuthPromptField(p.Request.Trim(), !p.IsEchoed)).ToList());
+            rest.Select(p => new AuthPromptField(p.Request.Trim(), !p.IsEchoed, canRemember)).ToList());
         var answers = prompter.Ask(req) ?? throw new SshAuthenticationException(L.T("인증 입력이 취소되었습니다."));
-        for (var i = 0; i < rest.Count; i++) rest[i].Response = i < answers.Length ? answers[i] : "";
+        for (var i = 0; i < rest.Count; i++)
+        {
+            var answer = i < answers.Length ? answers[i] : "";
+            rest[i].Response = answer;
+            if (req.Remember[i] && KbdAuth.CanUseRemembered(rest[i].IsEchoed, answer))
+                prompter.RememberAnswer?.Invoke(rest[i].Request.Trim(), answer);
+        }
     }
 
     /// <summary>서버가 비밀번호 만료를 알림 (SSH_MSG_USERAUTH_PASSWD_CHANGEREQ) — 대화형이면 새 비밀번호를 받는다</summary>
@@ -241,6 +267,12 @@ public static class KbdAuth
         @"\bnew\b|re-?enter|re-?type|again|confirm|repeat|verif|\botp\b|one[- ]?time|token|\bcode\b|passcode|\bpin\b|2fa|mfa|duo|authenticator|" +
         @"새\s*(비밀|암호)|다시|확인|변경|일회용|인증\s*(번호|코드)|토큰|보안\s*코드",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 기억한 답을 쓰거나 저장해도 되는가: 화면에 보이는 질문의 답, 또는 가려진 질문이라도 빈 답("Press enter ...")만.
+    /// 가려진 질문의 실제 값(OTP 코드·비밀번호)은 기억하지 않는다.
+    /// </summary>
+    public static bool CanUseRemembered(bool echoed, string answer) => echoed || answer.Length == 0;
 
     /// <summary>로그인 비밀번호를 묻는 질문인가 ("Password:", "(current) UNIX password:", "비밀번호:")</summary>
     public static bool IsPasswordPrompt(string request) =>

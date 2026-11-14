@@ -1107,6 +1107,17 @@
                                         <TextBlock x:Name="KeyHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     </StackPanel>
+
+                                    <!-- SSH 인증 질문에 기억해 둔 답 (예: Choose [1] Push → 1) -->
+                                    <Grid x:Name="RememberedPanel" Margin="0,14,0,0" Visibility="Collapsed">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="RememberedText" FontSize="11" Foreground="{StaticResource SubText}" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="{l:Tr '지우기'}" Margin="8,0,0,0" Height="30"
+                                                Click="OnClearRemembered"/>
+                                    </Grid>
                                 </StackPanel>
                             </ScrollViewer>
                         </DockPanel>

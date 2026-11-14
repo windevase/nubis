@@ -35,7 +35,13 @@ public partial class MainWindow
         // 다시 연결할 때 저장된 호스트·Vault 의 최신 계정을 반영 (탭을 연 뒤 Vault 비밀번호를 고친 경우)
         CloudProfile? Profile() => _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
         var source = _hosts.Contains(saved)
-            ? new SessionSource(() => saved.ForConnection(Profile(), usePublic), () => saved.CredentialSourceText(Profile()))
+            ? new SessionSource(() => saved.ForConnection(Profile(), usePublic), () => saved.CredentialSourceText(Profile()),
+                () => saved.PromptAnswers, (question, answer) =>
+                {
+                    // "Choose [1] Push, or [2] TOTP" 같은 고정 선택을 이 호스트에 기억 (호스트 편집에서 지울 수 있음)
+                    (saved.PromptAnswers ??= [])[question] = answer;
+                    SaveHosts();
+                })
             : null;
         FrameworkElement view = host.Protocol == Protocol.Ssh ? new SshSessionView(host, save, source) : new RdpSessionView(host, save, source);
         var title = host.Protocol == Protocol.Ssh && !string.IsNullOrWhiteSpace(host.Username) && string.IsNullOrWhiteSpace(host.Label)

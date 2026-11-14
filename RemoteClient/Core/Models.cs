@@ -28,6 +28,11 @@ public sealed class HostEntry : INotifyPropertyChanged
     public Guid? VaultId { get; set; }
     /// <summary>RDP: RD 게이트웨이 ("host" 또는 "host:port"). 비우면 mstsc 의 Default.rdp 게이트웨이 설정을 따른다</summary>
     public string? RdpGateway { get; set; }
+    /// <summary>
+    /// SSH 인증 질문에 기억해 둔 답 (질문 → 답). "Choose [1] Push, or [2] TOTP" 같은 고정 선택만 —
+    /// 가려진 질문은 빈 답만 저장한다 (KbdAuth.CanUseRemembered). hosts.json 은 파일 전체가 DPAPI 암호화
+    /// </summary>
+    public Dictionary<string, string>? PromptAnswers { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }

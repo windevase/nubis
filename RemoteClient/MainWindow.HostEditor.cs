@@ -45,6 +45,8 @@ public partial class MainWindow
         EdKey.Text = h?.KeyPath ?? "";
         EdGateway.Text = h?.RdpGateway ?? "";
         _edVaultId = h?.VaultId;
+        _edClearAnswers = false;
+        UpdateRememberedUi(h);
         UpdateAuthUi();
         _editorSnapshot = EditorSnapshot();
 
@@ -62,7 +64,7 @@ public partial class MainWindow
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
     private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
-        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId);
+        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId, _edClearAnswers);
 
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
@@ -183,6 +185,26 @@ public partial class MainWindow
         return L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.");
     }
 
+    // 저장할 때 기억한 인증 답을 지울지 (지우기 버튼)
+    private bool _edClearAnswers;
+
+    /// <summary>기억한 인증 답 안내 ("Choose [1] Push, or [2] TOTP: → 1" 등). 없거나 지우기를 눌렀으면 숨긴다</summary>
+    private void UpdateRememberedUi(HostEntry? h)
+    {
+        var answers = _edClearAnswers ? null : h?.PromptAnswers;
+        RememberedPanel.Visibility = answers is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        if (answers is not { Count: > 0 }) return;
+        var sample = answers.First();
+        RememberedText.Text = L.F("서버 인증 질문에 기억한 답 {0}개 — 예: {1} → {2}", answers.Count, sample.Key.TrimEnd(':', ' '),
+            sample.Value.Length == 0 ? L.T("(빈 값)") : sample.Value);
+    }
+
+    private void OnClearRemembered(object sender, RoutedEventArgs e)
+    {
+        _edClearAnswers = true;
+        UpdateRememberedUi(_editing);
+    }
+
     private void OnPickVault(object sender, RoutedEventArgs e)
     {
         var proto = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
@@ -243,6 +265,7 @@ public partial class MainWindow
         h.Password = EdPassword.Password;
         h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
         h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
+        if (_edClearAnswers) h.PromptAnswers = null;
 
         if (_editing == null) _hosts.Add(h);
         _template = null;

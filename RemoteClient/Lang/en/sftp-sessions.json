@@ -135,6 +135,13 @@
   "이 호스트에 저장된 계정": "account saved on this host",
   "클라우드 프로필 기본 계정": "cloud profile's default account",
   "로그인 계정: {0}": "Sign-in account: {0}",
+  "빈 답을 기억하고 다음부터 묻지 않기": "Remember the empty answer and don't ask again",
+  "이 답을 기억하고 다음부터 묻지 않기": "Remember this answer and don't ask again",
+  "(기억한 답: 빈 값)": "(remembered answer: empty)",
+  "(기억한 답: {0})": "(remembered answer: {0})",
+  "서버 인증 질문에 기억한 답 {0}개 — 예: {1} → {2}": "{0} remembered answer(s) to server sign-in questions — e.g. {1} → {2}",
+  "(빈 값)": "(empty)",
+  "지우기": "Clear",
   "[sudo] {0} 의 비밀번호": "[sudo] password for {0}",
   "터미널을 따라 sudo 로 이 사용자 권한으로 열었습니다. 올린 파일의 소유자도 이 사용자가 됩니다.": "Opened as this user with sudo, following the terminal. Uploaded files will also be owned by this user."
 }

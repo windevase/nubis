@@ -58,6 +58,16 @@ public class KbdAuthTests
         Assert.False(state.PasswordUsed);
     }
 
+    // 기억해도 되는 답: 화면에 보이는 질문의 답, 가려진 질문은 빈 답("Press enter to send Push request")만
+    [Theory]
+    [InlineData(true, "1", true)]
+    [InlineData(true, "", true)]
+    [InlineData(false, "", true)]
+    [InlineData(false, "123456", false)]   // OTP 코드
+    [InlineData(false, "pw", false)]
+    public void 가려진_질문의_실제_값은_기억하지_않는다(bool echoed, string answer, bool expected) =>
+        Assert.Equal(expected, KbdAuth.CanUseRemembered(echoed, answer));
+
     [Fact]
     public void 비대화형_오류는_원인을_구분한다()
     {
