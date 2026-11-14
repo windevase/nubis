@@ -4,6 +4,8 @@ using Xunit;
 
 namespace Nubis.Tests;
 
+// SshAgent.PipeOverride · SshAuth.DefaultKeyDir 를 바꾸는 테스트와 같이 돌지 않게
+[Collection("ssh-agent")]
 public class KbdAuthTests
 {
     [Theory]
@@ -112,16 +114,36 @@ public class KbdAuthTests
         Assert.Single(m.KeyFiles);
     });
 
+    [Fact]
+    public void 에이전트가_없으면_빈_목록이다() => WithKeyDir(_ =>
+    {
+        Assert.Empty(SshAgent.ListKeys(50));
+        Assert.Null(SshAgent.KeySource());
+    });
+
+    // RSA 는 SHA-2 서명만 (ssh-rsa = SHA-1 은 OpenSSH 도 기본으로 끔), DSA 는 쓰지 않음
+    [Theory]
+    [InlineData("ssh-rsa", "rsa-sha2-512,rsa-sha2-256")]
+    [InlineData("ssh-ed25519", "ssh-ed25519")]
+    [InlineData("ecdsa-sha2-nistp256", "ecdsa-sha2-nistp256")]
+    [InlineData("ssh-rsa-cert-v01@openssh.com", "rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256-cert-v01@openssh.com")]
+    [InlineData("ssh-dss", "")]
+    public void 에이전트_키의_서명_알고리즘(string keyType, string expected) =>
+        Assert.Equal(expected, string.Join(",", SshAgent.SignatureAlgorithms(keyType).Select(a => a.Name)));
+
     private static void WithKeyDir(System.Action<string> body)
     {
         var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Nubis.Tests.sshdir", System.Guid.NewGuid().ToString("N"));
         System.IO.Directory.CreateDirectory(dir);
         var old = SshAuth.DefaultKeyDir;
+        var oldPipe = SshAgent.PipeOverride;
         SshAuth.DefaultKeyDir = dir;
+        SshAgent.PipeOverride = "nubis-tests-no-agent-" + System.Guid.NewGuid().ToString("N");   // 이 PC 의 실제 ssh-agent 를 쓰지 않게
         try { body(dir); }
         finally
         {
             SshAuth.DefaultKeyDir = old;
+            SshAgent.PipeOverride = oldPipe;
             try { System.IO.Directory.Delete(dir, true); } catch { }
         }
     }

@@ -79,7 +79,14 @@ public static class SshAuth
         // 다음 질문에 답하지 못해 실패하고, 그 실패 때문에 이어지는 keyboard-interactive 까지 거부된다 (OpenSSH 는 되는데 Nubis 만 실패).
         var methods = new List<AuthenticationMethod>();
         if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
-        else if (LoadDefaultKeys() is { Length: > 0 } defaults) methods.Add(new PrivateKeyAuthenticationMethod(user, defaults));
+        else
+        {
+            // 키를 지정하지 않았으면 OpenSSH 처럼 ssh-agent 의 키 → ~/.ssh 기본 키 순으로
+            var sources = new List<IPrivateKeySource>();
+            if (SshAgent.KeySource() is { } agent) sources.Add(agent);
+            sources.AddRange(LoadDefaultKeys());
+            if (sources.Count > 0) methods.Add(new PrivateKeyAuthenticationMethod(user, sources.ToArray()));
+        }
         if (!string.IsNullOrEmpty(password) || prompter != null)
         {
             var kbd = new KeyboardInteractiveAuthenticationMethod(user);
@@ -198,11 +205,11 @@ public static class SshAuth
     /// 호스트·Vault 에 키가 없을 때 OpenSSH 처럼 ~/.ssh 의 기본 키를 시도한다 (ssh host 는 되는데 Nubis 는 비밀번호를 묻는 차이 방지).
     /// 암호가 걸린 키·읽을 수 없는 키는 건너뛴다 (묻지 않음 — 쓰려면 호스트나 Vault 에 키와 암호를 지정).
     /// </summary>
-    /// <summary>기본 키 파일이 하나라도 있는가 (비밀번호가 없어도 먼저 키로 시도해 볼지)</summary>
+    /// <summary>기본 키 파일이나 ssh-agent 키가 하나라도 있는가 (비밀번호가 없어도 먼저 키로 시도해 볼지)</summary>
     public static bool HasDefaultKeyFiles()
     {
         var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
-        return DefaultKeyNames.Any(n => System.IO.File.Exists(System.IO.Path.Combine(dir, n)));
+        return DefaultKeyNames.Any(n => System.IO.File.Exists(System.IO.Path.Combine(dir, n))) || SshAgent.ListKeys().Count > 0;
     }
 
     public static IPrivateKeySource[] LoadDefaultKeys()
