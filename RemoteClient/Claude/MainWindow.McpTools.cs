@@ -291,12 +291,16 @@ public partial class MainWindow
         yield return new McpTool("send_to_terminal",
             "열려 있는 SSH/로컬 세션의 대화형 터미널에 텍스트를 입력한다 (사용자가 보는 화면에 그대로 타이핑). " +
             "실행 전에 앱이 사용자 승인을 받는다 — 사용자가 '읽기 전용 명령은 승인 없이 실행' 을 켰고, 화면이 셸 프롬프트이고, 읽기 전용 명령이면 승인 없이 입력한다. " +
-            "현재 폴더·사용자는 이 도구 대신 get_terminal_info 로 확인할 것. 결과는 wait_for_output 으로 확인.",
+            "현재 폴더·사용자는 이 도구 대신 get_terminal_info 로 확인할 것. " +
+            "Enter 로 실행하면 셸 프롬프트가 다시 나올 때까지(최대 wait_sec, 기본 10초) 기다려 출력을 함께 돌려준다 — 따로 wait_for_output 을 부를 필요 없음. " +
+            "그 안에 끝나지 않으면 '아직 실행 중' 과 현재 화면을 돌려주니 그때 wait_for_output 으로 이어서 기다린다.",
             Schema(new
             {
                 session_id = new { type = "integer", description = "생략 시 현재 탭" },
                 text = new { type = "string" },
                 press_enter = new { type = "boolean", description = "끝에 Enter 입력 (기본 true)" },
+                wait_sec = new { type = "number", description = "프롬프트가 돌아올 때까지 기다릴 최대 초 (기본 10, 0 이면 기다리지 않음)" },
+                lines = new { type = "integer", description = "돌려줄 출력 줄 수 (기본 60)" },
             }, "text"),
             a => OnUiAsync(async () =>
             {
@@ -315,12 +319,38 @@ public partial class MainWindow
                     AuditLog.Write("send_to_terminal", new[] { target }, text, "거부");
                     throw new McpToolException("사용자가 입력을 거부했습니다.");
                 }
+                var before = await tab.Session.ReadTerminalAsync(200) ?? "";
                 var ok = tab.Session.SendText(text + (enter ? "\r" : ""));
                 AuditLog.Write("send_to_terminal", new[] { target }, text,
                     ok ? (auto ? "자동 승인(읽기 전용)·입력" : "승인·입력") : "실패(세션 끊김)");
                 if (!ok) throw new McpToolException("세션이 연결되어 있지 않아 입력하지 못했습니다.");
                 SelectTab(tab);
-                return (auto ? "읽기 전용 명령이라 승인 없이 입력했습니다. " : "입력했습니다. ") + "wait_for_output 으로 결과를 확인하세요.";
+                var head = auto ? "읽기 전용 명령이라 승인 없이 입력했습니다." : "입력했습니다.";
+
+                // 결과까지 기다려 함께 돌려준다 (Claude 가 wait_for_output 을 따로 부르는 왕복을 줄임):
+                // 화면이 바뀌고, 0.3초 동안 그대로이고, 셸 프롬프트로 돌아오면 끝
+                var waitSec = a.ValueKind == JsonValueKind.Object && a.TryGetProperty("wait_sec", out var ws) && ws.TryGetDouble(out var wv) ? Math.Clamp(wv, 0, 120) : 10;
+                var lines = Math.Clamp(IntArg(a, "lines") ?? 60, 1, 2000);
+                if (!enter || waitSec <= 0) return head + " 결과는 wait_for_output 으로 확인하세요.";
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                string last = before;
+                var lastChange = sw.Elapsed;
+                while (sw.Elapsed.TotalSeconds < waitSec)
+                {
+                    await Task.Delay(150);
+                    if (!_tabs.Contains(tab)) throw new McpToolException("기다리는 동안 탭이 닫혔습니다.");
+                    var now = await tab.Session.ReadTerminalAsync(200) ?? "";
+                    if (now != last) { last = now; lastChange = sw.Elapsed; continue; }
+                    if (now != before && sw.Elapsed - lastChange >= TimeSpan.FromMilliseconds(300) && await tab.Session.IsAtPromptAsync())
+                        return $"{head} 끝났습니다 ({sw.Elapsed.TotalSeconds:0.0}초).\n[session {tab.Id}: {tab.Title}]\n" +
+                               string.Join("\n", now.Split('\n').TakeLast(lines));
+                    // 앱이 알아보지 못하는 프롬프트(zsh 테마 등)여도 출력이 1.5초 멈추면 돌려준다
+                    if (now != before && sw.Elapsed - lastChange >= TimeSpan.FromSeconds(1.5))
+                        return $"{head} 출력이 1.5초 동안 멈췄습니다 ({sw.Elapsed.TotalSeconds:0.0}초, 끝났는지는 화면으로 판단).\n[session {tab.Id}: {tab.Title}]\n" +
+                               string.Join("\n", now.Split('\n').TakeLast(lines));
+                }
+                return $"{head} {waitSec:0.#}초 안에 셸 프롬프트로 돌아오지 않았습니다 (아직 실행 중이거나 입력을 기다리는 중). " +
+                       $"wait_for_output 으로 이어서 기다리세요.\n[session {tab.Id}: {tab.Title}]\n" + string.Join("\n", last.Split('\n').TakeLast(lines));
             }));
     }
 

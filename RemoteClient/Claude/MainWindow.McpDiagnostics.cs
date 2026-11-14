@@ -98,9 +98,24 @@ public partial class MainWindow
         var lastChange = DateTime.UtcNow;
         var sw = Stopwatch.StartNew();
         string outcome;
+        // 짧은 명령은 이 도구를 부르기 전에 이미 끝나 있다 — 새 출력이 없어도 화면이 셸 프롬프트면 바로 끝낸다
+        // (예전에는 새 출력만 기다려 ls 같은 명령 뒤에 제한 시간(60초)까지 버텼다)
+        if (pattern.Length == 0 && await OnUiAsync(async () => await tab.Session.IsAtPromptAsync()))
+        {
+            await Task.Delay(150);
+            var again = await Read(scan);
+            if (again == start)
+            {
+                AuditLog.Write("wait_for_output", new[] { $"session {tab.Id}: {tab.Title}" }, "(idle)", "조회");
+                return $"[session {tab.Id}: {tab.Title}] 이미 끝나 셸 프롬프트로 돌아와 있습니다 ({sw.Elapsed.TotalSeconds:0.0}초)\n" +
+                       string.Join("\n", start.Split('\n').TakeLast(lines));
+            }
+            last = again;
+            lastChange = DateTime.UtcNow;
+        }
         while (true)
         {
-            await Task.Delay(400);
+            await Task.Delay(200);
             if (!await OnUi(() => _tabs.Contains(tab))) throw new McpToolException("기다리는 동안 탭이 닫혔습니다.");
             var now = await Read(scan);
             if (now != last) { last = now; lastChange = DateTime.UtcNow; }
@@ -109,6 +124,9 @@ public partial class MainWindow
                 if (McpHelpers.CountMatches(now, pattern, regex) > baseline) { outcome = $"'{pattern}' 이(가) 나타났습니다"; break; }
             }
             else if (now != start && DateTime.UtcNow - lastChange >= idle) { outcome = $"출력이 {idle.TotalSeconds:0.#}초 동안 멈췄습니다"; break; }
+            // 출력이 멈추고 프롬프트로 돌아왔으면 idle 시간을 다 채우지 않아도 끝
+            else if (now != start && DateTime.UtcNow - lastChange >= TimeSpan.FromMilliseconds(300) &&
+                     await OnUiAsync(async () => await tab.Session.IsAtPromptAsync())) { outcome = "끝나서 셸 프롬프트로 돌아왔습니다"; break; }
             if (sw.Elapsed >= timeout)
             {
                 outcome = pattern.Length > 0 ? $"{timeout.TotalSeconds:0}초 안에 '{pattern}' 이(가) 나타나지 않았습니다 (시간 초과)"
