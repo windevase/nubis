@@ -37,6 +37,8 @@ public sealed class HostEntry : INotifyPropertyChanged
     public Guid? JumpHostId { get; set; }
     /// <summary>접속용 사본에만: 점프 서버의 접속용 사본 (계정·주소가 채워진 것). 저장하지 않는다</summary>
     [JsonIgnore] public HostEntry? Jump { get; set; }
+    /// <summary>점프 서버로 지정한 호스트가 목록에 없음 (지워짐) — 이 표시가 있는 Jump 로는 연결하지 않는다 (점프 없이 직접 연결 방지)</summary>
+    [JsonIgnore] public bool IsMissingJump { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
@@ -184,11 +186,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     public HostEntry WithDefaults(CloudProfile? p)
     {
         var (vid, source) = ResolveVault(p);
-        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault: source == "host") : this;
+        var preferVault = vid != null && source == "host";
+        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault) : this;
         if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
         if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;
-        if (string.IsNullOrEmpty(c.ProtectedPassword)) c.ProtectedPassword = p.ProtectedDefaultPassword;
+        // 직접 고른 Vault 계정에 비밀번호가 없으면(키 전용 등) 프로필 기본 비밀번호를 몰래 채우지 않는다 — 편집 화면 안내("접속할 때 묻습니다")와 같게
+        if (!preferVault && string.IsNullOrEmpty(c.ProtectedPassword)) c.ProtectedPassword = p.ProtectedDefaultPassword;
         return c;
     }
     [JsonIgnore] public string IconGlyph => Protocol == Protocol.Ssh ? "" : "";
@@ -221,6 +225,8 @@ public sealed class HostEntry : INotifyPropertyChanged
         c.PropertyChanged = null;
         c._highlighted = false;
         c._selected = false;
+        // 얕은 복사면 복제본에서 기억한 답이 원본에도 들어간다
+        c.PromptAnswers = PromptAnswers == null ? null : new Dictionary<string, string>(PromptAnswers);
         return c;
     }
 
@@ -230,12 +236,27 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// </summary>
     public bool RefreshCredentialsFrom(HostEntry fresh)
     {
-        var changed = Username != fresh.Username || ProtectedPassword != fresh.ProtectedPassword || KeyPath != fresh.KeyPath ||
+        // 점프 서버(바뀐 점프 서버 계정·주소 포함)는 계정 변경 여부와 상관없이 늘 최신으로
+        Jump = fresh.Jump;
+        JumpHostId = fresh.JumpHostId;
+        // 비밀번호는 풀어서 비교한다 — DPAPI 암호문은 같은 비밀번호도 암호화할 때마다 달라 "바뀜" 으로 잘못 판단했다
+        var changed = Username != fresh.Username || !SamePassword(ProtectedPassword, fresh.ProtectedPassword) || KeyPath != fresh.KeyPath ||
                       KeyMaterial != fresh.KeyMaterial || KeyPassphrase != fresh.KeyPassphrase || VaultId != fresh.VaultId;
         if (!changed) return false;
         (Username, ProtectedPassword, KeyPath, KeyMaterial, KeyPassphrase, VaultId) =
             (fresh.Username, fresh.ProtectedPassword, fresh.KeyPath, fresh.KeyMaterial, fresh.KeyPassphrase, fresh.VaultId);
         return true;
+    }
+
+    /// <summary>
+    /// 두 DPAPI 암호문이 같은 비밀번호인지 (암호문이 같으면 풀지 않는다).
+    /// 어느 한쪽이라도 풀리지 않으면(다른 PC 데이터 등) 둘 다 "" 가 되어 같다고 잘못 보지 않게 암호문 문자열로 비교한다.
+    /// </summary>
+    internal static bool SamePassword(string? protectedA, string? protectedB)
+    {
+        if ((protectedA ?? "") == (protectedB ?? "")) return true;
+        if (!Secret.TryUnprotect(protectedA, out var a) || !Secret.TryUnprotect(protectedB, out var b)) return false;   // 암호문이 다르고 풀 수 없음 → 다름
+        return a == b;
     }
 
     /// <summary>접속할 때 쓰는 계정이 어디서 왔는지 (터미널 첫 줄·카드 툴팁 표시용). 사용자명이 없으면 null</summary>
@@ -366,6 +387,13 @@ public interface ISessionView
     bool SendText(string text);
     /// <summary>끊긴 세션 다시 연결 (연결 중이면 무시)</summary>
     void Reconnect();
+    /// <summary>
+    /// 앱이 이미 알고 있는 터미널 상태 (현재 폴더·사용자 등, Claude 가 읽는 글). 명령을 보내지 않는다.
+    /// 터미널이 아니면(RDP) null. UI 스레드에서 호출
+    /// </summary>
+    System.Threading.Tasks.Task<string?> GetTerminalInfoAsync() => System.Threading.Tasks.Task.FromResult<string?>(null);
+    /// <summary>화면에 셸 프롬프트가 보이는가 (명령 입력 대기 중). 모르면 false. UI 스레드에서 호출</summary>
+    System.Threading.Tasks.Task<bool> IsAtPromptAsync() => System.Threading.Tasks.Task.FromResult(false);
 }
 
 public sealed class SessionTab : INotifyPropertyChanged

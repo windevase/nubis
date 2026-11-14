@@ -54,13 +54,16 @@ public partial class MainWindow
             .ToList();
         var mixed = linux.Count > 0 && windows.Count > 0
             ? L.T("\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요.") : "";
-        // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행
+        // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행.
+        // 단 OS 가 Windows 로 보이는 SSH 대상(Windows OpenSSH 서버 — 기본 셸이 cmd/PowerShell)은 sh 기준 판정이 맞지 않아 항상 승인
+        // (echo 'x & net user a P1 /add & ' 는 sh 에선 문자열이지만 cmd 에선 net user 가 실행된다)
         var autoApproved = SettingsStore.Current.AutoApproveReadOnly
+            && !linux.Any(h => McpHelpers.IsWindowsOs(h.Os))
             && (linux.Count == 0 || ReadOnlyCommands.IsReadOnly(command, CommandShell.Sh))
             && (windows.Count == 0 || ReadOnlyCommands.IsReadOnly(command, useCmd ? CommandShell.Cmd : CommandShell.PowerShell));
         if (!autoApproved)
         {
-            var approved = await OnUi(() => ApprovalDialog.Ask(this, L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
+            var approved = await OnUiAsync(() => AskApprovalAsync("run_command", L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
                 L.T("승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다.") + mixed +
                 (skipped.Count > 0 ? L.F("\n제외: {0}건 (중지·미일치)", skipped.Count) : ""), labels, command));
             if (!approved)
@@ -72,6 +75,8 @@ public partial class MainWindow
 
         // 실행 중에는 Claude 패널 위에 "실행 중 · 취소" 줄을 보여 준다 (Claude CLI 에서 Esc 를 눌러도 앱의 실행은 계속되므로)
         using var cts = new CancellationTokenSource();
+        // Claude 에서 요청을 취소하면(Esc) 실행 중 표시줄의 취소와 같게 처리한다
+        using var reqCancel = McpRequest.Token.Register(() => { try { cts.Cancel(); } catch (ObjectDisposedException) { } });
         var started = DateTime.Now;
         await OnUi(() => { BeginRunStatus(cts, L.F("서버 {0}대에서 명령 실행 중: {1}", targets.Count, FirstLine(command))); return 0; });
         List<ExecResult> results;

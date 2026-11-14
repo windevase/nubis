@@ -59,13 +59,19 @@ public partial class MainWindow : Window
 
         RefreshHosts();
         SelectHome();
+        // known_hosts.json 을 미리 읽어 본다 — 손상됐으면 첫 접속 때가 아니라 시작할 때 아래 경고에 함께 보이게
+        try { KnownHostStore.Load(); } catch { }
         Loaded += (_, _) =>
         {
             // 설정 파일을 읽지 못한 경우 (원본은 .corrupt 사본으로 보관됨)
             if (SafeFile.LoadWarnings.Count > 0)
-                Dialog.Show(this, string.Join("\n\n", SafeFile.LoadWarnings), L.T("설정 파일을 읽지 못했습니다"),
+            {
+                string[] warnings;
+                lock (SafeFile.LoadWarnings) warnings = SafeFile.LoadWarnings.ToArray();
+                Dialog.Show(this, string.Join("\n\n", warnings), L.T("설정 파일을 읽지 못했습니다"),
                     MessageBoxButton.OK, MessageBoxImage.Warning);
-            ConnectFromArgs();
+            }
+            ConnectFromArgs(Environment.GetCommandLineArgs());
             ShowOnboardingIfFirstRun();
             StartCloudAutoSync(startup: true);
         };
@@ -73,9 +79,9 @@ public partial class MainWindow : Window
     }
 
     /// <summary>RemoteClient.exe --connect "호스트이름" [--connect ...] : 시작하면서 저장된 호스트로 바로 연결</summary>
-    private void ConnectFromArgs()
+    /// <param name="args">args[0] 은 실행 파일 경로 (Environment.GetCommandLineArgs 형식)</param>
+    private void ConnectFromArgs(string[] args)
     {
-        var args = Environment.GetCommandLineArgs();
         // --claude : 시작하면서 Claude 패널 열기
         if (args.Any(a => a.Equals("--claude", StringComparison.OrdinalIgnoreCase))) ToggleClaude(true);
         for (var i = 1; i < args.Length - 1; i++)
@@ -88,6 +94,22 @@ public partial class MainWindow : Window
             else Dialog.Show(this, L.F("'{0}' 호스트를 찾을 수 없습니다.", key), "Nubis");
         }
     }
+
+    /// <summary>이미 실행 중일 때 다시 실행한 Nubis 가 넘긴 명령줄: 창을 앞으로 가져오고 --connect · --claude 처리</summary>
+    internal void HandleForwardedArgs(string[] args)
+    {
+        // 최소화돼 있으면 이전 상태(최대화 포함)로 되돌린다
+        if (WindowState == WindowState.Minimized)
+            ShowWindow(new System.Windows.Interop.WindowInteropHelper(this).Handle, 9 /* SW_RESTORE */);
+        Activate();
+        // 다른 창 뒤에 있으면 앞으로 (Activate 만으로는 작업 표시줄만 깜빡일 수 있다)
+        Topmost = true;
+        Topmost = false;
+        if (args.Length > 1) ConnectFromArgs(args);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     // =================== 사이드바 ===================
 

@@ -57,21 +57,40 @@ public static class TerminalCwd
     }
 
     private static readonly Regex ColonPromptUser =
-        new(@"^(?:\([^)]*\)\s*)?(?<u>[^@\s\[]+)@[^:\s]+:(?:~[^\s]*|/[^\s]*)\s*[$#]$", RegexOptions.Compiled);
+        new(@"^(?:\([^)]*\)\s*)?(?<u>[^@\s\[]+)@(?<h>[^:\s]+):(?:~[^\s]*|/[^\s]*)\s*[$#]$", RegexOptions.Compiled);
     private static readonly Regex BracketPromptUser =
-        new(@"^(?:\([^)]*\)\s*)?\[(?<u>[^@\s\]]+)@[^\s\]]+ [^\]]+\][$#]$", RegexOptions.Compiled);
+        new(@"^(?:\([^)]*\)\s*)?\[(?<u>[^@\s\]]+)@(?<h>[^\s\]]+) [^\]]+\][$#]$", RegexOptions.Compiled);
 
-    /// <summary>
-    /// 커서 줄의 새 프롬프트에 보이는 사용자 ("root@db:~#", "[root@db ~]#") — sudo su - 같은 사용자 전환 감지용.
-    /// 명령을 입력 중이거나 프롬프트가 아니면 null.
-    /// </summary>
-    public static string? PromptUser(string screen)
+    /// <summary>커서 줄의 새 프롬프트 ("user@host:경로$" / "[user@host 폴더]$"). 명령을 입력 중이거나 프롬프트가 아니면 null</summary>
+    private static Match? PromptMatch(string screen)
     {
         var last = screen.Replace("\r", "").Split('\n').Select(l => l.TrimEnd()).LastOrDefault(l => l.Length > 0);
         if (last == null) return null;
         var m = ColonPromptUser.Match(last);
         if (!m.Success) m = BracketPromptUser.Match(last);
-        return m.Success ? m.Groups["u"].Value : null;
+        return m.Success ? m : null;
+    }
+
+    /// <summary>
+    /// 커서 줄의 새 프롬프트에 보이는 사용자 ("root@db:~#", "[root@db ~]#") — sudo su - 같은 사용자 전환 감지용.
+    /// 명령을 입력 중이거나 프롬프트가 아니면 null.
+    /// </summary>
+    public static string? PromptUser(string screen) => PromptMatch(screen)?.Groups["u"].Value;
+
+    /// <summary>
+    /// 커서 줄의 새 프롬프트에 보이는 호스트 ("root@db:~#" → "db", "[ec2-user@ip-10-0-0-1 ~]$" → "ip-10-0-0-1").
+    /// 터미널에서 다른 서버(ssh)·컨테이너(docker exec)로 들어간 것을 사용자 전환으로 오해하지 않게 비교하는 용도.
+    /// 명령을 입력 중이거나 프롬프트가 아니면 null.
+    /// </summary>
+    public static string? PromptHost(string screen) => PromptMatch(screen)?.Groups["h"].Value;
+
+    private static readonly Regex PowerShellPrompt = new(@"^PS (?<p>[A-Za-z]:\\[^>]*|\\\\[^>]+|[A-Za-z]+::[^>]*)>\s*$", RegexOptions.Compiled);
+
+    /// <summary>PowerShell 프롬프트("PS C:\Users\me>")의 현재 폴더. 프롬프트가 아니면 null</summary>
+    public static string? PowerShellCwd(string screen)
+    {
+        var last = screen.Replace("\r", "").Split('\n').Select(l => l.TrimEnd()).LastOrDefault(l => l.Length > 0);
+        return last != null && PowerShellPrompt.Match(last) is { Success: true } m ? m.Groups["p"].Value : null;
     }
 
     /// <summary>cd 인자를 현재 폴더 기준 절대 경로로 (~, ., .. 처리). "-" 처럼 알 수 없으면 null</summary>

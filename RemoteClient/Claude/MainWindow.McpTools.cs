@@ -29,9 +29,11 @@ public partial class MainWindow
     private static string Arg(JsonElement a, string name) =>
         a.ValueKind == JsonValueKind.Object && a.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
 
+    // 숫자 인자는 숫자 문자열("10")도 받고, 잘못된 값이면 예외 없이 null (McpHelpers.NumberArg)
     private static int? IntArg(JsonElement a, string name) =>
-        a.ValueKind == JsonValueKind.Object && a.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d)
-            ? (int)Math.Clamp(d, int.MinValue, int.MaxValue) : null;
+        McpHelpers.NumberArg(a, name) is { } d ? (int)Math.Clamp(d, int.MinValue, int.MaxValue) : null;
+
+    private static double? NumArg(JsonElement a, string name) => McpHelpers.NumberArg(a, name);
 
     private static bool? BoolArg(JsonElement a, string name) =>
         a.ValueKind == JsonValueKind.Object && a.TryGetProperty(name, out var v) && v.ValueKind is JsonValueKind.True or JsonValueKind.False
@@ -151,14 +153,18 @@ public partial class MainWindow
             }));
 
         yield return new McpTool("open_session",
-            "호스트에 SSH 또는 RDP 세션 탭을 열고 앱 화면에 표시한다. host 는 이름, IP, id 중 하나. 이름이 여러 개 일치하면 후보를 돌려준다.",
+            "호스트에 SSH 또는 RDP 세션 탭을 열고 앱 화면에 표시한다. host 는 이름, IP, id 중 하나. 이름이 여러 개 일치하면 후보를 돌려준다. " +
+            "바로 send_to_terminal 을 쓸 거면 wait_connected_sec 로 연결이 끝날 때까지 기다린다 (연결 중인 탭에는 입력할 수 없음).",
             Schema(new
             {
                 host = new { type = "string", description = "호스트 이름, IP 또는 id" },
                 address = new { type = "string", @enum = new[] { "default", "private", "public" }, description = "접속 주소: 호스트 설정(기본) / 사설 IP / 공인 IP(EIP)" },
+                wait_connected_sec = new { type = "number", description = "연결 완료(또는 실패)까지 기다릴 최대 초 (기본 0 = 기다리지 않음, 최대 60)" },
             }, "host"),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
+                var ct = McpRequest.Token;
+                var waitConnected = Math.Clamp(NumArg(a, "wait_connected_sec") ?? 0, 0, 60);
                 var spec = Arg(a, "host");
                 var found = ResolveHosts(spec);
                 if (found.Count == 0) throw new McpToolException($"'{spec}' 와 일치하는 호스트가 없습니다. list_hosts 로 검색하세요.");
@@ -170,46 +176,42 @@ public partial class MainWindow
                 var tab = Connect(found[0], mode switch { "public" => true, "private" => false, _ => null });
                 if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                 Activate();
-                return $"세션을 열었습니다: session_id={tab.Id}, {found[0].DisplayName} ({found[0].ProtocolText} {found[0].Address}:{found[0].Port}). " +
-                       "연결 결과는 잠시 후 list_sessions 또는 read_terminal 로 확인하세요.";
+                var opened = $"세션을 열었습니다: session_id={tab.Id}, {found[0].DisplayName} ({found[0].ProtocolText} {found[0].Address}:{found[0].Port}).";
+                if (waitConnected <= 0) return opened + " 연결 결과는 잠시 후 list_sessions 또는 read_terminal 로 확인하세요.";
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                while (tab.Status == SessionStatus.Connecting && _tabs.Contains(tab) && sw.Elapsed.TotalSeconds < waitConnected)
+                    await Task.Delay(200, ct);
+                if (!_tabs.Contains(tab)) return opened + " 기다리는 동안 탭이 닫혔습니다.";
+                return opened + tab.Status switch
+                {
+                    SessionStatus.Connected => $" 연결됐습니다 ({sw.Elapsed.TotalSeconds:0.0}초).",
+                    SessionStatus.Disconnected => " 연결에 실패했거나 끊겼습니다. read_terminal 로 오류 메시지를 확인하세요.",
+                    _ => $" {waitConnected:0.#}초 안에 연결이 끝나지 않았습니다 (호스트키·비밀번호 확인 창을 기다리는 중일 수 있음). list_sessions 로 다시 확인하세요.",
+                };
             }));
 
-        yield return new McpTool("read_terminal",
-            "세션 터미널 화면의 마지막 N 줄을 읽는다. session_id 를 생략하면 사용자가 보고 있는 탭. RDP 세션은 읽을 수 없다.",
-            Schema(new
-            {
-                session_id = new { type = "integer" },
-                lines = new { type = "integer", description = "읽을 줄 수 (기본 80, 최대 5000)" },
-            }),
-            a => OnUiAsync(async () =>
-            {
-                var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
-                var text = await tab.Session.ReadTerminalAsync(IntArg(a, "lines") ?? 80)
-                           ?? throw new McpToolException($"'{tab.Title}' 은 RDP 세션이라 글자로 읽을 수 없습니다. capture_screen 으로 화면을 캡처해 보세요.");
-                AuditLog.Write("read_terminal", new[] { $"session {tab.Id}: {tab.Title}" }, $"(화면 {text.Split('\n').Length}줄 읽음)", "조회");
-                return $"[session {tab.Id}: {tab.Title}]\n{text}";
-            }));
-
-        yield return new McpTool("get_selection",
-            "사용자가 터미널에서 드래그로 선택한 텍스트를 가져온다. session_id 생략 시 현재 탭.",
-            Schema(new { session_id = new { type = "integer" } }),
-            a => OnUiAsync(async () =>
-            {
-                var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다.");
-                var sel = await tab.Session.GetSelectionAsync();
-                AuditLog.Write("get_selection", new[] { $"session {tab.Id}: {tab.Title}" }, $"(선택 {sel?.Length ?? 0}자 읽음)", "조회");
-                return string.IsNullOrEmpty(sel) ? "선택된 텍스트가 없습니다." : sel;
-            }));
+        foreach (var t in TerminalReadTools()) yield return t;
 
         yield return new McpTool("close_session",
-            "세션 탭을 닫는다 (SSH/RDP 연결 종료, 로컬 터미널 종료). Claude 가 연 탭을 정리할 때 사용.",
+            "세션 탭을 닫는다 (SSH/RDP 연결 종료, 로컬 터미널 종료). Claude 가 연 탭을 정리할 때 사용. " +
+            "연결 중인 탭은 닫으면 실행 중인 프로그램이 끝날 수 있어 앱이 사용자 승인을 받는다 (끊긴 탭은 바로 닫음).",
             Schema(new { session_id = new { type = "integer" } }, "session_id"),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
                 var title = tab.Title;
+                var target = $"session {tab.Id}: {title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
+                // 연결된 탭을 닫으면 SSH 는 원격 포그라운드 프로세스에 SIGHUP, 로컬은 프로세스 종료 — 항상 승인 (사용자의 탭 닫기 확인 설정과 무관)
+                var live = tab.Status != SessionStatus.Disconnected;
+                if (live && !await AskApprovalAsync("close_session", L.T("Claude 가 세션 탭 닫기를 요청합니다"),
+                        L.T("연결을 끊고 탭을 닫습니다. 터미널에서 실행 중인 프로그램은 종료될 수 있습니다."), new[] { target }, L.T("(탭 닫기)")))
+                {
+                    AuditLog.Write("close_session", new[] { target }, "(탭 닫기)", "거부");
+                    throw new McpToolException("사용자가 탭 닫기를 거부했습니다.");
+                }
+                if (!_tabs.Contains(tab)) return $"session {tab.Id} ({title}) 은 이미 닫혀 있습니다.";
                 CloseTab(tab);
-                AuditLog.Write("close_session", new[] { $"session {tab.Id}: {title}" }, "(탭 닫기)", "실행");
+                AuditLog.Write("close_session", new[] { target }, "(탭 닫기)", live ? "승인·실행" : "실행(끊긴 탭)");
                 return $"session {tab.Id} ({title}) 을 닫았습니다.";
             }));
 
@@ -246,7 +248,7 @@ public partial class MainWindow
             {
                 changes = new { type = "object", description = "예: {\"TerminalTheme\": \"dracula\", \"FontSize\": 15}", additionalProperties = true },
             }, "changes"),
-            a => OnUi(() => UpdateSettingsFromClaude(a)));
+            a => OnUiAsync(() => UpdateSettingsFromClaude(a)));
 
         yield return new McpTool("capture_screen",
             "세션 탭 화면을 캡처해 이미지로 반환한다. RDP(Windows 원격 데스크톱) 화면을 볼 때 사용 — 에러 창, 설치 화면, 서비스 관리자 등. " +
@@ -263,7 +265,8 @@ public partial class MainWindow
             "리눅스(SSH 호스트)는 SSH 로 셸 명령을, Windows(RDP 호스트)는 WinRM(5986 HTTPS 우선, 실패 시 5985)으로 PowerShell(기본) 또는 cmd 명령을 실행한다. " +
             "리눅스와 Windows 는 명령 문법이 다르므로 섞지 말고 OS 별로 나눠 호출할 것 (list_hosts 의 프로토콜 ssh/rdp 로 구분). " +
             "targets 항목은 호스트 이름·IP·id 또는 'group:그룹이름'(그룹 전체). 중지된 서버는 제외된다. " +
-            "실행 전에 앱이 사용자 승인 창을 띄우며, 거부되면 실행하지 않는다. 비대화형이므로 sudo 비밀번호 입력·확인 프롬프트 등 대화형 명령은 쓰지 말 것.",
+            "실행 전에 앱이 사용자 승인 창을 띄우며, 거부되면 실행하지 않는다. " +
+            "OS 가 Windows 로 보이는 SSH 호스트(Windows OpenSSH — 기본 셸이 cmd/PowerShell)는 읽기 전용 명령이어도 항상 승인을 받는다. 비대화형이므로 sudo 비밀번호 입력·확인 프롬프트 등 대화형 명령은 쓰지 말 것.",
             Schema(new
             {
                 targets = new { type = "array", items = new { type = "string" }, description = "대상 호스트 목록" },
@@ -273,38 +276,12 @@ public partial class MainWindow
             }, "targets", "command"),
             RunCommandAsync);
 
-        yield return new McpTool("send_to_terminal",
-            "열려 있는 SSH/로컬 세션의 대화형 터미널에 텍스트를 입력한다 (사용자가 보는 화면에 그대로 타이핑). " +
-            "실행 전에 앱이 사용자 승인을 받는다. 결과는 잠시 후 read_terminal 로 확인.",
-            Schema(new
-            {
-                session_id = new { type = "integer", description = "생략 시 현재 탭" },
-                text = new { type = "string" },
-                press_enter = new { type = "boolean", description = "끝에 Enter 입력 (기본 true)" },
-            }, "text"),
-            a => OnUi(() =>
-            {
-                var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다.");
-                if (tab.Protocol == Protocol.Rdp) throw new McpToolException("RDP 세션에는 입력할 수 없습니다.");
-                var text = Arg(a, "text");
-                var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-                if (!ApprovalDialog.Ask(this, L.T("Claude 가 터미널 입력을 요청합니다"),
-                        L.T("아래 세션의 터미널에 텍스트를 입력합니다."), new[] { target }, text))
-                {
-                    AuditLog.Write("send_to_terminal", new[] { target }, text, "거부");
-                    throw new McpToolException("사용자가 입력을 거부했습니다.");
-                }
-                var ok = tab.Session.SendText(text + (BoolArg(a, "press_enter") == false ? "" : "\r"));
-                AuditLog.Write("send_to_terminal", new[] { target }, text, ok ? "승인·입력" : "승인·실패(세션 끊김)");
-                if (!ok) throw new McpToolException("세션이 연결되어 있지 않아 입력하지 못했습니다.");
-                SelectTab(tab);
-                return "입력했습니다. read_terminal 로 결과를 확인하세요.";
-            }));
+        yield return SendToTerminalTool();
     }
 
     // =================== 설정 변경 (update_settings) ===================
 
-    private string UpdateSettingsFromClaude(JsonElement a)
+    private async Task<string> UpdateSettingsFromClaude(JsonElement a)
     {
         var changesArg = a.ValueKind == JsonValueKind.Object && a.TryGetProperty("changes", out var c) ? c : default;
         List<SettingsCatalog.Change> plan;
@@ -315,7 +292,7 @@ public partial class MainWindow
         var lines = plan.Select(p => p.Text).ToList();
         var command = string.Join("\n", lines);
         if (plan.Any(p => p.Def.Security) &&
-            !ApprovalDialog.Ask(this, L.T("Claude 가 보안 설정 변경을 요청합니다"),
+            !await AskApprovalAsync("update_settings", L.T("Claude 가 보안 설정 변경을 요청합니다"),
                 L.T("아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다."), new[] { "Nubis 설정" }, command))
         {
             AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
@@ -373,7 +350,7 @@ public partial class MainWindow
                 public_ip = new { type = "string" },
                 use_public_ip = new { type = "boolean" },
             }, "address"),
-            a => OnUi(() => AddHostFromClaude(a)));
+            a => OnUiAsync(() => AddHostFromClaude(a)));
 
         yield return new McpTool("update_host",
             "등록된 호스트 1개의 설정을 바꾼다 (넘긴 항목만). host 는 이름·IP·id. 클라우드 동기화 호스트는 주소를 바꿀 수 없다. " +
@@ -391,13 +368,13 @@ public partial class MainWindow
                 public_ip = new { type = "string", description = "빈 문자열 = 지우기" },
                 use_public_ip = new { type = "boolean" },
             }, "host"),
-            a => OnUi(() => UpdateHostFromClaude(a)));
+            a => OnUiAsync(() => UpdateHostFromClaude(a)));
 
         yield return new McpTool("delete_host",
             "호스트를 목록에서 지운다 (여러 개 가능, 'group:이름' 은 허용하지 않음). 클라우드 호스트는 클라우드 서버는 그대로 두고 다음 동기화에서도 숨긴다. " +
             "삭제 전에 앱이 사용자 승인을 받는다.",
             Schema(new { hosts = new { type = "array", items = new { type = "string" }, description = "이름·IP·id 목록" } }, "hosts"),
-            a => OnUi(() => DeleteHostsFromClaude(a)));
+            a => OnUiAsync(() => DeleteHostsFromClaude(a)));
 
         // ---------- 접속 진단 ----------
         yield return new McpTool("test_connection",
@@ -412,19 +389,7 @@ public partial class MainWindow
             TestConnectionAsync);
 
         // ---------- 출력 기다리기 ----------
-        yield return new McpTool("wait_for_output",
-            "SSH/로컬 터미널에서 출력이 나올 때까지 기다린다. pattern 을 주면 그 문자열(또는 regex=true 면 정규식)이 새로 나타날 때까지, " +
-            "생략하면 출력이 idle_sec 초 동안 멈출 때까지(명령이 끝날 때까지) 기다린 뒤 화면 마지막 lines 줄을 돌려준다. send_to_terminal 다음에 쓰면 좋다.",
-            Schema(new
-            {
-                session_id = new { type = "integer", description = "생략 시 현재 탭" },
-                pattern = new { type = "string", description = "기다릴 문자열 (예: '$ ', 'Complete!', 'error')" },
-                regex = new { type = "boolean" },
-                timeout_sec = new { type = "integer", description = "최대 대기 (기본 60, 최대 600)" },
-                idle_sec = new { type = "number", description = "pattern 없을 때 출력이 멈춘 것으로 볼 시간 (기본 2초)" },
-                lines = new { type = "integer", description = "돌려줄 줄 수 (기본 60)" },
-            }),
-            WaitForOutputAsync);
+        yield return WaitForOutputTool();
 
         // ---------- SFTP ----------
         yield return new McpTool("sftp_list",

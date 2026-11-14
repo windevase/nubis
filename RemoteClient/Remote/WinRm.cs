@@ -69,15 +69,16 @@ public static class WinRm
                 var note = errors.Count > 0 ? $"[{where} 로 실행 — 앞선 시도 실패: {string.Join(" / ", errors)}]\n" : "";
                 return new ExecResult(h, code == 0, code, Trim(stdout), Trim(note + stderr).Trim(), sw.ElapsedMilliseconds);
             }
-            catch (WinRmAuthException ex)
+            catch (Exception ex) when (StopRetrying(ex, shellCreated, ct))
             {
-                // 인증 실패는 다른 포트·주소로 재시도하지 않는다 (로그온 실패가 쌓여 계정 잠금 정책에 걸리는 것 방지)
-                return new ExecResult(h, false, null, "", $"{where}: {ex.Message}", sw.ElapsedMilliseconds);
-            }
-            catch (Exception ex) when (shellCreated)
-            {
-                // 셸까지 만든 뒤의 오류(명령 실행/시간 초과)는 재시도하지 않는다 (중복 실행 방지)
-                return new ExecResult(h, false, null, "", $"{where}: {Describe(ex)}", sw.ElapsedMilliseconds);
+                // 다른 포트·주소로 넘어가지 않는 오류:
+                // - 인증서 지문 불일치: 5985(HTTP+NTLM)로 넘어가면 중간자가 NTLM 교환을 받게 된다
+                // - 인증 실패: 로그온 실패가 쌓여 계정 잠금 정책에 걸리는 것 방지
+                // - WS-Man 오류(Access denied 등)·셸 생성 이후 오류: 재시도해도 같거나 중복 실행 위험
+                // - 사용자 취소
+                var msg = ct.IsCancellationRequested ? "취소되었습니다." : Describe(ex);
+                var note = errors.Count > 0 ? $" [앞선 시도 실패: {string.Join(" / ", errors)}]" : "";
+                return new ExecResult(h, false, null, "", $"{where}: {msg}{note}", sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
             {
@@ -91,6 +92,17 @@ public static class WinRm
         }
         return new ExecResult(h, false, null, "", "WinRM 연결 실패 — " + string.Join(" / ", errors), sw.ElapsedMilliseconds);
     }
+
+    /// <summary>
+    /// 이 오류로 다른 포트·주소 재시도를 멈춰야 하는지.
+    /// 연결·TLS 실패(인증서 불일치 제외)만 다음 후보로 넘어간다.
+    /// </summary>
+    internal static bool StopRetrying(Exception ex, bool shellCreated, CancellationToken ct) =>
+        shellCreated || ct.IsCancellationRequested || ex is WinRmFatalException;   // Cert·Auth·Fault 는 모두 WinRmFatalException
+
+    /// <summary>URL 에 넣을 호스트: IPv6 리터럴은 [ ] 로 감싼다 (영역 ID "%12" 는 .NET Uri 가 그대로 받아들임)</summary>
+    internal static string UrlHost(string host) =>
+        !host.Contains(':') || host.StartsWith('[') ? host : "[" + host + "]";
 
     private static string Describe(Exception ex)
     {
@@ -120,14 +132,7 @@ public static class WinRm
     private static async Task<(int code, string stdout, string stderr)> ExecuteAsync(
         Transport t, string command, bool powershell, int timeoutSec, Action onShellCreated, CancellationToken ct)
     {
-        string commandLine;
-        if (powershell)
-        {
-            var script = "$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;\n" + command;
-            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-            commandLine = $"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}";
-        }
-        else commandLine = command;
+        var (exe, arguments, skipCmdShell) = BuildCommand(command, powershell);
 
         // 1) 셸 생성
         var created = await t.SendAsync(Envelope(t.Url, "http://schemas.xmlsoap.org/ws/2004/09/transfer/Create", null,
@@ -141,8 +146,11 @@ public static class WinRm
         {
             // 2) 명령 실행
             var cmdResp = await t.SendAsync(Envelope(t.Url, "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/Command", shellId,
-                "<w:OptionSet><w:Option Name=\"WINRS_CONSOLEMODE_STDIN\">TRUE</w:Option><w:Option Name=\"WINRS_SKIP_CMD_SHELL\">FALSE</w:Option></w:OptionSet>",
-                $"<rsp:CommandLine><rsp:Command>{Xml(commandLine)}</rsp:Command></rsp:CommandLine>"), ct);
+                "<w:OptionSet><w:Option Name=\"WINRS_CONSOLEMODE_STDIN\">TRUE</w:Option>" +
+                $"<w:Option Name=\"WINRS_SKIP_CMD_SHELL\">{(skipCmdShell ? "TRUE" : "FALSE")}</w:Option></w:OptionSet>",
+                $"<rsp:CommandLine><rsp:Command>{Xml(exe)}</rsp:Command>" +
+                (arguments != null ? $"<rsp:Arguments>{Xml(arguments)}</rsp:Arguments>" : "") +
+                "</rsp:CommandLine>"), ct);
             var commandId = cmdResp.Descendants(Rsp + "CommandId").FirstOrDefault()?.Value
                             ?? throw new WinRmFatalException("명령 실행 응답에 CommandId 가 없습니다.");
 
@@ -185,6 +193,34 @@ public static class WinRm
             }
             catch { }
         }
+    }
+
+    /// <summary>CreateProcess 명령줄 최대 길이(32767)에서 실행 파일 이름 등 여유를 뺀 값</summary>
+    internal const int MaxProcessCommandLine = 32000;
+    /// <summary>cmd.exe 명령줄 최대 길이</summary>
+    internal const int MaxCmdCommandLine = 8191;
+
+    /// <summary>
+    /// 실행할 명령 (실행 파일, 인수, WINRS_SKIP_CMD_SHELL).
+    /// PowerShell 은 cmd.exe 를 거치지 않고 powershell.exe 를 바로 실행한다 — cmd.exe 를 거치면 명령줄이 8191 자로 제한되는데,
+    /// -EncodedCommand(UTF-16 base64)는 스크립트 길이의 약 2.7배라 3000 자 정도의 스크립트도 넘친다.
+    /// 일반 명령(cmd 모드)은 기존대로 cmd.exe 로 실행(파이프·리디렉션·내장 명령 사용).
+    /// 너무 길면 서버에 보내기 전에 WinRmFatalException.
+    /// </summary>
+    internal static (string Exe, string? Arguments, bool SkipCmdShell) BuildCommand(string command, bool powershell)
+    {
+        if (!powershell)
+        {
+            if (command.Length > MaxCmdCommandLine)
+                throw new WinRmFatalException($"명령이 너무 깁니다 ({command.Length}자, cmd.exe 한도 {MaxCmdCommandLine}자). PowerShell 모드를 쓰거나 명령을 나누세요.");
+            return (command, null, false);
+        }
+        var script = "$ProgressPreference='SilentlyContinue';[Console]::OutputEncoding=[Text.Encoding]::UTF8;\n" + command;
+        var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        var args = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}";
+        if (args.Length > MaxProcessCommandLine)
+            throw new WinRmFatalException($"스크립트가 너무 깁니다 (인코딩 후 {args.Length}자, 한도 약 {MaxProcessCommandLine}자). 스크립트를 나누거나 서버에 파일로 올려 실행하세요.");
+        return ("powershell.exe", args, true);
     }
 
     private static string Xml(string s) => System.Security.SecurityElement.Escape(s) ?? "";
@@ -236,7 +272,8 @@ public static class WinRm
             if (code == HttpStatusCode.Unauthorized) throw new WinRmAuthException("인증 실패 (401) — 계정/비밀번호 또는 WinRM 인증 설정 확인");
             XDocument doc;
             try { doc = XDocument.Parse(body); }
-            catch { throw new WinRmFatalException($"HTTP {(int)code}: 응답을 해석할 수 없습니다. {CloudProviders_FirstLine(body)}"); }
+            // WinRM 이 아닌 응답(다른 서비스·프록시 오류 페이지 등)은 연결 실패처럼 다음 포트로 넘어갈 수 있게 Fatal 이 아닌 예외로
+            catch { throw new InvalidOperationException($"HTTP {(int)code}: 응답을 해석할 수 없습니다. {CloudProviders_FirstLine(body)}"); }
             var fault = doc.Descendants(S + "Fault").FirstOrDefault();
             if (fault != null) throw new WinRmFaultException(fault);
             return doc;
@@ -249,11 +286,15 @@ public static class WinRm
     private sealed class HttpsTransport : Transport
     {
         private readonly HttpClient _http;
+        private readonly string _host;
+        /// <summary>저장된 지문과 다른 인증서를 받았으면 (저장된 지문, 받은 지문)</summary>
+        private (string Known, string Got)? _certMismatch;
         public override string Url { get; }
 
         public HttpsTransport(string host, NetworkCredential cred)
         {
-            Url = $"https://{host}:{HttpsPort}/wsman";
+            _host = host;
+            Url = $"https://{UrlHost(host)}:{HttpsPort}/wsman";
             var handler = new SocketsHttpHandler
             {
                 ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -271,13 +312,16 @@ public static class WinRm
             _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
         }
 
-        private static bool PinCertificate(string host, System.Security.Cryptography.X509Certificates.X509Certificate cert)
+        private bool PinCertificate(string host, System.Security.Cryptography.X509Certificates.X509Certificate cert)
         {
             var id = $"winrm:{host}:{HttpsPort}";
             var fp = "x509 SHA256:" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(cert.GetRawCertData()));
             var known = KnownHostStore.Get(id);
             if (known == null) { KnownHostStore.Set(id, fp); return true; }
-            return known == fp;   // 바뀌었으면 거부 → 5985 로 넘어가지 않도록 아래에서 WinRmCertException 처리
+            if (known == fp) return true;
+            // 바뀌었으면(또는 사용자가 거부한 키면) 거부 → PostAsync 에서 WinRmCertException 으로 바꿔 5985 로 넘어가지 않게 한다
+            _certMismatch = (known, fp);
+            return false;
         }
 
         public override async Task ConnectAsync(CancellationToken ct)
@@ -286,15 +330,23 @@ public static class WinRm
             using var tcp = new System.Net.Sockets.TcpClient();
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(TimeSpan.FromSeconds(5));
-            await tcp.ConnectAsync(new Uri(Url).Host, HttpsPort, cts.Token);
+            await tcp.ConnectAsync(_host, HttpsPort, cts.Token);
         }
 
         protected override async Task<(HttpStatusCode, string)> PostAsync(string soap, CancellationToken ct)
         {
             using var content = new StringContent(soap, Encoding.UTF8);
             content.Headers.ContentType = MediaTypeHeaderValue.Parse("application/soap+xml;charset=UTF-8");
-            using var resp = await _http.PostAsync(Url, content, ct);
-            return (resp.StatusCode, await resp.Content.ReadAsStringAsync(ct));
+            HttpResponseMessage resp;
+            try { resp = await _http.PostAsync(Url, content, ct); }
+            catch (HttpRequestException) when (_certMismatch is { } m)
+            {
+                throw new WinRmCertException(
+                    $"WinRM HTTPS 인증서가 저장된 것과 다릅니다 — 중간자 공격일 수 있어 연결을 중단했습니다 (HTTP 5985 로도 넘어가지 않음). " +
+                    $"저장됨 {m.Known} / 받은 값 {m.Got}. 서버 인증서를 새로 만든 것이 확실하면 설정의 known_hosts 에서 'winrm:{_host}:{HttpsPort}' 항목을 지운 뒤 다시 시도하세요.");
+            }
+            using (resp)
+                return (resp.StatusCode, await resp.Content.ReadAsStringAsync(ct));
         }
 
         public override void Dispose() => _http.Dispose();
@@ -315,7 +367,7 @@ public static class WinRm
 
         public HttpEncryptedTransport(string host, NetworkCredential cred)
         {
-            Url = $"http://{host}:{HttpPort}/wsman";
+            Url = $"http://{UrlHost(host)}:{HttpPort}/wsman";
             _http = new HttpClient(new SocketsHttpHandler
             {
                 ConnectTimeout = TimeSpan.FromSeconds(5),
@@ -429,6 +481,9 @@ public class WinRmFatalException(string message) : Exception(message);
 
 /// <summary>인증 실패 (401) — 계정 잠금 방지를 위해 다른 포트로 재시도하지 않음</summary>
 public sealed class WinRmAuthException(string message) : WinRmFatalException(message);
+
+/// <summary>HTTPS 인증서 지문이 저장된 것과 다름 — 중간자에게 NTLM 을 넘기지 않도록 5985·다른 주소로 재시도하지 않음</summary>
+public sealed class WinRmCertException(string message) : WinRmFatalException(message);
 
 public sealed class WinRmFaultException : WinRmFatalException
 {

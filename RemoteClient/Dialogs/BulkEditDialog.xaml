@@ -54,7 +54,7 @@
 
                 <!-- 사용자명 -->
                 <CheckBox x:Name="UserCheck" Grid.Row="2" Style="{StaticResource RowCheck}" Content="{l:Tr '사용자명'}"/>
-                <TextBox x:Name="UserBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,12" TextChanged="OnFieldChanged" Tag="{l:Tr '비우면 Vault 계정의 사용자명'}"/>
+                <TextBox x:Name="UserBox" Grid.Row="2" Grid.Column="1" Margin="0,0,0,12" TextChanged="OnFieldChanged" Tag="{l:Tr '직접 고른 Vault 계정에 사용자명이 있으면 그 값이 우선'}"/>
 
                 <!-- 포트 -->
                 <CheckBox x:Name="PortCheck" Grid.Row="3" Style="{StaticResource RowCheck}" Content="{l:Tr '포트'}"/>

@@ -36,7 +36,16 @@ public static class L
     internal static string Translate(string ko, bool english) => english && En.Value.TryGetValue(ko, out var en) ? en : ko;
 
     /// <summary>자리표시자({0}, {1:HH:mm} …)가 있는 문구</summary>
-    public static string F(string ko, params object?[] args) => string.Format(CultureInfo.CurrentCulture, T(ko), args);
+    public static string F(string ko, params object?[] args)
+    {
+        try { return string.Format(CultureInfo.CurrentCulture, T(ko), args); }
+        catch (FormatException)
+        {
+            // 번역의 자리표시자가 잘못됐으면 한국어 원문으로, 원문도 잘못됐으면 원문 그대로 (화면 문구 때문에 앱이 죽지 않게)
+            try { return string.Format(CultureInfo.CurrentCulture, ko, args); }
+            catch (FormatException) { return ko; }
+        }
+    }
 
     /// <summary>영어 사전 전체 (테스트용)</summary>
     public static IReadOnlyDictionary<string, string> EnglishTable => En.Value;

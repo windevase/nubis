@@ -11,6 +11,12 @@ namespace Nubis;
 /// 감사 로그·MCP 설정·이 규칙 파일은 고치지 못하게 한다.
 /// 같은 Windows 계정에서 도는 프로그램이라 완전한 차단은 아니며(사용자가 다른 방법을 승인하면 우회 가능),
 /// 실수나 프롬프트 주입으로 암호 파일을 건드리는 것을 막는 용도다. 암호 자체는 DPAPI 로 암호화되어 있다.
+/// <para>
+/// 이 규칙은 <b>2차 안전장치</b>일 뿐이다. 규칙은 단순한 부분 문자열·glob 패턴이라
+/// 와일드카드(host?.json), 문자열 쪼개기('Protected'+'Data'), python 등 다른 인터프리터의 스크립트로 쉽게 돌아갈 수 있다 — 빈틈없게 만들려 하지 않는다.
+/// 실제 보호는 (1) 데이터 파일 전체 DPAPI 암호화(SafeFile.WriteProtected) · (2) 원격에 영향을 주는 MCP 동작의 승인 창(ApprovalDialog) + 감사 로그 ·
+/// (3) MCP 결과·로그에 비밀번호를 넣지 않는 것이다. 새 보호가 필요하면 이 규칙이 아니라 그쪽을 강화한다.
+/// </para>
 /// </summary>
 public static class ClaudeGuard
 {
@@ -50,7 +56,7 @@ public static class ClaudeGuard
             foreach (var b in bases)
                 foreach (var tool in new[] { "Read", "Edit" })   // Edit 규칙이 Write 등 모든 쓰기 도구를 막는다
                     rules.Add($"{tool}({b}/{f}*)");
-            // 셸로 우회하는 것도 막는다 (파일 이름이 들어간 명령)
+            // 셸로 우회하는 것도 막는다 (파일 이름이 그대로 들어간 명령만 — 와일드카드·문자열 조합 등은 못 막는 2차 안전장치)
             rules.Add($"Bash(*{f}*)");
             rules.Add($"PowerShell(*{f}*)");
         }
@@ -63,7 +69,7 @@ public static class ClaudeGuard
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
             rules.Add($"Edit({b}/settings.json*)");
         }
-        // 저장된 암호 복호화(DPAPI) 시도
+        // 저장된 암호 복호화(DPAPI) 시도 — 키워드가 그대로 들어간 명령만 막는다 (2차 안전장치, 우회 가능)
         foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "AutoApproveReadOnly" })
         {
             rules.Add($"Bash(*{kw}*)");

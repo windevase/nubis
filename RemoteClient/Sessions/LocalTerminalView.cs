@@ -11,6 +11,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     private readonly Func<string> _commandLine;
     private readonly string _workingDir;
     private readonly string _exitHint;
+    private readonly bool _killTreeOnClose;
     private PseudoConsoleProcess? _pty;
     private bool _closed;
     private SessionStatus _status = SessionStatus.Connecting;
@@ -20,8 +21,10 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     public SessionStatus Status => _status;
 
     /// <param name="commandLine">실행할 명령줄 (재시작할 때마다 다시 계산)</param>
-    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null)
+    /// <param name="killTreeOnClose">닫을 때 하위 프로세스 트리까지 끝낸다 (Claude 패널만 true — PowerShell 탭에서 띄운 GUI 앱은 남긴다)</param>
+    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null, bool killTreeOnClose = false)
     {
+        _killTreeOnClose = killTreeOnClose;
         _commandLine = commandLine;
         _workingDir = workingDir;
         _exitHint = exitHint ?? L.T("프로세스가 종료되었습니다.");
@@ -39,7 +42,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     {
         if (_closed) return;
         _pty?.Dispose();
-        var pty = new PseudoConsoleProcess();
+        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose };
         pty.Output += _term.Write;
         pty.Exited += code => Dispatcher.BeginInvoke(() =>
         {
@@ -73,6 +76,20 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     public void Reconnect() { if (_status == SessionStatus.Disconnected) Start(); }
     public async Task<string?> ReadTerminalAsync(int lines) => await _term.ReadBufferAsync(lines);
     public async Task<string?> GetSelectionAsync() => await _term.GetSelectionAsync();
+
+    /// <summary>Claude 의 get_terminal_info: PowerShell 프롬프트("PS C:\path>")에서 현재 폴더를 읽는다 (명령을 보내지 않음)</summary>
+    public async Task<string?> GetTerminalInfoAsync()
+    {
+        if (_status != SessionStatus.Connected) return $"로컬 PowerShell · 연결: {MainWindow.StatusText(_status)}";
+        var cwd = TerminalCwd.PowerShellCwd(await _term.ReadBufferAsync(4));
+        return "로컬 PowerShell (이 PC)\n" + (cwd != null
+            ? $"현재 폴더: {cwd} (프롬프트에서 읽은 값)\n상태: 셸 프롬프트 (명령 입력 대기)"
+            : "현재 폴더: 알 수 없음\n상태: 프롬프트가 보이지 않음 — 명령 실행 중일 수 있음");
+    }
+
+    /// <summary>화면에 PowerShell 프롬프트가 보이는가 (send_to_terminal 의 읽기 전용 자동 승인 조건)</summary>
+    public async Task<bool> IsAtPromptAsync() =>
+        _status == SessionStatus.Connected && TerminalCwd.PowerShellCwd(await _term.ReadBufferAsync(4)) != null;
 
     public bool SendText(string text)
     {

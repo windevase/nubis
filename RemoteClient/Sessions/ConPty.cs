@@ -64,7 +64,15 @@ public sealed class PseudoConsoleProcess : IDisposable
     private FileStream? _input;
     private Process? _process;
     private IntPtr _hProcess, _hThread;
+    private IntPtr _job;   // KILL_ON_JOB_CLOSE Job (PTY 수명 동안 유지, KillTreeOnClose 일 때만)
     private bool _disposed;
+
+    /// <summary>
+    /// 닫을 때 하위 프로세스 트리까지 모두 끝낼지 (Claude 패널: cmd → node(claude) → MCP 자식 등이 남지 않게 KILL_ON_JOB_CLOSE Job 사용).
+    /// false(로컬 PowerShell 탭)면 셸 프로세스만 끝내고 의사 콘솔을 닫는다 — 'code .'·Start-Process 로 띄운 GUI 앱은 탭을 닫아도 남는다.
+    /// Start 전에 정한다.
+    /// </summary>
+    public bool KillTreeOnClose { get; init; }
 
     /// <summary>출력 (백그라운드 스레드에서 호출됨)</summary>
     public event Action<string>? Output;
@@ -96,11 +104,14 @@ public sealed class PseudoConsoleProcess : IDisposable
             var env = Marshal.StringToHGlobalUni(ChildEnvironment.Build());
             try
             {
+                // 일시 정지 상태로 만들어 Job 에 넣은 뒤 재개한다 — 넣기 전에 손자 프로세스(node 등)가 먼저 생기지 않게
                 if (!CreateProcessW(null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero, false,
-                        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT, env, workingDir, ref si, out var pi))
+                        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED, env, workingDir, ref si, out var pi))
                     throw new Win32Exception(Marshal.GetLastWin32Error(), L.F("프로세스 실행 실패: {0}", commandLine));
                 _hProcess = pi.hProcess;
                 _hThread = pi.hThread;
+                try { if (KillTreeOnClose) _job = CreateKillOnCloseJob(pi.hProcess); }
+                finally { ResumeThread(pi.hThread); }
                 // 하위 프로세스까지 정리하기 위한 Process 객체 (이미 끝났으면 null — 종료 대기는 핸들로 함)
                 try { _process = Process.GetProcessById(pi.dwProcessId); } catch { _process = null; }
             }
@@ -115,6 +126,30 @@ public sealed class PseudoConsoleProcess : IDisposable
         _input = new FileStream(_inputWrite, FileAccess.Write);
         new Thread(ReadLoop) { IsBackground = true, Name = "conpty-read" }.Start();
         _ = WaitExitAsync();
+    }
+
+    /// <summary>
+    /// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE Job 을 만들어 프로세스를 넣는다. Job 핸들이 닫히면(Dispose, 앱이 비정상 종료돼 OS 가 핸들을 닫을 때도)
+    /// 그 안의 프로세스 트리(cmd → node(claude) 등)가 모두 끝난다 — PID 재조회가 실패해 cmd 만 죽고 손자가 남는 일을 막는다.
+    /// 실패하면(드물게 Job 중첩이 막힌 환경) IntPtr.Zero — 예전처럼 Kill(entireProcessTree) 로만 정리한다.
+    /// </summary>
+    private static IntPtr CreateKillOnCloseJob(IntPtr hProcess)
+    {
+        var job = CreateJobObjectW(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) return IntPtr.Zero;
+        var info = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        var len = Marshal.SizeOf<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>();
+        var ptr = Marshal.AllocHGlobal(len);
+        try
+        {
+            Marshal.StructureToPtr(info, ptr, false);
+            if (SetInformationJobObject(job, JobObjectExtendedLimitInformation, ptr, (uint)len) && AssignProcessToJobObject(job, hProcess))
+                return job;
+        }
+        finally { Marshal.FreeHGlobal(ptr); }
+        CloseHandle(job);
+        return IntPtr.Zero;
     }
 
     private void ReadLoop()
@@ -186,10 +221,15 @@ public sealed class PseudoConsoleProcess : IDisposable
         _disposed = true;
         try
         {
-            if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true);
+            // 트리 정리는 Claude 패널만. PowerShell 탭은 셸만 끝낸다 — 콘솔에 붙은 자식은 아래 ClosePc(의사 콘솔 닫기)로 끝나고,
+            // 따로 창을 띄운 GUI 앱(code ., Start-Process notepad 등)은 남는다
+            if (_process is { HasExited: false }) _process.Kill(entireProcessTree: KillTreeOnClose);
             else if (_hProcess != IntPtr.Zero) TerminateProcess(_hProcess, 1);
         }
         catch { }
+        // Job 을 닫으면 남은 하위 프로세스(Kill 이 놓친 손자 포함)가 모두 끝난다
+        var job = Interlocked.Exchange(ref _job, IntPtr.Zero);
+        if (job != IntPtr.Zero) CloseHandle(job);
         ClosePc();
         try { _input?.Dispose(); } catch { }
         try { _outputRead?.Dispose(); } catch { }
@@ -202,6 +242,46 @@ public sealed class PseudoConsoleProcess : IDisposable
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const int PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
+    private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const int JobObjectExtendedLimitInformation = 9;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_BASIC_LIMIT_INFORMATION
+    {
+        public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IO_COUNTERS
+    {
+        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount, ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    {
+        public JOBOBJECT_BASIC_LIMIT_INFORMATION BasicLimitInformation;
+        public IO_COUNTERS IoInfo;
+        public UIntPtr ProcessMemoryLimit, JobMemoryLimit, PeakProcessMemoryUsed, PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateJobObjectW(IntPtr lpJobAttributes, string? lpName);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr lpInfo, uint cbInfoLength);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint ResumeThread(IntPtr hThread);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct COORD { public short X, Y; }

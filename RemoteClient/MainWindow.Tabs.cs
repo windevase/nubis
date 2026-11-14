@@ -36,7 +36,7 @@ public partial class MainWindow
         // 다시 연결할 때 저장된 호스트·Vault 의 최신 계정을 반영 (탭을 연 뒤 Vault 비밀번호를 고친 경우)
         CloudProfile? Profile() => _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
         var source = _hosts.Contains(saved)
-            ? new SessionSource(() => saved.ForConnection(Profile(), usePublic), () => saved.CredentialSourceText(Profile()),
+            ? new SessionSource(() => AttachJump(saved, saved.ForConnection(Profile(), usePublic)), () => saved.CredentialSourceText(Profile()),
                 () => saved.PromptAnswers, (question, answer) =>
                 {
                     // "Choose [1] Push, or [2] TOTP" 같은 고정 선택을 이 호스트에 기억 (호스트 편집에서 지울 수 있음)
@@ -62,16 +62,24 @@ public partial class MainWindow
     /// <summary>
     /// 접속 때 입력해 로그인에 성공한 계정을 저장. <see cref="CredentialSaveTarget"/> 이 Vault 계정을 고르면 그 계정의
     /// 비밀번호를 바꾸고(서버 비밀번호가 바뀐 경우 — 같은 계정을 쓰는 다른 호스트에도 적용), 아니면 호스트에만 저장한다.
+    /// 그 Vault 계정을 다른 호스트도 쓰면 Vault 를 바꿀지 · 이 호스트에만 저장할지 · 저장하지 않을지 묻는다.
     /// </summary>
     private void SaveEnteredCredentials(HostEntry saved, string user, string password)
     {
         var profile = _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
         if (CredentialSaveTarget(saved, profile, user) is { } entry)
         {
-            entry.Password = password;
-            SaveVault(entry);
-            // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
-            if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
+            if (entry.Password == password) return;   // 이미 같은 비밀번호 — 묻거나 다시 암호화해 저장하지 않는다
+            // 같은 Vault 계정을 쓰는 다른 호스트가 있으면 묻는다 — 조용히 바꾸면 그 호스트들의 로그인이 깨질 수 있다
+            var others = VaultUsers(entry.Id).Where(h => !ReferenceEquals(h, saved)).ToList();
+            if (others.Count == 0) { ApplyEnteredToVault(saved, entry, user, password, 0); return; }
+            // 묻는 창은 세션 콜백(RDP ActiveX 로그인 이벤트 등) 밖에서 띄운다
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_hosts.Contains(saved)) return;
+                ApplyEnteredToVault(saved, entry, user, password, AskSharedVaultSave(entry, others, saved.Protocol));
+            });
+            return;
         }
         else if (saved.ResolveVault(profile).source == "host")
         {
@@ -81,10 +89,53 @@ public partial class MainWindow
         else
         {
             saved.Username = user;
-            saved.Password = password;
+            if (saved.Password != password) saved.Password = password;
         }
         SaveHosts();
         RefreshHosts();
+    }
+
+    /// <param name="choice">0 = Vault 비밀번호 변경, 1 = 이 호스트에만 저장(Vault 지정 해제), 그 외 = 저장 안 함</param>
+    private void ApplyEnteredToVault(HostEntry saved, VaultEntry entry, string user, string password, int choice)
+    {
+        if (choice == 0)
+        {
+            entry.Password = password;
+            SaveVault(entry);
+            // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
+            if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
+        }
+        else if (choice == 1)
+        {
+            // 이 호스트에만: 직접 고른 Vault 계정은 호스트 값보다 우선이라, 지정을 풀어야 호스트에 저장한 값이 쓰인다
+            saved.VaultId = null;
+            saved.Username = user;
+            saved.Password = password;
+        }
+        else return;   // 저장 안 함
+        SaveHosts();
+        RefreshHosts();
+    }
+
+    /// <summary>이 Vault 계정으로 로그인하는 호스트 (직접 지정 + 프로필·설정의 기본 계정으로 쓰는 호스트)</summary>
+    private List<HostEntry> VaultUsers(Guid vaultId) =>
+        _hosts.Where(h => h.Protocol != Protocol.Local &&
+                          h.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)) == vaultId).ToList();
+
+    /// <summary>
+    /// 접속 때 입력한 비밀번호를 여러 호스트가 함께 쓰는 Vault 계정에 저장할지.
+    /// 0 = Vault 비밀번호 변경(모든 호스트에 적용), 1 = 이 호스트에만 저장(Vault 지정 해제), -1 = 저장 안 함
+    /// </summary>
+    private int AskSharedVaultSave(VaultEntry entry, IReadOnlyList<HostEntry> others, Protocol proto)
+    {
+        var msg = L.F("Vault 계정 '{0}' 을(를) 이 호스트 말고도 호스트 {1}개가 함께 씁니다.\n입력한 비밀번호를 어디에 저장할까요?", entry.Name, others.Count) + "\n\n" +
+                  L.F("· Vault 비밀번호 변경: 이 계정을 쓰는 호스트 {0}개 모두 새 비밀번호로 로그인합니다.", others.Count + 1) + "\n" +
+                  L.T("· 이 호스트에만 저장: 이 호스트의 Vault 계정 지정을 해제하고, 사용자명·비밀번호를 이 호스트에 직접 저장합니다.");
+        if (proto == Protocol.Ssh && entry.HasKey) msg += "\n" + L.T("  (이 호스트는 Vault 계정의 SSH 키도 더 이상 쓰지 않습니다)");
+        var detail = string.Join("\n", others.Take(15).Select(h => h.DisplayName)) + (others.Count > 15 ? "\n..." : "");
+        var choice = Dialog.Choose(this, msg, L.T("비밀번호 저장"), L.T("Vault 비밀번호 변경"), L.T("이 호스트에만 저장"), L.T("저장 안 함"),
+            MessageBoxImage.Question, detail);
+        return choice is 0 or 1 ? choice : -1;
     }
 
     /// <summary>
@@ -96,7 +147,10 @@ public partial class MainWindow
     {
         var (vaultId, source) = saved.ResolveVault(profile);
         if (source != "host") return null;
-        return VaultStore.Get(vaultId) is { HasPassword: true } entry && string.Equals(user, entry.Username, StringComparison.Ordinal)
+        // 비밀번호가 없는 계정(키 전용 등)이어도 사용자명이 같으면 그 계정에 저장 — 저장을 골랐는데 조용히 버려 매번 다시 묻던 문제.
+        // 사용자명은 대소문자를 구분한다 (리눅스 계정 이름)
+        return VaultStore.Get(vaultId) is { } entry && !string.IsNullOrWhiteSpace(entry.Username) &&
+               string.Equals(user, entry.Username, StringComparison.Ordinal)
             ? entry : null;
     }
 
@@ -111,8 +165,13 @@ public partial class MainWindow
     {
         if (saved.Protocol != Protocol.Ssh || saved.JumpHostId is not { } id) return conn;
         var j = _hosts.FirstOrDefault(x => x.Id == id && x.Protocol == Protocol.Ssh && !ReferenceEquals(x, saved));
-        if (j == null) return conn;
         if (ReferenceEquals(conn, saved)) conn = saved.Clone();
+        if (j == null)
+        {
+            // 점프 서버가 지워졌다 — 조용히 직접 연결하지 않고 연결할 때 오류를 내게 표시만 붙인다 (JumpTunnel.Open)
+            conn.Jump = new HostEntry { Label = L.T("삭제된 점프 서버"), Protocol = Protocol.Ssh, IsMissingJump = true };
+            return conn;
+        }
         var jc = j.ForConnection(_profiles.FirstOrDefault(p => p.Id == j.CloudProfileId));
         if (ReferenceEquals(jc, j)) jc = j.Clone();
         jc.Jump = null;

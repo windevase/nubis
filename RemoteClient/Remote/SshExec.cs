@@ -61,8 +61,9 @@ public static class SshExec
                 target.Address = addr;
                 var c = new SshClient(SshAuth.Build(target, h.Username, h.Password, tunnel: tunnel));
                 string? hostKeyError = null;
+                var reachedAuth = false;
                 // 비대화형이므로 처음 보는 서버는 저장 후 신뢰(accept-new), 저장값과 다르면 거부
-                c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
+                c.HostKeyReceived += (_, e) => { reachedAuth = true; e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null; };
                 try
                 {
                     c.Connect();
@@ -75,6 +76,9 @@ public static class SshExec
                     c.Dispose();
                     if (hostKeyError != null) return new ExecResult(h, false, null, "", $"{addr}: {hostKeyError}", sw.ElapsedMilliseconds);
                     if (ex is SshAuthenticationException) return new ExecResult(h, false, null, "", $"{addr}: 인증 실패 — {ex.Message}", sw.ElapsedMilliseconds);
+                    // 호스트키를 받은 뒤(인증 단계)의 시간 초과·끊김은 다른 주소로 다시 시도하지 않는다 — 같은 계정으로 인증이 한 번 더 나가 잠금 위험
+                    if (SshFailure.IsPermanent(ex, reachedAuth))
+                        return new ExecResult(h, false, null, "", $"{addr}: 인증 단계에서 실패 — {ex.Message} (다른 주소로 재시도하지 않음)", sw.ElapsedMilliseconds);
                     errors.Add($"{addr} {ex.Message}");
                 }
             }
@@ -113,9 +117,13 @@ public static class SshExec
         {
             var target = h.Clone();
             target.Address = addr;
-            var c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel);
+            TunneledSftpClient c;
+            // 계정 정보(키 읽기 등)에서 실패해도 점프 터널을 남기지 않는다
+            try { c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel); }
+            catch { tunnel?.Dispose(); throw; }
             string? hostKeyError = null;
-            c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
+            var reachedAuth = false;
+            c.HostKeyReceived += (_, e) => { reachedAuth = true; e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null; };
             try
             {
                 c.Connect();
@@ -126,6 +134,9 @@ public static class SshExec
                 c.Dispose();
                 if (hostKeyError != null) throw new InvalidOperationException($"{addr}: {hostKeyError}");
                 if (ex is SshAuthenticationException) throw new InvalidOperationException($"{addr}: 인증 실패 — {ex.Message}");
+                // 인증 단계의 시간 초과·끊김은 다른 주소로 다시 시도하지 않는다 (같은 계정으로 인증이 한 번 더 나감)
+                if (SshFailure.IsPermanent(ex, reachedAuth))
+                    throw new InvalidOperationException($"{addr}: 인증 단계에서 실패 — {ex.Message} (다른 주소로 재시도하지 않음)");
                 errors.Add($"{addr} {ex.Message}");
             }
         }

@@ -73,7 +73,7 @@ public static class SettingsCatalog
         new("SshHostKeyPrompt", "SSH 새 서버 호스트키 확인 창", "bool", "켜면 처음 보는 서버의 호스트키를 확인 후 저장 (보안 설정 — 사용자 승인 필요)",
             true, s => s.SshHostKeyPrompt, Bool, (s, v) => s.SshHostKeyPrompt = (bool)v),
         new("AutoApproveReadOnly", "읽기 전용 명령 자동 승인", "bool",
-            "Claude 의 run_command 중 조회 명령을 승인 없이 실행. Claude 는 끄기만 할 수 있고, 켜기는 사용자가 Settings 화면에서 직접 해야 한다",
+            "Claude 의 run_command · send_to_terminal(셸 프롬프트일 때) · sftp_list/sftp_read 중 조회 명령을 승인 없이 실행. Claude 는 끄기만 할 수 있고, 켜기는 사용자가 Settings 화면에서 직접 해야 한다",
             true, s => s.AutoApproveReadOnly,
             v => Bool(v) is true ? throw new ArgumentException("자동 승인은 Claude 가 켤 수 없습니다. 사용자에게 Settings → Claude 에서 직접 켜 달라고 안내하세요.") : false,
             (s, v) => s.AutoApproveReadOnly = (bool)v),

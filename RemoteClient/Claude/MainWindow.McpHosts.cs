@@ -117,7 +117,7 @@ public partial class MainWindow
         $" · 이름 {(h.Label.Length > 0 ? h.Label : "-")} · 그룹 {GroupLabel(h)} · 사용자 {(h.Username.Length > 0 ? h.Username : "-")}" +
         $" · Vault {VaultStore.Get(h.VaultId)?.Name ?? "없음"}";
 
-    private string AddHostFromClaude(JsonElement a)
+    private async Task<string> AddHostFromClaude(JsonElement a)
     {
         var h = new HostEntry { Protocol = Protocol.Ssh };
         h.Port = HostEntry.PreferredPort(Protocol.Ssh);
@@ -125,13 +125,20 @@ public partial class MainWindow
         ApplyHostArgs(h, a, isNew: true);
         var dup = _hosts.FirstOrDefault(x => x.Address.Equals(h.Address, StringComparison.OrdinalIgnoreCase) && x.Port == h.Port && x.Protocol == h.Protocol);
         var summary = HostSummary(h);
-        if (!ApprovalDialog.Ask(this, L.T("Claude 가 호스트 등록을 요청합니다"),
+        if (!await AskApprovalAsync("add_host", L.T("Claude 가 호스트 등록을 요청합니다"),
                 L.T("아래 호스트를 등록합니다. Vault 계정을 연결하면 이 주소로 접속할 때 그 계정의 비밀번호·키가 쓰입니다. 주소가 맞는지 확인하세요.") +
                 (dup != null ? L.F("\n⚠ 같은 주소·포트의 호스트 '{0}' 가 이미 있습니다.", dup.DisplayName) : ""),
                 new[] { h.DisplayName }, summary))
         {
             AuditLog.Write("add_host", new[] { h.DisplayName }, summary, "거부");
             throw new McpToolException("사용자가 호스트 등록을 거부했습니다.");
+        }
+        // 승인 창을 기다리는 동안(다른 승인 창 대기 포함) 같은 주소·포트의 호스트가 새로 생겼으면 — 사용자가 본 경고와 달라지므로 등록하지 않는다
+        var dupNow = _hosts.FirstOrDefault(x => x.Address.Equals(h.Address, StringComparison.OrdinalIgnoreCase) && x.Port == h.Port && x.Protocol == h.Protocol);
+        if (dupNow != null && dupNow != dup)
+        {
+            AuditLog.Write("add_host", new[] { h.DisplayName }, summary, $"승인 후 취소 (대기 중 같은 주소·포트의 '{dupNow.DisplayName}' 가 생김)");
+            throw new McpToolException($"승인을 기다리는 동안 같은 주소·포트의 호스트 '{dupNow.DisplayName}' 가 생겨 등록하지 않았습니다. 확인한 뒤 다시 요청하세요.");
         }
         _hosts.Add(h);
         SaveHosts();
@@ -140,7 +147,7 @@ public partial class MainWindow
         return $"등록했습니다: {h.Id.ToString()[..8]} | {summary}";
     }
 
-    private string UpdateHostFromClaude(JsonElement a)
+    private async Task<string> UpdateHostFromClaude(JsonElement a)
     {
         var h = ResolveOneHost(Arg(a, "host"));
         var copy = h.Clone();
@@ -148,13 +155,15 @@ public partial class MainWindow
         if (changes.Count == 0) return "바뀐 항목이 없습니다.";
         var text = string.Join("\n", changes);
         var risky = changes.Any(c => c.StartsWith("주소") || c.StartsWith("공인") || c.StartsWith("Vault") || c.StartsWith("포트"));
-        if (!ApprovalDialog.Ask(this, L.T("Claude 가 호스트 설정 변경을 요청합니다"),
+        if (!await AskApprovalAsync("update_host", L.T("Claude 가 호스트 설정 변경을 요청합니다"),
                 L.F("'{0}' 의 설정을 바꿉니다.", h.DisplayName) + (risky ? L.T("\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요.") : ""),
                 new[] { h.DisplayName }, text))
         {
             AuditLog.Write("update_host", new[] { h.DisplayName }, text, "거부");
             throw new McpToolException("사용자가 변경을 거부했습니다.");
         }
+        // 승인 창을 기다리는 동안(다른 승인 창 대기 포함) 호스트가 지워졌으면 반영하지 않는다
+        if (!_hosts.Contains(h)) throw new McpToolException("승인을 기다리는 동안 호스트가 목록에서 지워져 바꾸지 않았습니다.");
         // 확인한 값만 원본에 반영 (비밀번호·키 파일·클라우드 정보는 건드리지 않음)
         h.Protocol = copy.Protocol; h.Address = copy.Address; h.Port = copy.Port; h.Label = copy.Label; h.Group = copy.Group;
         h.Username = copy.Username; h.PublicIp = copy.PublicIp; h.UsePublicIp = copy.UsePublicIp; h.VaultId = copy.VaultId;
@@ -165,21 +174,28 @@ public partial class MainWindow
         return $"바꿨습니다: {h.DisplayName}\n{text}";
     }
 
-    private string DeleteHostsFromClaude(JsonElement a)
+    private async Task<string> DeleteHostsFromClaude(JsonElement a)
     {
         var specs = ListArg(a, "hosts");
         if (specs.Count == 0) throw new McpToolException("hosts 가 필요합니다.");
         var targets = specs.Select(ResolveOneHost).DistinctBy(h => h.Id).ToList();
         var labels = targets.Select(h => $"{h.DisplayName}  ({h.ProtocolText} {h.Address}:{h.Port}{(h.IsCloud ? ", 클라우드 — 다음 동기화에서도 숨김" : "")})").ToList();
-        if (!ApprovalDialog.Ask(this, L.F("Claude 가 호스트 {0}개 삭제를 요청합니다", targets.Count),
+        if (!await AskApprovalAsync("delete_host", L.F("Claude 가 호스트 {0}개 삭제를 요청합니다", targets.Count),
                 L.T("Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다."), labels, "delete_host"))
         {
             AuditLog.Write("delete_host", labels, "delete_host", "거부");
             throw new McpToolException("사용자가 삭제를 거부했습니다.");
         }
-        RemoveHosts(targets);
-        AuditLog.Write("delete_host", labels, "delete_host", "승인·삭제");
-        return $"{targets.Count}개를 지웠습니다:\n" + string.Join("\n", labels);
+        // 승인 창을 기다리는 동안 이미 지워진 호스트는 빼고 실제로 지운 것만 알린다
+        var (removed, gone) = McpHelpers.SplitStillPresent(targets.Zip(labels, (h, l) => (h, l)).ToList(), t => _hosts.Contains(t.h));
+        if (removed.Count > 0) RemoveHosts(removed.Select(t => t.h));
+        var removedLabels = removed.Select(t => t.l).ToList();
+        var goneLabels = gone.Select(t => t.l).ToList();
+        AuditLog.Write("delete_host", labels, "delete_host",
+            goneLabels.Count == 0 ? "승인·삭제" : $"승인·삭제 {removedLabels.Count}개 (대기 중 이미 지워짐 {goneLabels.Count}개)");
+        var msg = $"{removedLabels.Count}개를 지웠습니다" + (removedLabels.Count > 0 ? ":\n" + string.Join("\n", removedLabels) : ".");
+        if (goneLabels.Count > 0) msg += $"\n승인을 기다리는 동안 이미 목록에서 지워져 있던 {goneLabels.Count}개:\n" + string.Join("\n", goneLabels);
+        return msg;
     }
 
     // =================== 클라우드 동기화 ===================

@@ -52,7 +52,8 @@ public partial class LoginWindow : Window
         var cfg = SettingsStore.Global.Login;
         if (!cfg.Enabled) return true;
         var state = LoginState.Load();
-        if (state != null && state.Within(cfg, TimeSpan.FromHours(cfg.RememberHours), DateTime.UtcNow))
+        // 유지 시간 안이어도 지금 허용되지 않는 계정(목록에서 지웠거나, Organization 확인 기록이 없거나 Organization 을 바꿈)이면 다시 로그인
+        if (state != null && state.CanEnterWithout(cfg, TimeSpan.FromHours(cfg.RememberHours), DateTime.UtcNow))
         {
             profileKey = state.ProfileKey;
             return true;
@@ -102,7 +103,8 @@ public partial class LoginWindow : Window
                                          (_cfg.GitHubOrg.Trim().Length > 0 && _cfg.Provider == LoginProviderKind.GitHub ? L.F(" (Organization '{0}' 멤버가 아님)", _cfg.GitHubOrg) : ""));
             Result = who;
             _profileKey = who.ProfileKey;
-            try { LoginState.Save(who, _cfg); } catch { }
+            // Organization 멤버로 허용된 기록도 남긴다 — 로그인 유지·오프라인 허용 기간 안에서는 다시 확인하지 않고 인정
+            try { LoginState.Save(who, _cfg, orgMember); } catch { }
             AuditLog.Write("login", new[] { $"{LoginConfig.ProviderLabel(who.Provider)} {who.Account}" }, _test ? "테스트 로그인" : "앱 시작 로그인", "성공");
             DialogResult = true;
         }
@@ -118,11 +120,16 @@ public partial class LoginWindow : Window
         AuditLog.Write("login", new[] { LoginConfig.ProviderLabel(_cfg.Provider) }, _test ? "테스트 로그인" : "앱 시작 로그인", "실패: " + message);
         ResetToStart(message);
         // 인터넷이 안 될 때: 최근 로그인 기록이 허용 기간 안이면 들어갈 수 있게 (테스트 로그인에는 없음)
+        // 지금 허용 목록에 있는 계정, 마지막 온라인 로그인 때 같은 Organization 멤버로 확인된 계정, 또는 소유자만
         if (offline && !_test && _cfg.OfflineDays > 0 && _state != null &&
             _state.Within(_cfg, TimeSpan.FromDays(_cfg.OfflineDays), DateTime.UtcNow))
         {
-            OfflineButton.Content = L.F("오프라인으로 들어가기 (마지막 로그인 {0:MM-dd HH:mm}, {1})", _state.LastSuccessUtc.ToLocalTime(), _state.Account);
-            OfflineButton.Visibility = Visibility.Visible;
+            if (_state.StillAllowed(_cfg, offline: true))
+            {
+                OfflineButton.Content = L.F("오프라인으로 들어가기 (마지막 로그인 {0:MM-dd HH:mm}, {1})", _state.LastSuccessUtc.ToLocalTime(), _state.Account);
+                OfflineButton.Visibility = Visibility.Visible;
+            }
+            else ShowError(message + "\n" + L.T("오프라인 허용은 허용 계정 목록에 있는 계정만 쓸 수 있습니다 (Organization 멤버 허용은 온라인 로그인 필요)."));
         }
     }
 
@@ -137,6 +144,7 @@ public partial class LoginWindow : Window
 
     private void OnOffline(object sender, RoutedEventArgs e)
     {
+        if (_state == null || !_state.CanEnterWithout(_cfg, TimeSpan.FromDays(_cfg.OfflineDays), DateTime.UtcNow, offline: true)) return;
         AuditLog.Write("login", new[] { $"{LoginConfig.ProviderLabel(_cfg.Provider)} {_state?.Account}" }, "앱 시작 로그인", "오프라인 허용으로 진입");
         _profileKey = _state?.ProfileKey;
         DialogResult = true;

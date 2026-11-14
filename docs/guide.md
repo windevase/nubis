@@ -45,6 +45,8 @@ Nubis is a Windows remote-access client. It gathers your cloud servers by profil
 
 Nubis is a portable app with no installer. Your data is stored in `%APPDATA%\Nubis`, not in the app folder, so to update you replace the whole app folder with the new one (delete the old folder first rather than extracting over it).
 
+Only one Nubis runs at a time. Starting it again while it is open (including with arguments such as `--connect`) hands over to the open window, so two copies never overwrite each other's data. Each save keeps the previous copy (`.bak`), which is restored automatically if a data file gets corrupted (`settings.json` excluded).
+
 > **Note** Starting with this version, data files are encrypted. After you run the new version once, do not go back to a 0.1.x version. Older versions cannot read the encrypted files and start with an empty list.
 
 ### 1.3 First run
@@ -338,10 +340,11 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 
 | Action | Approval |
 |---|---|
-| Lookups (host list, reading the screen, screen capture, connection diagnosis, reading settings) | None |
+| Lookups (host list, reading the screen, terminal state (current folder, user), screen capture, connection diagnosis, reading settings) | None |
 | Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on) |
 | Running commands on several servers (`run_command`) | Approval prompt (with read-only auto-approve on, only read-only commands skip it) |
-| Typing into a terminal; adding, changing or deleting hosts; uploading or downloading files | **Always an approval prompt** |
+| Typing into a terminal (`send_to_terminal`) | Approval prompt (with read-only auto-approve on, a one-line read-only command skips it while the screen shows a shell prompt — password prompts and vim always ask) |
+| Adding, changing or deleting hosts; uploading or downloading files | **Always an approval prompt** |
 | Changing security settings (RDP certificate warning, host-key prompt, auto-approve) | **Approval prompt.** Claude can never turn auto-approve on, only off |
 | Sign-in screen · editor path | Claude cannot change them |
 
@@ -361,6 +364,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 | `list_groups` · `list_hosts` | Search groups and hosts |
 | `list_sessions` · `open_session` · `close_session` | List, open and close tabs |
 | `read_terminal` · `get_selection` · `capture_screen` | Terminal content, selected text, screen image |
+| `get_terminal_info` | The terminal's current folder, sign-in account and sudo switch (answers instantly, no command sent) |
 | `wait_for_output` | Wait until some text appears or output goes quiet |
 | `send_to_terminal` | Type into a terminal |
 | `run_command` | Run on several servers in parallel (SSH / WinRM) |
@@ -513,7 +517,7 @@ See [chapter 10](#10-sign-in-screen-and-per-account-profiles). Settings are save
 
 | Setting | Default | Behavior | Claude |
 |---|---|---|---|
-| Run read-only commands without approval | Off | Skips the approval prompt only for read-only requests in `run_command`, `sftp_list` and `sftp_read` (an allow list; anything ambiguous still asks). The audit log is still written | Off only |
+| Run read-only commands without approval | Off | Skips the approval prompt only for read-only requests in `run_command`, `send_to_terminal` (at a shell prompt), `sftp_list` and `sftp_read` (an allow list; anything ambiguous still asks). The audit log is still written | Off only |
 | Show RDP server certificate warnings | On | When off, Nubis connects without a warning even to servers whose certificate cannot be verified (self-signed). Applies from the next connection | With approval |
 
 ### 11.8 Cloud credential file paths

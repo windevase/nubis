@@ -76,6 +76,7 @@ public sealed class AzureProvider : ICloudProvider
         var tenants = (await ListAsync($"{Arm}/tenants?api-version=2022-12-01", home, ct)).Select(t => t.Str("tenantId")).ToList();
 
         var list = new List<CloudCandidate>();
+        var skipped = new List<string>();
         foreach (var tenant in tenants)
         {
             try
@@ -87,9 +88,25 @@ public sealed class AzureProvider : ICloudProvider
                     list.Add(new CloudCandidate(s.Str("subscriptionId"), s.Str("displayName"), tenant));
                 }
             }
-            catch { /* MFA 등으로 테넌트 토큰을 못 받으면 그 테넌트만 건너뜀 */ }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                // MFA 등으로 테넌트 토큰을 못 받으면 그 테넌트만 건너뛰되, 사유를 모아 둔다
+                skipped.Add(SkippedTenant(tenant, ex.Message));
+            }
         }
+        // 찾은 구독이 없는데 건너뛴 테넌트가 있으면 "구독 없음" 으로 보이지 않게 사유와 함께 실패로 알린다
+        // (이 목록은 프로필 추가 후보일 뿐 동기화가 아니므로 호스트 삭제와는 무관. 동기화는 구독 단위 FetchAsync 로, 실패하면 예외)
+        if (list.Count == 0 && skipped.Count > 0)
+            throw new InvalidOperationException(L.F("구독을 찾지 못했습니다 — 토큰을 받지 못해 건너뛴 테넌트 {0}개: {1}", skipped.Count, string.Join(" / ", skipped)));
         return list.GroupBy(c => c.Name).Select(g => g.First()).OrderBy(c => c.DisplayName).ToList();
+    }
+
+    /// <summary>건너뛴 테넌트 한 줄 요약 ("테넌트: 사유 첫 줄", 사유는 160자까지)</summary>
+    internal static string SkippedTenant(string tenant, string? reason)
+    {
+        var r = CloudProviders.FirstLine(reason ?? "");
+        if (r.Length > 160) r = r[..160] + "…";
+        return $"{tenant}: {r}";
     }
 
     public async Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct)

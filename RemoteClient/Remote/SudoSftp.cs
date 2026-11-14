@@ -30,8 +30,12 @@ public static class SudoSftp
     public static bool IsValidUser(string user) =>
         user.Length is > 0 and <= 32 && System.Text.RegularExpressions.Regex.IsMatch(user, "^[a-z_][a-z0-9_.-]*\\$?$");
 
-    public static string ProbeCommand(string user) => $"sudo -n -u {Quote(user)} true";
-    public static string CheckPasswordCommand(string user) => $"sudo -k -S -p '' -u {Quote(user)} true";
+    // 확인도 실제로 쓸 명령(sftp-server)으로 한다 — sudoers 가 sftp-server 에만 NOPASSWD 를 준 경우 "true" 로 물으면
+    // 비밀번호가 필요하다고 나와, 비밀번호 줄을 보냈다가 sftp-server 가 그 줄을 SFTP 데이터로 받아 연결이 깨진다.
+    // sftp-server 는 입력이 EOF 면 바로 0 으로 끝난다 → 끝 코드 0 = 그 명령을 그 방식으로 실행할 수 있음
+    public static string ProbeCommand(string user, string server) => $"sudo -n -u {Quote(user)} {Quote(server)} </dev/null";
+    /// <summary>표준 입력: 비밀번호 한 줄 + EOF — 맞으면 sftp-server 가 EOF 를 읽고 0 으로 끝난다</summary>
+    public static string CheckPasswordCommand(string user, string server) => $"sudo -k -S -p '' -u {Quote(user)} {Quote(server)}";
     public static string HomeCommand(string user) => $"getent passwd {Quote(user)} | cut -d: -f6";
 
     public static string ServerCommand(string server, string user, bool withPassword) =>
@@ -85,7 +89,7 @@ public static class SudoSftp
         if (!home.StartsWith('/')) home = user == "root" ? "/root" : "/home/" + user;
 
         // 1) 비밀번호 없이
-        var probe = Run(shell, ProbeCommand(user));
+        var probe = Run(shell, ProbeCommand(user, server));
         if (probe.Exit == 0) return (OpenServer(shell, ServerCommand(server, user, false), null), home, null);
         if (!NeedsPassword(probe.Error)) throw new SudoException(Explain(probe.Error));
 
@@ -95,7 +99,7 @@ public static class SudoSftp
         foreach (var candidate in new[] { cachedPassword, loginPassword }.Distinct())
         {
             if (string.IsNullOrEmpty(candidate)) continue;
-            var r = CheckPassword(shell, user, candidate);
+            var r = CheckPassword(shell, user, server, candidate);
             if (r.Exit == 0) { password = candidate; break; }
             lastError = r.Error;
             if (!IsWrongPassword(r.Error)) throw new SudoException(Explain(r.Error));
@@ -104,7 +108,7 @@ public static class SudoSftp
         {
             var typed = askPassword(lastError == null ? "" : L.T("sudo 비밀번호가 틀렸습니다."))
                 ?? throw new SudoException(L.T("sudo 비밀번호 입력이 취소되었습니다."));
-            var r = CheckPassword(shell, user, typed);
+            var r = CheckPassword(shell, user, server, typed);
             if (r.Exit != 0) throw new SudoException(Explain(r.Error));
             password = typed;
         }
@@ -136,9 +140,9 @@ public static class SudoSftp
     }
 
     /// <summary>비밀번호 한 줄을 넣고 입력을 닫는다 — 틀리면 sudo 가 다음 줄 대신 EOF 를 읽고 바로 끝난다(실패 1회)</summary>
-    private static (int Exit, string Output, string Error) CheckPassword(SshClient shell, string user, string password)
+    private static (int Exit, string Output, string Error) CheckPassword(SshClient shell, string user, string server, string password)
     {
-        using var cmd = shell.CreateCommand(CheckPasswordCommand(user));
+        using var cmd = shell.CreateCommand(CheckPasswordCommand(user, server));
         cmd.CommandTimeout = TimeSpan.FromSeconds(30);
         var ar = cmd.BeginExecute();
         using (var input = cmd.CreateInputStream())
