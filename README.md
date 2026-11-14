@@ -23,7 +23,7 @@ If your work looks like that too — a mix of Linux and Windows servers, spread 
 ## What it does
 
 **🖥️ One window for every connection**
-SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K`, type part of a name or IP, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top, and tabs can be reordered, renamed, reconnected and closed in bulk.
+SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K`, type part of a name or IP, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top, and tabs can be reordered, renamed, reconnected and closed in bulk. It behaves like OpenSSH where it matters — ssh-agent and `~/.ssh` default keys, `known_hosts`, OTP / push MFA prompts (with remembered answers), jump hosts (ProxyJump) — and RDP follows your mstsc defaults, RD Gateway included.
 
 **☁️ Your cloud servers, already in the list**
 Import servers from AWS, Tencent Cloud, Google Cloud and Azure, profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI). They stay in sync (on demand, at startup or every few minutes) — names and IPs update, your own changes stay. Right-click a group to switch all of its servers to public or private IPs, or to assign one Vault account to every server in it — or `Ctrl`/`Shift`+click any cards and bulk-edit their account, username, port, group, IP choice or favorite at once.
