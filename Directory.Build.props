@@ -1,0 +1,6 @@
+<Project>
+  <!-- GitHub 자동 의존성 제출(Dependabot 알림용)이 Linux 러너에서 restore 할 수 있게 한다. Windows 빌드에는 영향 없음 -->
+  <PropertyGroup Condition="'$(OS)' != 'Windows_NT'">
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+</Project>
