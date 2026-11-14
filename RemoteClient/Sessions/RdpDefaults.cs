@@ -30,6 +30,23 @@ public sealed class RdpDefaults
     public int KeyboardHook { get; init; } = 2;
     /// <summary>Default.rdp 에서 읽었는지 (false 면 mstsc 기본값)</summary>
     public bool FromFile { get; init; }
+    /// <summary>RD 게이트웨이 (gatewayhostname). 없으면 null</summary>
+    public string? GatewayHost { get; init; }
+    /// <summary>게이트웨이 사용 방식 (gatewayusagemethod): 0 안 씀, 1 항상, 2 로컬 주소는 우회, 4 자동 감지</summary>
+    public int GatewayUsage { get; init; }
+    /// <summary>게이트웨이 인증 (gatewaycredentialssource): 0 비밀번호(NTLM), 1 스마트 카드, 4 자동</summary>
+    public int GatewayCredsSource { get; init; } = 4;
+    /// <summary>게이트웨이와 원격 PC 에 같은 계정 사용 (promptcredentialonce)</summary>
+    public bool GatewayCredSharing { get; init; } = true;
+
+    /// <summary>
+    /// 이 호스트에 쓸 RD 게이트웨이: 호스트에 적은 값이 있으면 그 값(항상 사용), 없으면 Default.rdp 설정(사용 방식이 0 이 아닐 때).
+    /// (게이트웨이 주소, 사용 방식) — 쓰지 않으면 null
+    /// </summary>
+    public (string Host, int Usage)? GatewayFor(string? hostGateway) =>
+        !string.IsNullOrWhiteSpace(hostGateway) ? (hostGateway.Trim(), 1)
+        : !string.IsNullOrWhiteSpace(GatewayHost) && GatewayUsage != 0 ? (GatewayHost!, GatewayUsage)
+        : null;
 
     public static string DefaultPath =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Default.rdp");
@@ -98,6 +115,10 @@ public sealed class RdpDefaults
             AudioMode = I("audiomode", 0),
             AutoReconnect = B("autoreconnection enabled", true),
             KeyboardHook = I("keyboardhook", 2),
+            GatewayHost = v.TryGetValue("gatewayhostname", out var gw) && gw.Length > 0 ? gw : null,
+            GatewayUsage = I("gatewayusagemethod", 0),
+            GatewayCredsSource = I("gatewaycredentialssource", 4),
+            GatewayCredSharing = B("promptcredentialonce", true),
         };
     }
 }

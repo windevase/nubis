@@ -118,6 +118,7 @@
   "SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}": "Could not open SFTP as {0}, opening as {1} instead — {2}",
   "터미널이 {0} 로 전환되어 SFTP 도 {0} 권한으로 엽니다.": "The terminal switched to {0}, so SFTP will also be opened as {0}.",
   "sudo 비밀번호": "sudo password",
+  "RD 게이트웨이 설정을 적용하지 못했습니다: {0}": "Could not apply the RD Gateway settings: {0}",
   "OpenSSH known_hosts 에서 신뢰한 호스트키: {0} {1}": "Host key trusted from OpenSSH known_hosts: {0} {1}",
   "OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}": "Not connecting: this host key is revoked (@revoked) in OpenSSH known_hosts: {0}",
   "OpenSSH(known_hosts)에 저장된 이 서버의 키와 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 이 키를 신뢰하고 접속할까요?": "This differs from the key OpenSSH (known_hosts) has saved for this server. Unless the server was reinstalled or the IP now points to a different server, this may be a man-in-the-middle attack.\nTrust this key and connect anyway?",

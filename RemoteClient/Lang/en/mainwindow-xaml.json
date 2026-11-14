@@ -1,4 +1,6 @@
 {
+  "RD 게이트웨이 (선택)": "RD Gateway (optional)",
+  "예: rdgw.example.com  /  rdgw.example.com:443": "e.g. rdgw.example.com  /  rdgw.example.com:443",
   "닫기": "Close",
   "연결": "Connect",
   "공인 IP로 연결": "Connect via public IP",

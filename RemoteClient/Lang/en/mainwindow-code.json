@@ -67,6 +67,8 @@
   "예: ubuntu  /  DOMAIN\\user": "e.g. ubuntu  /  DOMAIN\\user",
   "비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.": "Leave blank to be asked when connecting. Saved encrypted with Windows DPAPI.",
   "개인키 파일 (선택)": "Private key file (optional)",
+  "비워 두면 원격 데스크톱 연결(mstsc) 기본 설정의 게이트웨이 '{0}' 을 씁니다. 게이트웨이에도 같은 계정으로 로그인합니다.": "Leave blank to use the gateway '{0}' from the Remote Desktop Connection (mstsc) defaults. The same account is used to sign in to the gateway.",
+  "회사 밖에서 RD 게이트웨이를 거쳐야 하는 서버만 적으세요. 게이트웨이에도 같은 계정으로 로그인합니다.": "Fill this in only for servers that must be reached through an RD Gateway (for example from outside the office). The same account is used to sign in to the gateway.",
   "키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.": "If the key has a passphrase, the password field is used as the passphrase.",
   "SSH 개인키 선택": "Select SSH private key",
   "모든 파일|*.*|PuTTY 키 (*.ppk)|*.ppk|PEM (*.pem)|*.pem": "All files|*.*|PuTTY key (*.ppk)|*.ppk|PEM (*.pem)|*.pem",

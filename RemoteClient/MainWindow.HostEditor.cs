@@ -43,6 +43,7 @@ public partial class MainWindow
         EdUser.Text = h?.Username ?? "";
         EdPassword.Password = h?.Password ?? "";
         EdKey.Text = h?.KeyPath ?? "";
+        EdGateway.Text = h?.RdpGateway ?? "";
         _edVaultId = h?.VaultId;
         UpdateAuthUi();
         _editorSnapshot = EditorSnapshot();
@@ -61,7 +62,7 @@ public partial class MainWindow
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
     private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
-        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, _edVaultId);
+        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId);
 
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
@@ -97,6 +98,14 @@ public partial class MainWindow
     private void UpdateProtoUi()
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        GatewayPanel.Visibility = ProtoRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (ProtoRdp.IsChecked == true)
+        {
+            var d = RdpDefaults.Load();
+            GatewayHint.Text = !string.IsNullOrWhiteSpace(d.GatewayHost) && d.GatewayUsage != 0
+                ? L.F("비워 두면 원격 데스크톱 연결(mstsc) 기본 설정의 게이트웨이 '{0}' 을 씁니다. 게이트웨이에도 같은 계정으로 로그인합니다.", d.GatewayHost)
+                : L.T("회사 밖에서 RD 게이트웨이를 거쳐야 하는 서버만 적으세요. 게이트웨이에도 같은 계정으로 로그인합니다.");
+        }
         UpdateAuthUi();
     }
 
@@ -233,6 +242,7 @@ public partial class MainWindow
         h.Username = EdUser.Text.Trim();
         h.Password = EdPassword.Password;
         h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
+        h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
 
         if (_editing == null) _hosts.Add(h);
         _template = null;

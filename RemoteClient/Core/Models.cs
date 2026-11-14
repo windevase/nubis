@@ -24,8 +24,10 @@ public sealed class HostEntry : INotifyPropertyChanged
     public string? ProtectedPassword { get; set; }
     /// <summary>SSH 개인키 파일 경로</summary>
     public string? KeyPath { get; set; }
-    /// <summary>Vault 계정 (사용자명·비밀번호·SSH 키). 호스트에 직접 적은 값이 있으면 그 값이 우선</summary>
+    /// <summary>Vault 계정 (사용자명·비밀번호·SSH 키). 고르면 이 계정이 호스트에 직접 적은 값보다 우선 (적은 값은 숨김, 해제하면 다시 사용)</summary>
     public Guid? VaultId { get; set; }
+    /// <summary>RDP: RD 게이트웨이 ("host" 또는 "host:port"). 비우면 mstsc 의 Default.rdp 게이트웨이 설정을 따른다</summary>
+    public string? RdpGateway { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
