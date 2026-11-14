@@ -1,0 +1,23 @@
+name: Feature request / 기능 제안
+description: Suggest an idea or an improvement. / 아이디어나 개선점을 제안합니다.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve? / 어떤 불편을 해결하나요?
+      description: Describe your situation — what you are trying to do and what gets in the way. / 하려는 일과 막히는 부분.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 제안
+      description: How you imagine it working. / 어떻게 동작하면 좋을지.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / 다른 방법
+      description: Workarounds you use today, or how other tools (OpenSSH, mstsc, WinSCP…) handle it. / 지금 쓰는 우회 방법이나 다른 도구의 방식.
