@@ -9,64 +9,6 @@ using Renci.SshNet.Common;
 
 namespace Nubis;
 
-public static class SshAuth
-{
-    /// <summary>비밀번호/키/키보드 인터랙티브 인증을 모두 담은 ConnectionInfo</summary>
-    public static ConnectionInfo Build(HostEntry host, string user, string password, int timeoutSec = 15)
-    {
-        var methods = new List<AuthenticationMethod>();
-        if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
-        if (!string.IsNullOrEmpty(password))
-        {
-            methods.Add(new PasswordAuthenticationMethod(user, password));
-            var kbd = new KeyboardInteractiveAuthenticationMethod(user);
-            kbd.AuthenticationPrompt += (_, e) =>
-            {
-                foreach (var p in e.Prompts) p.Response = password;
-            };
-            methods.Add(kbd);
-        }
-        if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
-        return new ConnectionInfo(host.Address, host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
-    }
-
-    /// <summary>
-    /// 개인키: Vault 키 내용이 있으면 그것, 없으면 키 파일. 키에 암호가 걸려 있으면
-    /// Vault 에 저장한 키 암호 → (없으면) 비밀번호 순으로 쓴다.
-    /// </summary>
-    private static PrivateKeyFile? LoadKey(HostEntry host, string password)
-    {
-        if (!string.IsNullOrEmpty(host.KeyMaterial))
-        {
-            var bytes = System.Text.Encoding.UTF8.GetBytes(host.KeyMaterial);
-            var pass = !string.IsNullOrEmpty(host.KeyPassphrase) ? host.KeyPassphrase : password;
-            try { return new PrivateKeyFile(new System.IO.MemoryStream(bytes)); }
-            catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(new System.IO.MemoryStream(bytes), pass); }
-        }
-        if (string.IsNullOrWhiteSpace(host.KeyPath)) return null;
-        try { return new PrivateKeyFile(host.KeyPath); }
-        catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(host.KeyPath, password); }
-    }
-
-    public static string HostKeyId(HostEntry h) => $"{h.Address}:{h.Port}";
-    public static string Fingerprint(HostKeyEventArgs e) => $"{e.HostKeyName} SHA256:{e.FingerPrintSHA256}";
-
-    /// <summary>
-    /// 비대화형 연결용 호스트키 확인 (ssh 의 accept-new 와 같음): 처음 보는 서버는 저장 후 신뢰, 저장값과 다르면 거부.
-    /// 거부 사유를 반환하고, 신뢰하면 null.
-    /// </summary>
-    public static string? VerifyAcceptNew(HostEntry h, HostKeyEventArgs e)
-    {
-        var id = HostKeyId(h);
-        var fp = Fingerprint(e);
-        var known = KnownHostStore.Get(id);
-        if (known == null) { KnownHostStore.Set(id, fp); return null; }
-        if (KnownHostStore.IsRejected(known))
-            return "사용자가 이 서버의 호스트키를 거부한 적이 있습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
-        return known == fp ? null : $"호스트키가 저장된 값과 다릅니다 ({known} → {fp}). Known Hosts 에서 확인 후 삭제하세요.";
-    }
-}
-
 public sealed record ExecResult(HostEntry Host, bool Ok, int? ExitCode, string Output, string Error, long ElapsedMs);
 
 /// <summary>여러 서버에 비대화형 명령을 병렬 실행 (Claude run_command 용)</summary>
@@ -103,18 +45,21 @@ public static class SshExec
         var sw = Stopwatch.StartNew();
         try
         {
-            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
+            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
                 return new ExecResult(h, false, null, "", "저장된 계정 정보가 없습니다 (호스트 또는 클라우드 프로필 설정에 계정 저장 필요)", sw.ElapsedMilliseconds);
+
+            // 점프 서버(ProxyJump)를 거치면 터널로 사설 주소에만 (비대화형 — 점프 서버가 OTP 를 요구하면 실패)
+            using var tunnel = h.Jump is { } jump ? JumpTunnel.Open(jump, h.Address, h.Port, null, SshAuth.VerifyAcceptNew) : null;
 
             // 시도 순서: 사설 IP → 공인 IP. 연결이 안 될 때만 다음 주소로 (인증 실패·호스트키 불일치는 바로 중단)
             SshClient? client = null;
             var errors = new List<string>();
             string usedAddress = "";
-            foreach (var addr in h.AddressCandidates())
+            foreach (var addr in tunnel != null ? [h.Address] : h.AddressCandidates())
             {
                 var target = h.Clone();
                 target.Address = addr;
-                var c = new SshClient(SshAuth.Build(target, h.Username, h.Password));
+                var c = new SshClient(SshAuth.Build(target, h.Username, h.Password, tunnel: tunnel));
                 string? hostKeyError = null;
                 // 비대화형이므로 처음 보는 서버는 저장 후 신뢰(accept-new), 저장값과 다르면 거부
                 c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
@@ -159,14 +104,16 @@ public static class SshExec
     /// </summary>
     public static SftpClient OpenSftp(HostEntry h, int timeoutSec = 15)
     {
-        if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
+        if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
             throw new InvalidOperationException("저장된 계정 정보가 없습니다 (호스트·Vault·클라우드 프로필 설정에 계정 저장 필요)");
         var errors = new List<string>();
-        foreach (var addr in h.AddressCandidates())
+        // 점프 서버를 거치면 터널을 SFTP 클라이언트가 닫힐 때 함께 닫는다
+        var tunnel = h.Jump is { } jump ? JumpTunnel.Open(jump, h.Address, h.Port, null, SshAuth.VerifyAcceptNew) : null;
+        foreach (var addr in tunnel != null ? [h.Address] : h.AddressCandidates())
         {
             var target = h.Clone();
             target.Address = addr;
-            var c = new SftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec));
+            var c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel);
             string? hostKeyError = null;
             c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
             try
@@ -183,6 +130,16 @@ public static class SshExec
             }
         }
         throw new InvalidOperationException("SFTP 연결 실패 — " + string.Join(" / ", errors));
+    }
+
+    /// <summary>점프 서버 터널을 쓰는 SFTP 연결 — 닫을 때 터널도 닫는다</summary>
+    private sealed class TunneledSftpClient(ConnectionInfo info, JumpTunnel? tunnel) : SftpClient(info)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) tunnel?.Dispose();
+        }
     }
 
     private static string Trim(string? s)

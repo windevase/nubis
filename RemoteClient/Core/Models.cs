@@ -24,8 +24,19 @@ public sealed class HostEntry : INotifyPropertyChanged
     public string? ProtectedPassword { get; set; }
     /// <summary>SSH 개인키 파일 경로</summary>
     public string? KeyPath { get; set; }
-    /// <summary>Vault 계정 (사용자명·비밀번호·SSH 키). 호스트에 직접 적은 값이 있으면 그 값이 우선</summary>
+    /// <summary>Vault 계정 (사용자명·비밀번호·SSH 키). 고르면 이 계정이 호스트에 직접 적은 값보다 우선 (적은 값은 숨김, 해제하면 다시 사용)</summary>
     public Guid? VaultId { get; set; }
+    /// <summary>RDP: RD 게이트웨이 ("host" 또는 "host:port"). 비우면 mstsc 의 Default.rdp 게이트웨이 설정을 따른다</summary>
+    public string? RdpGateway { get; set; }
+    /// <summary>
+    /// SSH 인증 질문에 기억해 둔 답 (질문 → 답). "Choose [1] Push, or [2] TOTP" 같은 고정 선택만 —
+    /// 가려진 질문은 빈 답만 저장한다 (KbdAuth.CanUseRemembered). hosts.json 은 파일 전체가 DPAPI 암호화
+    /// </summary>
+    public Dictionary<string, string>? PromptAnswers { get; set; }
+    /// <summary>SSH: 이 호스트를 거쳐 접속 (ProxyJump). 목록의 다른 SSH 호스트 Id</summary>
+    public Guid? JumpHostId { get; set; }
+    /// <summary>접속용 사본에만: 점프 서버의 접속용 사본 (계정·주소가 채워진 것). 저장하지 않는다</summary>
+    [JsonIgnore] public HostEntry? Jump { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
@@ -107,17 +118,23 @@ public sealed class HostEntry : INotifyPropertyChanged
                 if (IsStopped) parts.Add(CloudState!.ToLowerInvariant());
                 return string.Join(" · ", parts);
             }
-            if (!string.IsNullOrWhiteSpace(Username)) parts.Add(Username);
+            // 실제로 로그인하는 사용자명 — 직접 고른 Vault 계정에 사용자명이 있으면 그 값 (호스트에 숨겨진 값이 아니라)
+            var user = VaultStore.Get(VaultId) is { } v && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : Username;
+            if (!string.IsNullOrWhiteSpace(user)) parts.Add(user);
             var addr = UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress;
             if (!string.IsNullOrWhiteSpace(Label)) parts.Add(Port == DefaultPort(Protocol) ? addr : $"{addr}:{Port}");
             return string.Join(", ", parts);
         }
     }
 
+    /// <summary>클라우드 프로필 찾기 (툴팁의 계정 출처 표시용, MainWindow 가 연결)</summary>
+    public static Func<Guid?, CloudProfile?>? ProfileResolver { get; set; }
+
     [JsonIgnore]
     public string ToolTipText =>
         $"{DisplayName}\n" + L.F("사설 {0}", PrimaryAddress) + (HasPublicIp ? "   " + L.F("공인 {0}", PublicIp) : "") + $"   :{Port} ({ProtocolText})\n" +
         L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
+        (Protocol != Protocol.Local && CredentialSourceText(ProfileResolver?.Invoke(CloudProfileId)) is { } src ? L.F("로그인 계정: {0}", src) + "\n" : "") +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
         "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
 
@@ -161,13 +178,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// 접속용 계정을 채운 사본: Vault 항목을 쓰면 그 값을 먼저 채우고(호스트 설정이 우선),
-    /// 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
+    /// 접속용 계정을 채운 사본. 호스트에 직접 고른 Vault 계정이면 그 계정이 우선(호스트에 따로 적힌 값은 숨겨진 채 쓰지 않음),
+    /// 기본 계정(프로필·설정)이면 호스트에 비어 있는 값만 채운다. 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
     /// </summary>
     public HostEntry WithDefaults(CloudProfile? p)
     {
-        var vid = EffectiveVaultId(p);
-        var c = vid != null ? VaultStore.Apply(Clone(), vid) : this;
+        var (vid, source) = ResolveVault(p);
+        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault: source == "host") : this;
         if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
         if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;
@@ -205,6 +222,36 @@ public sealed class HostEntry : INotifyPropertyChanged
         c._highlighted = false;
         c._selected = false;
         return c;
+    }
+
+    /// <summary>
+    /// 열려 있는 탭의 접속용 사본에 저장된 호스트·Vault 의 최신 계정을 반영한다 (탭은 처음 열 때의 사본을 들고 있어,
+    /// 그 뒤에 Vault 비밀번호를 고쳐도 다시 연결할 때 예전 값을 쓰던 문제). 계정이 바뀌었으면 true.
+    /// </summary>
+    public bool RefreshCredentialsFrom(HostEntry fresh)
+    {
+        var changed = Username != fresh.Username || ProtectedPassword != fresh.ProtectedPassword || KeyPath != fresh.KeyPath ||
+                      KeyMaterial != fresh.KeyMaterial || KeyPassphrase != fresh.KeyPassphrase || VaultId != fresh.VaultId;
+        if (!changed) return false;
+        (Username, ProtectedPassword, KeyPath, KeyMaterial, KeyPassphrase, VaultId) =
+            (fresh.Username, fresh.ProtectedPassword, fresh.KeyPath, fresh.KeyMaterial, fresh.KeyPassphrase, fresh.VaultId);
+        return true;
+    }
+
+    /// <summary>접속할 때 쓰는 계정이 어디서 왔는지 (터미널 첫 줄·카드 툴팁 표시용). 사용자명이 없으면 null</summary>
+    public string? CredentialSourceText(CloudProfile? p)
+    {
+        var (id, source) = ResolveVault(p);
+        if (id != null && VaultStore.Get(id) is { } v)
+            return source switch
+            {
+                "host" => L.F("Vault 계정 '{0}'", v.Name),
+                "profile" => L.F("클라우드 프로필 기본 Vault 계정 '{0}'", v.Name),
+                _ => L.F("기본 Vault 계정 '{0}'", v.Name),
+            };
+        if (!string.IsNullOrEmpty(ProtectedPassword) || !string.IsNullOrWhiteSpace(KeyPath)) return L.T("이 호스트에 저장된 계정");
+        if (p != null && (!string.IsNullOrEmpty(p.DefaultUsername) || !string.IsNullOrEmpty(p.ProtectedDefaultPassword))) return L.T("클라우드 프로필 기본 계정");
+        return null;
     }
 
     // ----- 화면 표시용: 키보드로 고른 카드 -----

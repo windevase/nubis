@@ -157,11 +157,10 @@ public partial class MainWindow
         var proto = targets.All(h => h.Protocol == Protocol.Rdp) ? Protocol.Rdp : Protocol.Ssh;
         var current = targets.Select(h => h.VaultId).Distinct().Count() == 1 ? targets[0].VaultId : null;
         if (VaultPickerDialog.Pick(this, current, proto, L.F("고른 호스트 {0}개가 이 계정으로 로그인합니다.", targets.Count)) is not { } id
-            || VaultStore.Get(id) is not { } v) return;
+            || VaultStore.Get(id) == null) return;
 
-        // 호스트에 직접 적은 값은 Vault 보다 우선 — 지울지 묻는다 (그룹 일괄 지정과 같은 창)
-        if (AskClearOwnCredentials(targets, v) is not { } clearOwn) return;
-        ApplyToSelected(new BulkEdit { SetVault = true, VaultId = id, ClearOwnCredentials = clearOwn }, targets);
+        // 직접 고른 Vault 계정은 호스트에 적힌 값보다 우선 (적힌 값은 숨겨 두고 해제하면 다시 쓴다) — 지울지 묻지 않는다
+        ApplyToSelected(new BulkEdit { SetVault = true, VaultId = id }, targets);
     }
 
     private void BulkEditSelected()

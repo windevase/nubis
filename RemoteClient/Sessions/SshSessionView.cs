@@ -46,11 +46,15 @@ public sealed class SshSessionView : UserControl, ISessionView
     private bool _watchingPrompt;
     private string? _lastPromptScreen;
 
+    private readonly SessionSource? _source;
+
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
-    public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
+    /// <param name="source">저장된 호스트의 최신 계정·출처 (다시 연결할 때 반영, 목록에 있는 호스트만)</param>
+    public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null, SessionSource? source = null)
     {
         _host = host;
         _saveCredentials = saveCredentials;
+        _source = source;
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -90,6 +94,8 @@ public sealed class SshSessionView : UserControl, ISessionView
     {
         await panel.OpenAsync();
         if (!SettingsStore.Current.SftpFollowTerminal) return;
+        // 터미널이 이미 다른 사용자(sudo su -)로 전환된 뒤에 패널을 연 경우
+        if (FollowPromptUser(await _term.ReadBufferAsync(8))) return;
         if ((_lastCwd ?? _promptCwd ?? await TerminalCwdAsync()) is { } cwd) await panel.FollowAsync(cwd);
     }
 
@@ -105,9 +111,46 @@ public sealed class SshSessionView : UserControl, ISessionView
     /// <summary>Enter 친 뒤: OSC 7 을 보내지 않는 셸(대부분의 서버 기본 bash)이면 새 프롬프트가 그려지길 기다린다</summary>
     private void OnCommandEntered()
     {
-        if (_lastCwd != null || !SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true, IsOpen: true }) return;
+        // OSC 7 로 폴더를 받는 셸이어도 프롬프트는 본다 — sudo su - 같은 사용자 전환은 프롬프트로만 알 수 있다
+        if (!SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true, IsOpen: true }) return;
         _watchingPrompt = true;
         _term.WatchPrompt();
+    }
+
+    /// <summary>
+    /// 프롬프트의 사용자가 바뀌었으면(sudo su - → root, exit → 로그인 계정) SFTP 도 그 사용자 권한으로 바꾼다.
+    /// 바꾸는 중이면 true — 폴더 따라가기는 전환이 끝난 뒤 새 홈 기준으로 한다.
+    /// </summary>
+    private bool FollowPromptUser(string screen)
+    {
+        if (_sftp == null || _authUser == null || TerminalCwd.PromptUser(screen) is not { } user) return false;
+        var want = user == _authUser ? null : user;
+        if (want == _sftp.RunAs || _sftp.RunAsFailed(want) || _switchingUser) return false;
+        _ = SwitchSftpUserAsync(want, screen);
+        return true;
+    }
+
+    private bool _switchingUser;
+
+    private async System.Threading.Tasks.Task SwitchSftpUserAsync(string? user, string screen)
+    {
+        _switchingUser = true;
+        try
+        {
+            // 새 셸 — 앞 셸이 OSC 7 로 알려준 폴더는 더 이상 맞지 않는다
+            _lastCwd = null;
+            _promptCwd = null;
+            _lastPromptScreen = null;
+            if (_sftp == null || !await _sftp.RunAsAsync(user)) return;
+            // 홈이 바뀌었으니(~ = /root 등) 새 홈 기준으로 프롬프트의 폴더를 다시 계산
+            if (TerminalCwd.Resolve(screen, _sftp.Home, _sftp.Home) is { } cwd)
+            {
+                _promptCwd = cwd;
+                await _sftp.FollowAsync(cwd);
+            }
+            else await _sftp.FollowAsync(_sftp.Home);
+        }
+        finally { _switchingUser = false; }
     }
 
     /// <summary>
@@ -117,10 +160,11 @@ public sealed class SshSessionView : UserControl, ISessionView
     private void OnPromptScreen(string screen)
     {
         if (!_watchingPrompt || _sftp == null) return;
-        if (_lastCwd != null) { _watchingPrompt = false; _term.StopWatchPrompt(); return; }   // 셸이 OSC 7 을 보내기 시작함
         // 화면이 그대로인데 다시 오는 경우(벨 등) — 같은 cd 를 이미 옮긴 폴더 기준으로 한 번 더 계산하지 않게
         if (screen == _lastPromptScreen) return;
         _lastPromptScreen = screen;
+        if (FollowPromptUser(screen)) return;
+        if (_lastCwd != null) return;   // 셸이 OSC 7 로 폴더를 알려줌 — 프롬프트로 계산하지 않는다
         if (TerminalCwd.Resolve(screen, _sftp.Home, _promptCwd ?? _sftp.Home) is not { } cwd) return;   // 아직 명령 실행 중
         if (cwd == _promptCwd) return;   // 폴더 그대로 (패널에서 직접 옮겨 둔 위치는 건드리지 않음)
         _promptCwd = cwd;
@@ -162,7 +206,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         {
             if (_sftp == null)
             {
-                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync);
+                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync, () => _client);
                 _sftp.CloseRequested += () => ToggleSftp(false);
                 Grid.SetColumn(_sftp, 1);
                 ((Grid)Content).Children.Add(_sftp);
@@ -215,13 +259,24 @@ public sealed class SshSessionView : UserControl, ISessionView
         var gen = ++_gen;   // 이전 연결의 Closed/Error 이벤트는 무시
         DisposeSsh();
 
+        // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로.
+        // 직전에 인증이 거부돼 계정을 물을 차례여도 바뀐 값을 먼저 시도한다
+        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh))
+        {
+            _authUser = null;
+            _authPassword = null;
+            _askCredentials = false;
+            _term.Info(L.T("저장된 계정이 바뀌어 새 값으로 연결합니다."));
+        }
+
         // 다시 연결할 때는 직전에 로그인에 성공한 계정을 그대로 (접속 때 입력만 하고 저장하지 않은 경우에도 다시 묻지 않게)
         var user = _authUser ?? _host.Username;
         var password = _authUser != null ? _authPassword ?? "" : _host.Password;
         var save = false;
+        var credSource = _authUser != null ? L.T("직전에 로그인한 계정") : _source?.CredentialSource();
 
         // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
-        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey))
+        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey && !SshAuth.HasDefaultKeyFiles()))
         {
             var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", user, _saveCredentials != null);
             if (cred == null)
@@ -234,10 +289,19 @@ public sealed class SshSessionView : UserControl, ISessionView
             user = cred.Value.User;
             password = cred.Value.Password;
             save = cred.Value.Save;
+            credSource = L.T("입력한 계정");
         }
 
-        _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ...");
+        // 어느 계정으로 시도하는지 보이게 (Vault · 호스트에 저장 · 입력) — 인증이 실패했을 때 무엇을 고쳐야 하는지 알 수 있게
+        _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ..." + (credSource != null ? $"  ({credSource})" : ""));
         var (cols, rows) = (_term.Cols, _term.Rows);
+        var target = $"{user}@{_host.DisplayName} ({_host.Address})";
+        // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)·질문 진행은 터미널에 보여준다
+        var prompter = new AuthPrompter(
+            req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
+            banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"),
+            _source?.PromptAnswers?.Invoke(),
+            _source?.RememberAnswer is { } rememberAnswer ? (q, a) => Dispatcher.Invoke(() => rememberAnswer(q, a)) : null);
 
         try
         {
@@ -245,13 +309,26 @@ public sealed class SshSessionView : UserControl, ISessionView
             _hostKeyRejected = false;
             await Task.Run(() =>
             {
-                var client = new SshClient(SshAuth.Build(_host, user, password)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                // 점프 서버(ProxyJump)를 거치면 먼저 터널을 연다 — 점프 서버의 OTP 등도 입력 창으로 묻는다
+                JumpTunnel? tunnel = null;
+                if (_host.Jump is { } jump)
+                {
+                    _term.Info(L.F("점프 서버 {0} ({1}) 를 거쳐 연결합니다.", jump.DisplayName, jump.Address));
+                    var jumpTarget = L.F("점프 서버 · {0}@{1} ({2})", jump.Username, jump.DisplayName, jump.Address);
+                    var jumpPrompter = new AuthPrompter(
+                        req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), jumpTarget, req)),
+                        banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
+                    tunnel = JumpTunnel.Open(jump, _host.Address, _host.Port, jumpPrompter, SshAuth.VerifyAcceptNew);
+                }
+                var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter, tunnel: tunnel)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
                 ShellStream? shell = null;
                 try
                 {
                     client.HostKeyReceived += OnHostKey;
                     client.ErrorOccurred += (_, e) => { if (gen == _gen) OnDisconnected(e.Exception.Message); };
-                    client.Connect();
+                    prompter.Attach(client);
+                    try { client.Connect(); }
+                    finally { prompter.Detach(client); }
 
                     shell = client.CreateShellStream("xterm-256color", cols, rows, 0, 0, 65536);
                     shell.DataReceived += OnData;
@@ -262,6 +339,7 @@ public sealed class SshSessionView : UserControl, ISessionView
                     // 연결은 됐는데 셸 생성에 실패한 경우에도 연결을 남기지 않는다
                     try { shell?.Dispose(); } catch { }
                     try { client.Dispose(); } catch { }
+                    tunnel?.Dispose();
                     throw;
                 }
 
@@ -270,10 +348,12 @@ public sealed class SshSessionView : UserControl, ISessionView
                 {
                     try { shell.Dispose(); } catch { }
                     try { client.Dispose(); } catch { }
+                    tunnel?.Dispose();
                     throw new OperationCanceledException();
                 }
                 _client = client;
                 _shell = shell;
+                _tunnel = tunnel;
             });
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
@@ -283,6 +363,14 @@ public sealed class SshSessionView : UserControl, ISessionView
             _autoAttempts = 0;
             _promptCwd = null;   // 새 셸은 홈 폴더에서 시작
             _lastPromptScreen = null;
+            _sftp?.ResetRunAs();   // 새 셸은 로그인 계정으로 시작
+            if (prompter.NewPassword is { } newPassword)
+            {
+                // 서버 요구로 비밀번호를 바꿈 — 이 호스트에 저장된 비밀번호를 쓰던 경우면 새 값으로 저장
+                if (_saveCredentials != null && password == _host.Password && !string.IsNullOrEmpty(_host.Password)) save = true;
+                password = newPassword;
+                _term.Info(L.T("비밀번호를 변경했습니다."), "32");
+            }
             _authUser = user;
             _authPassword = password;
             // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
@@ -308,6 +396,9 @@ public sealed class SshSessionView : UserControl, ISessionView
             // 저장된 비밀번호가 바뀐 경우 등: 다음 시도에서 계정을 다시 묻는다
             _askCredentials = true;
             _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
+            if (prompter.LastAnsweredWithSavedPassword)
+                _term.Info(L.F("{0} 의 비밀번호를 서버가 거부했습니다. 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다.", credSource ?? L.T("저장된 계정")), "33");
+            else if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
             _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
@@ -330,7 +421,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _ = ConnectAsync();
             return;
         }
-        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.HasPublicIp && _host.Address != _host.PublicIp)
+        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.Jump == null && _host.HasPublicIp && _host.Address != _host.PublicIp)
         {
             // 사설 IP 로 연결이 안 되면(VPN 꺼짐 등) 공인 IP 로 한 번 더 — 인증 실패는 여기로 오지 않는다
             _triedPublic = true;
@@ -393,9 +484,26 @@ public sealed class SshSessionView : UserControl, ISessionView
         var known = KnownHostStore.Get(key);
         if (known == fp) { e.CanTrust = true; return; }
 
+        // Nubis 가 처음 보는 서버: OpenSSH 의 known_hosts 를 참고 — ssh 로 이미 신뢰한 키면 묻지 않고, 다른 키면 바뀐 키처럼 경고
+        var openSsh = known == null ? OpenSshKnownHosts.Check(_host.Address, _host.Port, e.HostKey) : OpenSshKnownHosts.Verdict.Unknown;
+        if (openSsh == OpenSshKnownHosts.Verdict.Match)
+        {
+            KnownHostStore.Set(key, fp);
+            _term.Info(L.F("OpenSSH known_hosts 에서 신뢰한 호스트키: {0} {1}", key, fp));
+            e.CanTrust = true;
+            return;
+        }
+        if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
+        {
+            _hostKeyRejected = true;
+            _term.Info(L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}", fp), "31");
+            e.CanTrust = false;
+            return;
+        }
+
         // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)
         // 저장된 키와 다른 경우(중간자 공격 가능)와 사용자가 전에 거부한 키는 아래에서 항상 묻는다
-        if (known == null && !SettingsStore.Current.SshHostKeyPrompt)
+        if (known == null && openSsh == OpenSshKnownHosts.Verdict.Unknown && !SettingsStore.Current.SshHostKeyPrompt)
         {
             KnownHostStore.Set(key, fp);
             _term.Info(L.F("새 호스트키 저장: {0} {1}", key, fp));
@@ -405,7 +513,11 @@ public sealed class SshSessionView : UserControl, ISessionView
         // 사용자가 전에 거부한 키는 "아직 신뢰 안 함" 으로 보고 다시 묻는다
         if (known != null && KnownHostStore.IsRejected(known)) known = null;
 
-        var (title, msg, detail, icon) = known == null
+        var (title, msg, detail, icon) = openSsh == OpenSshKnownHosts.Verdict.Mismatch
+            ? (L.T("호스트키가 바뀌었습니다"),
+               L.T("OpenSSH(known_hosts)에 저장된 이 서버의 키와 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 이 키를 신뢰하고 접속할까요?"),
+               $"{key}\n{fp}", MessageBoxImage.Warning)
+            : known == null
             ? (L.T("처음 접속하는 서버입니다"),
                L.F("{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.", _host.DisplayName),
                $"{key}\n{fp}", MessageBoxImage.Question)
@@ -450,15 +562,19 @@ public sealed class SshSessionView : UserControl, ISessionView
 
     private void DisposeSsh()
     {
-        var shell = _shell; var client = _client;
-        _shell = null; _client = null;
+        var shell = _shell; var client = _client; var tunnel = _tunnel;
+        _shell = null; _client = null; _tunnel = null;
         Task.Run(() =>
         {
             try { shell?.Dispose(); } catch { }
             try { if (client?.IsConnected == true) client.Disconnect(); } catch { }
             try { client?.Dispose(); } catch { }
+            tunnel?.Dispose();   // 점프 서버 연결은 대상 서버 연결을 닫은 뒤에
         });
     }
+
+    /// <summary>점프 서버 터널 (ProxyJump 를 쓸 때만)</summary>
+    private JumpTunnel? _tunnel;
 
     // ---------- ISessionView ----------
     public void FocusSession() => _term.FocusTerminal();

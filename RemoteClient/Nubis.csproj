@@ -14,7 +14,7 @@
     <ApplicationIcon>Assets\nubis.ico</ApplicationIcon>
     <Product>Nubis</Product>
     <Description>Nubis - Cloud &amp; AI Remote Client</Description>
-    <Version>0.2.5</Version>
+    <Version>0.3.0</Version>
     <Authors>windevase</Authors>
     <Company>Nubis</Company>
     <Copyright>Copyright (c) 2026 windevase. MIT License.</Copyright>
@@ -45,7 +45,7 @@
     <PackageReference Include="Azure.Identity" Version="1.21.0" />
     <PackageReference Include="Google.Apis.Auth" Version="1.78.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
-    <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0.1-nubis" />
   </ItemGroup>
 
 </Project>

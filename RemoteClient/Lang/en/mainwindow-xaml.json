@@ -1,4 +1,8 @@
 {
+  "RD 게이트웨이 (선택)": "RD Gateway (optional)",
+  "점프 서버 (선택)": "Jump host (optional)",
+  "이 서버에 바로 닿지 않으면 거쳐 갈 SSH 호스트를 고르세요 (ssh 의 ProxyJump). 점프 서버의 계정·Vault·OTP 설정을 그대로 씁니다.": "If this server can't be reached directly, pick the SSH host to go through (ssh's ProxyJump). The jump host's own account, Vault and OTP settings are used.",
+  "예: rdgw.example.com  /  rdgw.example.com:443": "e.g. rdgw.example.com  /  rdgw.example.com:443",
   "닫기": "Close",
   "연결": "Connect",
   "공인 IP로 연결": "Connect via public IP",

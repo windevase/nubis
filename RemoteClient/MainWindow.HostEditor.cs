@@ -43,7 +43,12 @@ public partial class MainWindow
         EdUser.Text = h?.Username ?? "";
         EdPassword.Password = h?.Password ?? "";
         EdKey.Text = h?.KeyPath ?? "";
+        EdGateway.Text = h?.RdpGateway ?? "";
         _edVaultId = h?.VaultId;
+        _edClearAnswers = false;
+        UpdateRememberedUi(h);
+        _edJumpId = h?.JumpHostId;
+        UpdateJumpUi();
         UpdateAuthUi();
         _editorSnapshot = EditorSnapshot();
 
@@ -61,7 +66,7 @@ public partial class MainWindow
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
     private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
-        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, _edVaultId);
+        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId, _edClearAnswers, _edJumpId);
 
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
@@ -97,6 +102,15 @@ public partial class MainWindow
     private void UpdateProtoUi()
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        JumpPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        GatewayPanel.Visibility = ProtoRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (ProtoRdp.IsChecked == true)
+        {
+            var d = RdpDefaults.Load();
+            GatewayHint.Text = !string.IsNullOrWhiteSpace(d.GatewayHost) && d.GatewayUsage != 0
+                ? L.F("비워 두면 원격 데스크톱 연결(mstsc) 기본 설정의 게이트웨이 '{0}' 을 씁니다. 게이트웨이에도 같은 계정으로 로그인합니다.", d.GatewayHost)
+                : L.T("회사 밖에서 RD 게이트웨이를 거쳐야 하는 서버만 적으세요. 게이트웨이에도 같은 계정으로 로그인합니다.");
+        }
         UpdateAuthUi();
     }
 
@@ -132,27 +146,27 @@ public partial class MainWindow
             EdVaultDetail.Text = L.T("다른 계정을 고르거나 해제하세요.");
         }
 
-        VaultHint.Text = v == null
-            ? DefaultVaultHint(ssh)
-            : L.T("이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.");
+        // Vault 계정을 고르면 그 계정이 우선 — 이 호스트에 따로 저장된 계정 정보는 숨기고 쓰지 않는다(지우지 않음).
+        // 해제하면 숨겼던 값이 다시 보이고 그 값으로 로그인한다 (HostEntry.WithDefaults · VaultStore.Apply 와 같은 규칙)
+        var vaultChosen = _edVaultId != null && v != null;
+        var vaultUser = vaultChosen && !string.IsNullOrWhiteSpace(v!.Username) ? v.Username : null;
+        VaultHint.Text = !vaultChosen
+            ? (missing ? "" : DefaultVaultHint(ssh))
+            : v!.HasPassword || (v.HasKey && ssh)
+                ? L.T("이 Vault 계정으로 로그인합니다.")
+                : L.T("이 Vault 계정에는 비밀번호가 없어 접속할 때 비밀번호를 묻습니다.");
+        HostUserPanel.Visibility = vaultUser == null ? Visibility.Visible : Visibility.Collapsed;
+        HostSecretPanel.Visibility = vaultChosen ? Visibility.Collapsed : Visibility.Visible;
+        var hasHidden = vaultChosen && (EdPassword.Password.Length > 0 || EdKey.Text.Trim().Length > 0 ||
+                                        (vaultUser != null && EdUser.Text.Trim().Length > 0));
+        HiddenCredNote.Visibility = hasHidden ? Visibility.Visible : Visibility.Collapsed;
 
-        // 직접 입력 칸: Vault 값을 쓰는지 바로 보이게
-        var vaultUser = v != null && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : null;
-        EdUserLabel.Text = vaultUser != null ? L.T("사용자명 (비워 두면 Vault)") : L.T("사용자명");
-        EdUser.Tag = vaultUser != null ? L.F("Vault 사용자: {0}", vaultUser) : L.T("예: ubuntu  /  DOMAIN\\user");
-        EdPasswordLabel.Text = v?.HasPassword == true ? L.T("비밀번호 (비워 두면 Vault)") : L.T("비밀번호");
-        PwHint.Text = v?.HasPassword == true
-            ? L.T("비워 두면 Vault 계정의 비밀번호를 씁니다.")
-            : v?.HasKey == true && ssh
-                ? L.T("Vault 키로 인증합니다. 키 인증이 안 되는 서버를 위해 비밀번호를 넣어 둘 수도 있습니다.")
-                : v != null && !ssh
-                    ? L.T("이 Vault 계정에는 비밀번호가 없어 RDP 접속 때 비밀번호를 묻습니다.")
-                    : L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
-
-        EdKeyLabel.Text = v?.HasKey == true ? L.T("개인키 파일 (비워 두면 Vault 키)") : L.T("개인키 파일 (선택)");
-        KeyHint.Text = v?.HasKey == true
-            ? L.T("Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요.")
-            : L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
+        EdUserLabel.Text = vaultChosen ? L.T("사용자명 (이 Vault 계정에 사용자명이 없음)") : L.T("사용자명");
+        EdUser.Tag = L.T("예: ubuntu  /  DOMAIN\\user");
+        EdPasswordLabel.Text = L.T("비밀번호");
+        PwHint.Text = L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
+        EdKeyLabel.Text = L.T("개인키 파일 (선택)");
+        KeyHint.Text = L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
     }
 
     /// <summary>Vault 계정을 고르지 않았을 때 실제로 쓰일 기본 계정 안내 (프로필 기본 계정 · 설정의 기본 Vault)</summary>
@@ -172,6 +186,56 @@ public partial class MainWindow
                 ? L.F("지정하지 않으면 이 클라우드 프로필의 기본 계정 '{0}' 으로 로그인합니다.", d.Name)
                 : L.F("지정하지 않으면 기본 Vault 계정 '{0}' 으로 로그인합니다 (Settings → 기본 Vault 계정).", d.Name);
         return L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.");
+    }
+
+    // 편집 중인 점프 서버 (ProxyJump)
+    private Guid? _edJumpId;
+
+    private void UpdateJumpUi()
+    {
+        var j = _edJumpId is { } id ? _hosts.FirstOrDefault(x => x.Id == id) : null;
+        EdJumpButton.Content = _edJumpId == null ? L.T("없음 (바로 연결)")
+            : j == null ? L.T("삭제된 호스트 — 다른 호스트를 고르거나 없음으로")
+            : $"{j.DisplayName}  ({j.Address})";
+    }
+
+    /// <summary>점프 서버로 쓸 SSH 호스트 고르기 (자기 자신 제외)</summary>
+    private void OnPickJump(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = EdJumpButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var none = new MenuItem { Header = L.T("없음 (바로 연결)") };
+        none.Click += (_, _) => { _edJumpId = null; UpdateJumpUi(); };
+        menu.Items.Add(none);
+        menu.Items.Add(new Separator());
+        foreach (var h in _hosts.Where(x => x.Protocol == Protocol.Ssh && !ReferenceEquals(x, _editing))
+                                .OrderBy(x => x.Group, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            var item = new MenuItem { Header = $"{h.DisplayName}  ({h.Address})" + (h.Group.Length > 0 ? $"  · {h.Group}" : ""), IsChecked = h.Id == _edJumpId };
+            var id = h.Id;
+            item.Click += (_, _) => { _edJumpId = id; UpdateJumpUi(); };
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
+    // 저장할 때 기억한 인증 답을 지울지 (지우기 버튼)
+    private bool _edClearAnswers;
+
+    /// <summary>기억한 인증 답 안내 ("Choose [1] Push, or [2] TOTP: → 1" 등). 없거나 지우기를 눌렀으면 숨긴다</summary>
+    private void UpdateRememberedUi(HostEntry? h)
+    {
+        var answers = _edClearAnswers ? null : h?.PromptAnswers;
+        RememberedPanel.Visibility = answers is { Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        if (answers is not { Count: > 0 }) return;
+        var sample = answers.First();
+        RememberedText.Text = L.F("서버 인증 질문에 기억한 답 {0}개 — 예: {1} → {2}", answers.Count, sample.Key.TrimEnd(':', ' '),
+            sample.Value.Length == 0 ? L.T("(빈 값)") : sample.Value);
+    }
+
+    private void OnClearRemembered(object sender, RoutedEventArgs e)
+    {
+        _edClearAnswers = true;
+        UpdateRememberedUi(_editing);
     }
 
     private void OnPickVault(object sender, RoutedEventArgs e)
@@ -233,6 +297,9 @@ public partial class MainWindow
         h.Username = EdUser.Text.Trim();
         h.Password = EdPassword.Password;
         h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
+        h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
+        if (_edClearAnswers) h.PromptAnswers = null;
+        h.JumpHostId = ssh ? _edJumpId : null;
 
         if (_editing == null) _hosts.Add(h);
         _template = null;

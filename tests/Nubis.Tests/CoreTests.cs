@@ -553,6 +553,20 @@ public class RdpDefaultsTests
     }
 
     [Fact]
+    public void RD_게이트웨이는_호스트_값이_먼저고_없으면_Default_rdp()
+    {
+        var d = RdpDefaults.Parse("gatewayhostname:s:rdgw.corp.example:443\ngatewayusagemethod:i:2\ngatewaycredentialssource:i:0\npromptcredentialonce:i:0\n");
+        Assert.Equal(("rdgw.corp.example:443", 2), d.GatewayFor(null));
+        Assert.Equal(("my-gw", 1), d.GatewayFor(" my-gw "));            // 호스트에 적으면 항상 사용
+        Assert.Equal(0, d.GatewayCredsSource);
+        Assert.False(d.GatewayCredSharing);
+
+        // Default.rdp 에 주소가 있어도 사용 방식이 0(안 씀)이면 쓰지 않는다
+        Assert.Null(RdpDefaults.Parse("gatewayhostname:s:rdgw\ngatewayusagemethod:i:0\n").GatewayFor(null));
+        Assert.Null(new RdpDefaults().GatewayFor(""));
+    }
+
+    [Fact]
     public void 파일이_없으면_mstsc_기본값()
     {
         var d = RdpDefaults.Load(@"Z:\없는\경로\Default.rdp");

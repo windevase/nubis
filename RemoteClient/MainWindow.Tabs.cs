@@ -29,10 +29,22 @@ public partial class MainWindow
         // 세션은 주소(공인 IP 재시도)·계정을 바꿔 쓰므로 저장된 원본이 아니라 항상 사본을 넘긴다
         // (ForConnection 은 바꿀 것이 없으면 원본을 그대로 돌려준다)
         if (ReferenceEquals(host, saved)) host = saved.Clone();
+        host = AttachJump(saved, host);
         var viaPublic = saved.HasPublicIp && host.Address == saved.PublicIp && saved.PublicIp != saved.PrimaryAddress;
         // 접속 때 입력한 계정 저장 (목록에 있는 호스트만. 빠른 접속은 저장 안 함)
         Action<string, string>? save = _hosts.Contains(saved) ? (u, p) => SaveEnteredCredentials(saved, u, p) : null;
-        FrameworkElement view = host.Protocol == Protocol.Ssh ? new SshSessionView(host, save) : new RdpSessionView(host, save);
+        // 다시 연결할 때 저장된 호스트·Vault 의 최신 계정을 반영 (탭을 연 뒤 Vault 비밀번호를 고친 경우)
+        CloudProfile? Profile() => _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
+        var source = _hosts.Contains(saved)
+            ? new SessionSource(() => saved.ForConnection(Profile(), usePublic), () => saved.CredentialSourceText(Profile()),
+                () => saved.PromptAnswers, (question, answer) =>
+                {
+                    // "Choose [1] Push, or [2] TOTP" 같은 고정 선택을 이 호스트에 기억 (호스트 편집에서 지울 수 있음)
+                    (saved.PromptAnswers ??= [])[question] = answer;
+                    SaveHosts();
+                })
+            : null;
+        FrameworkElement view = host.Protocol == Protocol.Ssh ? new SshSessionView(host, save, source) : new RdpSessionView(host, save, source);
         var title = host.Protocol == Protocol.Ssh && !string.IsNullOrWhiteSpace(host.Username) && string.IsNullOrWhiteSpace(host.Label)
             ? $"{host.Username}@{host.Address}"
             : host.DisplayName;
@@ -61,6 +73,11 @@ public partial class MainWindow
             // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
             if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
         }
+        else if (saved.ResolveVault(profile).source == "host")
+        {
+            // 직접 고른 Vault 계정이 우선인 호스트에 다른 사용자명으로 들어옴 — 호스트에 적어도 쓰이지 않으므로 저장하지 않는다
+            return;
+        }
         else
         {
             saved.Username = user;
@@ -71,20 +88,37 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 접속 때 입력한 계정으로 바꿀 Vault 계정. 호스트가 <b>직접 고른</b> Vault 계정의 비밀번호를 쓰고 있었고
-    /// (호스트에 직접 적은 비밀번호 없음) 입력한 사용자명이 그 계정과 같을 때만. 다른 사용자명을 입력했거나
-    /// 프로필·설정의 기본 계정(여러 호스트가 함께 씀)이면 null — 호스트에만 저장해 다른 호스트의 로그인을 깨뜨리지 않는다.
+    /// 접속 때 입력한 계정으로 바꿀 Vault 계정. 호스트가 <b>직접 고른</b> Vault 계정(호스트 값보다 우선)이고
+    /// 입력한 사용자명이 그 계정과 같을 때만. 다른 사용자명을 입력했거나
+    /// 프로필·설정의 기본 계정(여러 호스트가 함께 씀)이면 null — 다른 호스트의 로그인을 깨뜨리지 않는다.
     /// </summary>
     internal static VaultEntry? CredentialSaveTarget(HostEntry saved, CloudProfile? profile, string user)
     {
         var (vaultId, source) = saved.ResolveVault(profile);
-        if (source != "host" || !string.IsNullOrEmpty(saved.ProtectedPassword)) return null;
+        if (source != "host") return null;
         return VaultStore.Get(vaultId) is { HasPassword: true } entry && string.Equals(user, entry.Username, StringComparison.Ordinal)
             ? entry : null;
     }
 
     private HostEntry WithProfileDefaults(HostEntry h) =>
-        h.WithDefaults(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId));
+        AttachJump(h, h.WithDefaults(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)));
+
+    /// <summary>
+    /// 점프 서버(ProxyJump): 목록의 다른 SSH 호스트를 접속용 사본(계정·주소 채운 것)으로 붙인다.
+    /// 점프 서버의 점프는 쓰지 않는다 (한 단계만). 점프 서버가 지워졌으면 붙이지 않는다.
+    /// </summary>
+    private HostEntry AttachJump(HostEntry saved, HostEntry conn)
+    {
+        if (saved.Protocol != Protocol.Ssh || saved.JumpHostId is not { } id) return conn;
+        var j = _hosts.FirstOrDefault(x => x.Id == id && x.Protocol == Protocol.Ssh && !ReferenceEquals(x, saved));
+        if (j == null) return conn;
+        if (ReferenceEquals(conn, saved)) conn = saved.Clone();
+        var jc = j.ForConnection(_profiles.FirstOrDefault(p => p.Id == j.CloudProfileId));
+        if (ReferenceEquals(jc, j)) jc = j.Clone();
+        jc.Jump = null;
+        conn.Jump = jc;
+        return conn;
+    }
 
     private SessionTab AddTab(SessionTab tab)
     {

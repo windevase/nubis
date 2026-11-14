@@ -1,0 +1,164 @@
+diff --git a/src/Renci.SshNet/SftpClient.cs b/src/Renci.SshNet/SftpClient.cs
+index 947139f..bcb7912 100644
+--- a/src/Renci.SshNet/SftpClient.cs
++++ b/src/Renci.SshNet/SftpClient.cs
+@@ -2649,6 +2649,13 @@ private ISftpSession CreateAndConnectToSftpSession()
+                                                                _operationTimeout,
+                                                                ConnectionInfo.Encoding,
+                                                                ServiceFactory.CreateSftpResponseFactory());
++            var subsystem = sftpSession as SubsystemSession;
++            if (subsystem is not null && SftpServerCommand is not null)
++            {
++                subsystem.ExecCommand = SftpServerCommand;
++                subsystem.ExecPreamble = SftpServerPreamble;
++            }
++
+             try
+             {
+                 sftpSession.Connect();
+@@ -2656,11 +2663,34 @@ private ISftpSession CreateAndConnectToSftpSession()
+             }
+             catch
+             {
++                SftpServerError = subsystem?.ExecError;
+                 sftpSession.Dispose();
+                 throw;
+             }
+         }
+ 
++        /// <summary>
++        /// Gets or sets a command to run instead of requesting the "sftp" subsystem, for example
++        /// <c>sudo -n /usr/lib/openssh/sftp-server</c> to browse files as another user.
++        /// The command must speak the SFTP protocol on its standard input and output.
++        /// <see langword="null"/> (the default) requests the "sftp" subsystem. Set it before <see cref="BaseClient.Connect"/>.
++        /// </summary>
++        public string? SftpServerCommand { get; set; }
++
++        /// <summary>
++        /// Gets or sets bytes written to the command's standard input before the SFTP handshake, for example a password
++        /// line for <c>sudo -S</c>. Only used together with <see cref="SftpServerCommand"/>.
++        /// </summary>
++#pragma warning disable CA1819 // Properties should not return arrays
++        public byte[]? SftpServerPreamble { get; set; }
++#pragma warning restore CA1819 // Properties should not return arrays
++
++        /// <summary>
++        /// Gets what <see cref="SftpServerCommand"/> wrote to standard error when the last connection attempt failed
++        /// (for example a sudo error message), or <see langword="null"/>.
++        /// </summary>
++        public string? SftpServerError { get; private set; }
++
+         /// <summary>
+         /// An <see cref="IProgress{T}"/> implementation that posts callbacks to the threadpool.
+         /// </summary>
+diff --git a/src/Renci.SshNet/SubsystemSession.cs b/src/Renci.SshNet/SubsystemSession.cs
+index 3185cf5..a42712f 100644
+--- a/src/Renci.SshNet/SubsystemSession.cs
++++ b/src/Renci.SshNet/SubsystemSession.cs
+@@ -35,6 +35,34 @@ internal abstract class SubsystemSession : ISubsystemSession
+         /// <inheritdoc/>
+         public int OperationTimeout { get; set; }
+ 
++        /// <summary>
++        /// Gets or sets a command to execute instead of requesting the subsystem (e.g. "sudo -n /usr/lib/openssh/sftp-server").
++        /// <see langword="null"/> requests the subsystem.
++        /// </summary>
++        internal string ExecCommand { get; set; }
++
++        /// <summary>
++        /// Gets or sets the bytes written to the channel right after <see cref="ExecCommand"/> starts and before the subsystem
++        /// protocol begins (e.g. a password line for "sudo -S").
++        /// </summary>
++        internal byte[] ExecPreamble { get; set; }
++
++        /// <summary>
++        /// Gets the text the command wrote to standard error (only collected when <see cref="ExecCommand"/> is used).
++        /// </summary>
++        internal string ExecError
++        {
++            get
++            {
++                lock (_execError)
++                {
++                    return _execError.ToString();
++                }
++            }
++        }
++
++        private readonly System.Text.StringBuilder _execError = new System.Text.StringBuilder();
++
+         /// <summary>
+         /// Occurs when an error occurred.
+         /// </summary>
+@@ -126,9 +154,17 @@ public void Connect()
+             _channel.DataReceived += Channel_DataReceived;
+             _channel.Exception += Channel_Exception;
+             _channel.Closed += Channel_Closed;
++            if (ExecCommand is not null)
++            {
++                _channel.ExtendedDataReceived += Channel_ExtendedDataReceived;
++            }
++
+             _channel.Open();
+ 
+-            if (!_channel.SendSubsystemRequest(_subsystemName))
++            var started = ExecCommand is null
++                ? _channel.SendSubsystemRequest(_subsystemName)
++                : _channel.SendExecRequest(ExecCommand);
++            if (!started)
+             {
+                 // close channel session
+                 Disconnect();
+@@ -136,7 +172,12 @@ public void Connect()
+                 // signal subsystem failure
+                 throw new SshException(string.Format(CultureInfo.InvariantCulture,
+                                                      "Subsystem '{0}' could not be executed.",
+-                                                     _subsystemName));
++                                                     ExecCommand ?? _subsystemName));
++            }
++
++            if (ExecCommand is not null && ExecPreamble is { Length: > 0 })
++            {
++                _channel.SendData(ExecPreamble);
+             }
+ 
+             OnChannelOpen();
+@@ -156,6 +197,7 @@ public void Disconnect()
+                 channel.DataReceived -= Channel_DataReceived;
+                 channel.Exception -= Channel_Exception;
+                 channel.Closed -= Channel_Closed;
++                channel.ExtendedDataReceived -= Channel_ExtendedDataReceived;
+                 channel.Dispose();
+             }
+         }
+@@ -221,6 +263,18 @@ private void Channel_DataReceived(object sender, ChannelDataEventArgs e)
+             }
+         }
+ 
++        private void Channel_ExtendedDataReceived(object sender, ChannelExtendedDataEventArgs e)
++        {
++            lock (_execError)
++            {
++                // keep the first 4 KB only - enough for a sudo or shell error message
++                if (_execError.Length < 4096)
++                {
++                    _ = _execError.Append(System.Text.Encoding.UTF8.GetString(e.Data.Array, e.Data.Offset, e.Data.Count));
++                }
++            }
++        }
++
+         private void Channel_Exception(object sender, ExceptionEventArgs e)
+         {
+             RaiseError(e.Exception);
+diff --git a/version.json b/version.json
+index 6a43a40..b193e32 100644
+--- a/version.json
++++ b/version.json
+@@ -1,6 +1,6 @@
+ {
+   "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
+-  "version": "2026.0.0",
++  "version": "2026.0.0-nubis.1",
+   "assemblyVersion": {
+     "precision": "revision"
+   },

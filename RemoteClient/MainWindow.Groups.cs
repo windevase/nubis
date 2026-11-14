@@ -78,7 +78,14 @@ public partial class MainWindow
             : L.F("'{0}' 의 {1} 호스트 {2}개가 이 계정으로 로그인합니다.", g.Name, proto == Protocol.Rdp ? "RDP" : "SSH", targets.Count);
         if (VaultPickerDialog.Pick(this, current, proto, sub) is not { } id || VaultStore.Get(id) is not { } v) return;
 
-        if (AskClearOwnCredentials(targets, v) is not { } clearOwn) return;
+        // 일반 그룹은 호스트에 직접 지정 → Vault 계정이 우선이라 묻지 않는다.
+        // 클라우드 그룹은 프로필 기본 계정으로 저장 → 기본 계정은 호스트에 적힌 값보다 뒤라 지울지 묻는다
+        var clearOwn = false;
+        if (g.IsCloud)
+        {
+            if (AskClearOwnCredentials(targets, v) is not { } answer) return;
+            clearOwn = answer;
+        }
 
         foreach (var h in targets)
         {
@@ -97,7 +104,7 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// Vault 계정을 지정할 호스트 중 직접 적은 계정(그 값이 Vault 보다 우선)이 있으면 지울지 묻는다.
+    /// 기본 Vault 계정(클라우드 프로필)을 지정할 호스트 중 직접 적은 계정(그 값이 기본 계정보다 우선)이 있으면 지울지 묻는다.
     /// 지우면 true, 유지하면 false, 취소면 null. 해당 호스트가 없으면 묻지 않고 false
     /// </summary>
     private bool? AskClearOwnCredentials(IReadOnlyList<HostEntry> targets, VaultEntry v)

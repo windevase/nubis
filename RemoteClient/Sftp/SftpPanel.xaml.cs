@@ -37,7 +37,8 @@ public sealed class SftpItem
 }
 
 /// <summary>
-/// SSH 탭 왼쪽의 SFTP 파일 패널. 터미널 세션이 로그인한 계정으로 별도 SFTP 연결을 연다.
+/// SSH 탭 왼쪽의 SFTP 파일 패널. 터미널의 SSH 연결 위에 SFTP 채널을 열고(다시 인증하지 않음),
+/// 그럴 수 없으면 터미널이 로그인한 계정으로 별도 SFTP 연결을 연다.
 /// 업로드: 탐색기에서 끌어다 놓기(폴더 행 위에 놓으면 그 폴더로) / 버튼,
 /// 다운로드: 탐색기로 끌어내기 / 버튼(폴더 선택), 파일 더블클릭: 임시 폴더로 받아 열기.
 /// </summary>
@@ -45,6 +46,7 @@ public partial class SftpPanel : UserControl
 {
     private readonly Func<(HostEntry Host, string User, string Password)?> _getAuth;
     private readonly Func<Task<string?>>? _getTerminalCwd;
+    private readonly Func<SshClient?>? _getShell;
     private SftpClient? _client;
     private string _cwd = "";
     private string _home = "/";
@@ -55,11 +57,13 @@ public partial class SftpPanel : UserControl
 
     /// <param name="getAuth">터미널이 로그인에 성공한 호스트·계정 (아직이면 null)</param>
     /// <param name="getTerminalCwd">터미널의 현재 폴더 (모르면 null)</param>
-    public SftpPanel(Func<(HostEntry, string, string)?> getAuth, Func<Task<string?>>? getTerminalCwd = null)
+    /// <param name="getShell">터미널의 SSH 연결 — 이 위에 SFTP 채널을 연다</param>
+    public SftpPanel(Func<(HostEntry, string, string)?> getAuth, Func<Task<string?>>? getTerminalCwd = null, Func<SshClient?>? getShell = null)
     {
         InitializeComponent();
         _getAuth = getAuth;
         _getTerminalCwd = getTerminalCwd;
+        _getShell = getShell;
     }
 
     /// <summary>원격 홈 폴더 (연결 전이면 "/")</summary>
@@ -102,12 +106,46 @@ public partial class SftpPanel : UserControl
     {
         if (_client is { IsConnected: true }) return _client;
         var auth = _getAuth() ?? throw new InvalidOperationException(L.T("터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요."));
-        _client?.Dispose();
-        var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password));
+        try { _client?.Dispose(); } catch { }   // 터미널이 재연결돼 이미 끊긴 채널일 수 있다
+
+        // 0) 터미널이 다른 사용자로 전환돼 있으면 그 권한으로 (sudo, SftpPanel.RunAs.cs)
+        if (await OpenRunAsAsync(auth) is { } runAs)
+        {
+            _client = runAs;
+            return runAs;
+        }
+
+        // 1) 터미널 연결 위에 SFTP 채널 — 인증을 다시 하지 않는다 (OTP 서버에서 두 번 묻지 않게)
+        try
+        {
+            var shell = _getShell?.Invoke();
+            if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
+            {
+                _home = shared.WorkingDirectory;
+                _client = shared;
+                return shared;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 서버의 세션 수 제한(MaxSessions) 등 — 별도 연결로 넘어간다
+            Debug.WriteLine($"SFTP 채널을 터미널 연결에서 열지 못해 별도 연결로 넘어감: {ex.Message}");
+        }
+
+        // 2) 별도 연결 — 서버가 OTP 등을 요구하면 다시 묻는다.
+        //    점프 서버를 거치는 호스트는 터미널 연결 공유로만 (점프 서버를 건너뛰고 직접 붙지 않게)
+        if (auth.Host.Jump != null)
+            throw new InvalidOperationException(L.T("점프 서버를 거치는 호스트는 터미널 연결 위에서만 SFTP 를 열 수 있습니다. 터미널이 연결된 뒤 새로고침을 누르세요."));
+        var target = $"SFTP · {auth.User}@{auth.Host.DisplayName} ({auth.Host.Address})";
+        var prompter = new AuthPrompter(req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)));
+        var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password, prompter: prompter));
         string? keyError = null;
         client.HostKeyReceived += (_, e) => e.CanTrust = (keyError = SshAuth.VerifyAcceptNew(auth.Host, e)) == null;
+        prompter.Attach(client);
         try { await Task.Run(client.Connect); }
         catch when (keyError != null) { client.Dispose(); throw new InvalidOperationException(keyError); }
+        catch { client.Dispose(); throw; }
+        prompter.Detach(client);
         _home = client.WorkingDirectory;
         _client = client;
         return client;

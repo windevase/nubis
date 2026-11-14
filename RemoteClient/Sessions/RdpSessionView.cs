@@ -28,11 +28,15 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private readonly Action<string, string>? _saveCredentials;
     private bool _pendingSave;
 
+    private readonly SessionSource? _source;
+
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
-    public RdpSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
+    /// <param name="source">저장된 호스트의 최신 계정 (다시 연결할 때 반영, 목록에 있는 호스트만)</param>
+    public RdpSessionView(HostEntry host, Action<string, string>? saveCredentials = null, SessionSource? source = null)
     {
         _host = host;
         _saveCredentials = saveCredentials;
+        _source = source;
         Background = (Brush)Application.Current.Resources["Bg"];
 
         _wfh = new WindowsFormsHost { Child = _rdp, Background = Brushes.Black };
@@ -143,6 +147,9 @@ public sealed class RdpSessionView : UserControl, ISessionView
     {
         if (_closed) return;
 
+        // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로 다시 읽는다
+        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh)) _user = null;
+
         if (_user == null)
         {
             _user = _host.Username;
@@ -205,6 +212,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             // 풀에서 재사용한 컨트롤일 수 있으므로 비밀번호는 항상 덮어쓴다 (이전 호스트 비밀번호가 남지 않게)
             adv.ClearTextPassword = _password ?? "";
 
+            ApplyGateway(ocx, d);
             try { ocx.SecuredSettings3.KeyboardHookMode = d.KeyboardHook; } catch { }   // Win/Alt+Tab 키 전달 방식
             try { ocx.SecuredSettings2.AudioRedirectionMode = d.AudioMode; } catch { }   // 소리 재생 위치
 
@@ -215,6 +223,38 @@ public sealed class RdpSessionView : UserControl, ISessionView
             SetStatus(SessionStatus.Disconnected);
             ShowOverlay(L.T("연결 실패"), ex.Message);
         }
+    }
+
+    /// <summary>
+    /// RD 게이트웨이 (IMsRdpClientTransportSettings2). 호스트에 적은 게이트웨이 → Default.rdp 의 게이트웨이 순.
+    /// 풀에서 재사용한 컨트롤일 수 있으므로 게이트웨이를 쓰지 않을 때도 "안 씀" 으로 덮어쓴다 (이전 호스트 설정이 남지 않게).
+    /// </summary>
+    private void ApplyGateway(dynamic ocx, RdpDefaults d)
+    {
+        try
+        {
+            var ts = ocx.TransportSettings2;
+            if (d.GatewayFor(_host.RdpGateway) is { } gw)
+            {
+                ts.GatewayHostname = gw.Host;
+                ts.GatewayUsageMethod = (uint)gw.Usage;
+                ts.GatewayProfileUsageMethod = 1u;                      // 이 설정을 쓴다 (explicit)
+                ts.GatewayCredsSource = (uint)d.GatewayCredsSource;
+                ts.GatewayCredSharing = d.GatewayCredSharing ? 1u : 0u; // 게이트웨이에도 원격 PC 와 같은 계정
+            }
+            else
+            {
+                ts.GatewayUsageMethod = 0u;
+                ts.GatewayProfileUsageMethod = 1u;
+                ts.GatewayHostname = "";
+            }
+        }
+        catch (Exception ex) when (!string.IsNullOrWhiteSpace(_host.RdpGateway))
+        {
+            // 호스트에 게이트웨이를 적었는데 적용하지 못함 — 게이트웨이 없이 몰래 직접 연결하지 않는다
+            throw new InvalidOperationException(L.F("RD 게이트웨이 설정을 적용하지 못했습니다: {0}", ex.Message), ex);
+        }
+        catch { /* Default.rdp 게이트웨이를 적용하지 못한 경우는 mstsc 처럼 직접 연결 */ }
     }
 
     /// <summary>로그인 후·창 크기 변경 시 원격 해상도를 창에 맞춘다 (Windows 8.1/2012R2 이상 서버).</summary>

@@ -34,6 +34,9 @@ THE SOFTWARE.
 
 https://github.com/sshnet/SSH.NET
 
+수정본(`2026.0.0.1-nubis`)을 사용함: SFTP 를 "sftp" 서브시스템 대신 지정한 명령(sudo sftp-server 등)으로 여는 옵션 추가.
+변경 내용은 `third_party/SSH.NET/nubis-sftp-exec.patch`, 빌드는 `tools/build-sshnet.ps1`.
+
 ```
 The MIT License (MIT)
 
