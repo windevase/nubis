@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -7,6 +8,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Nubis;
@@ -25,6 +27,16 @@ public sealed record McpImage(byte[] Data, string MimeType, string Caption);
 public sealed class McpToolException(string message) : Exception(message);
 
 /// <summary>
+/// 지금 처리 중인 MCP 요청의 취소 토큰. Claude 에서 Esc 등으로 요청을 취소하면(notifications/cancelled) 취소된다.
+/// 도구 핸들러 안(그 안에서 await/OnUi 로 이어지는 코드 포함)에서 읽는다. 요청 밖에서는 CancellationToken.None.
+/// </summary>
+public static class McpRequest
+{
+    internal static readonly AsyncLocal<CancellationToken> Current = new();
+    public static CancellationToken Token => Current.Value;
+}
+
+/// <summary>
 /// 최소 구현 MCP 서버 (Streamable HTTP, JSON 응답만 사용).
 /// 127.0.0.1 에서만 열고 Bearer 토큰으로 인증한다. Claude Code 가 --mcp-config 로 접속한다.
 /// </summary>
@@ -35,6 +47,8 @@ public sealed class McpServer : IDisposable
     private readonly HttpListener _listener = new();
     private readonly Dictionary<string, McpTool> _tools;
     private readonly string _instructions;
+    // 처리 중인 요청 id(JSON 원문) → 취소 토큰. notifications/cancelled 가 오면 취소한다
+    private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflight = new();
 
     public int Port { get; }
     public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
@@ -105,22 +119,36 @@ public sealed class McpServer : IDisposable
             using var doc = JsonDocument.Parse(body);
             var req = doc.RootElement;
 
+            var method = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() ?? "" : "";
+            var p = req.TryGetProperty("params", out var pEl) ? pEl : default;
             if (!req.TryGetProperty("id", out var id))
             {
-                res.StatusCode = 202;   // notification (notifications/initialized 등)
+                // notification (notifications/initialized 등). 취소 알림이면 해당 요청을 취소한다
+                if (method == "notifications/cancelled" && p.ValueKind == JsonValueKind.Object &&
+                    p.TryGetProperty("requestId", out var rid) && _inflight.TryGetValue(rid.GetRawText(), out var target))
+                {
+                    try { target.Cancel(); } catch (ObjectDisposedException) { }
+                }
+                res.StatusCode = 202;
                 return;
             }
 
             object reply;
+            var key = id.GetRawText();
+            using var cts = new CancellationTokenSource();
+            _inflight[key] = cts;
             try
             {
-                var method = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() ?? "" : "";
-                var result = await Dispatch(method, req.TryGetProperty("params", out var p) ? p : default);
+                var result = await Dispatch(method, p, cts.Token);
                 reply = new { jsonrpc = "2.0", id, result };
             }
             catch (MissingMethodException ex)
             {
                 reply = new { jsonrpc = "2.0", id, error = new { code = -32601, message = ex.Message } };
+            }
+            finally
+            {
+                _inflight.TryRemove(new KeyValuePair<string, CancellationTokenSource>(key, cts));
             }
 
             var bytes = JsonSerializer.SerializeToUtf8Bytes(reply);
@@ -138,7 +166,7 @@ public sealed class McpServer : IDisposable
         }
     }
 
-    private async Task<object> Dispatch(string method, JsonElement p)
+    private async Task<object> Dispatch(string method, JsonElement p, CancellationToken ct)
     {
         switch (method)
         {
@@ -170,6 +198,8 @@ public sealed class McpServer : IDisposable
                     return ToolResult($"알 수 없는 도구: {name}", true);
                 try
                 {
+                    // 핸들러와 그 안의 await·OnUi 호출이 McpRequest.Token 으로 이 요청의 취소를 볼 수 있게 한다
+                    McpRequest.Current.Value = ct;
                     var result = await tool.Handler(args);
                     return result is McpImage img
                         ? new
@@ -184,6 +214,10 @@ public sealed class McpServer : IDisposable
                         : ToolResult(result as string ?? "", false);
                 }
                 catch (McpToolException ex) { return ToolResult(ex.Message, true); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    return ToolResult("요청이 취소되어 중단했습니다.", true);
+                }
                 catch (Exception ex)
                 {
                     Log($"도구 {name} 오류: {ex}");

@@ -102,18 +102,53 @@ public partial class SftpPanel : UserControl
         catch (Exception ex) { ShowMessage(ex.Message); }
     }
 
+    /// <summary>터미널이 다시 연결된 뒤: 열려 있으면 지금 폴더 목록을 새 연결로 다시 읽고, 아직 못 열었으면 연다</summary>
+    public Task RefreshAsync() => _cwd.Length > 0 ? NavigateAsync(_cwd) : OpenAsync();
+
+    // SFTP 연결 열기는 한 번에 하나만 — 동시에 부른 쪽마다 연결을 열면 sudo 비밀번호 창이 두 번 뜨고 채널이 샌다.
+    // 목록 읽기(NavigateAsync)도 같은 잠금 안에서 해, 사용자 전환(RunAsAsync)이 쓰는 중인 연결을 닫지 않게 한다
+    private readonly SemaphoreSlim _clientLock = new(1, 1);
+    /// <summary>패널이 닫힘 (탭 닫힘) — 이후 연 연결은 바로 닫는다</summary>
+    private bool _closed;
+    /// <summary>별도 연결의 인증이 거부·취소됨 — 터미널이 다시 연결될 때(ResetRunAs)까지 다시 시도하지 않는다 (OTP 창 반복·계정 잠금 방지)</summary>
+    private string? _separateAuthFailed;
+
     private async Task<SftpClient> ClientAsync()
     {
-        if (_client is { IsConnected: true }) return _client;
-        var auth = _getAuth() ?? throw new InvalidOperationException(L.T("터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요."));
-        try { _client?.Dispose(); } catch { }   // 터미널이 재연결돼 이미 끊긴 채널일 수 있다
+        if (_client is { IsConnected: true } ready) return ready;
+        await _clientLock.WaitAsync();
+        try { return await ClientCoreAsync(); }
+        finally { _clientLock.Release(); }
+    }
 
-        // 0) 터미널이 다른 사용자로 전환돼 있으면 그 권한으로 (sudo, SftpPanel.RunAs.cs)
-        if (await OpenRunAsAsync(auth) is { } runAs)
+    /// <summary>연결을 연다 — _clientLock 을 잡은 상태에서만 호출</summary>
+    private async Task<SftpClient> ClientCoreAsync()
+    {
+        if (_closed) throw new OperationCanceledException();
+        if (_client is { IsConnected: true } ready) return ready;   // 기다리는 동안 다른 쪽이 열었음
+        var auth = _getAuth() ?? throw new InvalidOperationException(L.T("터미널 로그인이 끝난 뒤 사용할 수 있습니다.\n잠시 후 새로고침을 누르세요."));
+        // 터미널이 끊겨 있거나 다시 연결하는 중이면 기다린다 — 그 사이 새로고침·편집 저장이 별도 로그인(OTP 창)을 띄우지 않게
+        if (_getShell != null && _getShell() is not { IsConnected: true })
+            throw new InvalidOperationException(L.T("터미널 연결을 기다리는 중입니다. 터미널이 다시 연결된 뒤 새로고침을 누르세요."));
+        var old = _client;   // 터미널이 재연결돼 이미 끊긴 채널일 수 있다
+        _client = null;
+        DisposeLater(old);
+
+        var client = await OpenClientAsync(auth);
+        if (_closed)
         {
-            _client = runAs;
-            return runAs;
+            // 연결하는 동안 패널이 닫힘 — Close 가 놓친 연결이므로 여기서 닫는다
+            DisposeLater(client);
+            throw new OperationCanceledException();
         }
+        _client = client;
+        return client;
+    }
+
+    private async Task<SftpClient> OpenClientAsync((HostEntry Host, string User, string Password) auth)
+    {
+        // 0) 터미널이 다른 사용자로 전환돼 있으면 그 권한으로 (sudo, SftpPanel.RunAs.cs)
+        if (await OpenRunAsAsync(auth) is { } runAs) return runAs;
 
         // 1) 터미널 연결 위에 SFTP 채널 — 인증을 다시 하지 않는다 (OTP 서버에서 두 번 묻지 않게)
         try
@@ -122,7 +157,6 @@ public partial class SftpPanel : UserControl
             if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
             {
                 _home = shared.WorkingDirectory;
-                _client = shared;
                 return shared;
             }
         }
@@ -136,19 +170,39 @@ public partial class SftpPanel : UserControl
         //    점프 서버를 거치는 호스트는 터미널 연결 공유로만 (점프 서버를 건너뛰고 직접 붙지 않게)
         if (auth.Host.Jump != null)
             throw new InvalidOperationException(L.T("점프 서버를 거치는 호스트는 터미널 연결 위에서만 SFTP 를 열 수 있습니다. 터미널이 연결된 뒤 새로고침을 누르세요."));
+        // 앞서 인증이 거부·취소됐으면 다시 묻지 않는다 (인증 실패는 재시도하지 않음)
+        if (_separateAuthFailed != null)
+            throw new InvalidOperationException(L.F("별도 SFTP 연결의 인증에 실패했습니다: {0}\n터미널이 다시 연결될 때까지 다시 시도하지 않습니다.", _separateAuthFailed));
         var target = $"SFTP · {auth.User}@{auth.Host.DisplayName} ({auth.Host.Address})";
         var prompter = new AuthPrompter(req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)));
-        var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password, prompter: prompter));
+        var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password, prompter: prompter))
+        {
+            // 끊긴 연결을 알아채고, 응답 없는 서버에서 무한정 멈추지 않게
+            KeepAliveInterval = TimeSpan.FromSeconds(30),
+            OperationTimeout = TimeSpan.FromSeconds(60),
+        };
         string? keyError = null;
         client.HostKeyReceived += (_, e) => e.CanTrust = (keyError = SshAuth.VerifyAcceptNew(auth.Host, e)) == null;
         prompter.Attach(client);
         try { await Task.Run(client.Connect); }
         catch when (keyError != null) { client.Dispose(); throw new InvalidOperationException(keyError); }
+        catch (Exception ex) when (ex is Renci.SshNet.Common.SshAuthenticationException || prompter.Cancelled)
+        {
+            client.Dispose();
+            _separateAuthFailed = ex.Message;
+            throw new InvalidOperationException(L.F("별도 SFTP 연결의 인증에 실패했습니다: {0}\n터미널이 다시 연결될 때까지 다시 시도하지 않습니다.", ex.Message), ex);
+        }
         catch { client.Dispose(); throw; }
-        prompter.Detach(client);
+        finally { prompter.Detach(client); }
         _home = client.WorkingDirectory;
-        _client = client;
         return client;
+    }
+
+    /// <summary>연결 닫기는 UI 스레드를 막지 않게 백그라운드에서</summary>
+    private static void DisposeLater(SftpClient? c)
+    {
+        if (c == null) return;
+        Task.Run(() => { try { c.Dispose(); } catch { } });
     }
 
     // 이동 요청 번호 — 빠르게 연달아 이동하면(터미널에서 cd 를 이어서 친 경우) 마지막 요청의 목록만 화면에 반영
@@ -161,15 +215,23 @@ public partial class SftpPanel : UserControl
         _navTarget = path;
         try
         {
-            var c = await ClientAsync();
-            var files = await Task.Run(() => c.ListDirectory(path).Where(f => f.Name is not "." and not "..").ToList());
-            if (seq != _navSeq) return;
-            // 심볼릭 링크가 폴더인지는 링크마다 서버에 물어야 한다 — 차례로 물으면 /etc·/usr/lib 처럼 링크가 많은 폴더가 느려 병렬로
+            List<ISftpFile> files;
             var linkIsDir = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
-            await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, f =>
+            // 목록을 읽는 동안 연결을 잡아 둔다 — 사용자 전환(RunAsAsync)이 쓰는 중인 연결을 닫지 않게
+            await _clientLock.WaitAsync();
+            try
             {
-                try { linkIsDir[f.FullName] = c.GetAttributes(f.FullName).IsDirectory; } catch { }
-            }));
+                if (seq != _navSeq) return;   // 기다리는 동안 더 나중 이동이 들어옴
+                var c = await ClientCoreAsync();
+                files = await Task.Run(() => c.ListDirectory(path).Where(f => f.Name is not "." and not "..").ToList());
+                if (seq != _navSeq) return;
+                // 심볼릭 링크가 폴더인지는 링크마다 서버에 물어야 한다 — 차례로 물으면 /etc·/usr/lib 처럼 링크가 많은 폴더가 느려 병렬로
+                await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, f =>
+                {
+                    try { linkIsDir[f.FullName] = c.GetAttributes(f.FullName).IsDirectory; } catch { }
+                }));
+            }
+            finally { _clientLock.Release(); }
             if (seq != _navSeq) return;
             var items = files.Select(f => new SftpItem
             {
@@ -363,11 +425,12 @@ public partial class SftpPanel : UserControl
 
     public void Close()
     {
+        _closed = true;   // 지금 연결 중인 ClientCoreAsync 는 연결이 끝나면 스스로 닫는다
         foreach (var ed in _edits.Values) ed.Dispose();
         _edits.Clear();
         _cts?.Cancel();
         var c = _client;
         _client = null;
-        Task.Run(() => { try { c?.Dispose(); } catch { } });
+        DisposeLater(c);
     }
 }

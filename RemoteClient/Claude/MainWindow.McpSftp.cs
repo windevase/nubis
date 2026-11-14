@@ -30,24 +30,47 @@ public partial class MainWindow
     {
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         if (SettingsStore.Current.AutoApproveReadOnly) { AuditLog.Write(tool, new[] { target }, what, "자동 승인(읽기 전용)"); return; }
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
+        var ok = await OnUi(() => AskApproval(tool, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
             L.T("승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음)."), new[] { target }, what));
         AuditLog.Write(tool, new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
     }
 
-    private static async Task<T> WithSftp<T>(HostEntry conn, Func<Renci.SshNet.SftpClient, T> f) => await Task.Run(() =>
+    /// <summary>SFTP 작업 하나(요청)의 응답 제한 시간 — 서버가 멈춰도 MCP 요청이 끝없이 걸려 있지 않게</summary>
+    private static readonly TimeSpan SftpOperationTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// SFTP 로 접속해 f 실행. Claude 요청이 취소되면(McpRequest.Token) 다음 파일·다음 읽기/쓰기에서 멈춘다.
+    /// progress 를 주면 실패·취소 메시지에 진행 상황("파일 10개 중 3개 올림")을 붙인다.
+    /// </summary>
+    private static async Task<T> WithSftp<T>(HostEntry conn, Func<Renci.SshNet.SftpClient, CancellationToken, T> f, Func<string>? progress = null)
     {
-        Renci.SshNet.SftpClient c;
-        try { c = SshExec.OpenSftp(conn); }
-        catch (InvalidOperationException ex) { throw new McpToolException(ex.Message); }
-        using (c)
+        var ct = McpRequest.Token;
+        string P() => progress?.Invoke() is { Length: > 0 } s ? $" ({s})" : "";
+        return await Task.Run(() =>
         {
-            try { return f(c); }
-            catch (Renci.SshNet.Common.SftpPathNotFoundException) { throw new McpToolException("원격 경로가 없습니다."); }
-            catch (Renci.SshNet.Common.SftpPermissionDeniedException) { throw new McpToolException("원격 경로에 권한이 없습니다."); }
-        }
-    });
+            ct.ThrowIfCancellationRequested();
+            Renci.SshNet.SftpClient c;
+            try { c = SshExec.OpenSftp(conn); }
+            catch (InvalidOperationException ex) { throw new McpToolException(ex.Message); }
+            using (c)
+            {
+                c.OperationTimeout = SftpOperationTimeout;
+                try { return f(c, ct); }
+                catch (Renci.SshNet.Common.SftpPathNotFoundException) { throw new McpToolException("원격 경로가 없습니다." + P()); }
+                catch (Renci.SshNet.Common.SftpPermissionDeniedException) { throw new McpToolException("원격 경로에 권한이 없습니다." + P()); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw new McpToolException("요청이 취소되어 중단했습니다." + P()); }
+                catch (Renci.SshNet.Common.SshOperationTimeoutException)
+                {
+                    throw new McpToolException($"SFTP 서버가 {SftpOperationTimeout.TotalSeconds:0}초 동안 응답하지 않아 중단했습니다." + P());
+                }
+                catch (McpToolException ex) when (progress != null) { throw new McpToolException(ex.Message + P()); }
+                catch (Exception ex) when (progress != null) { throw new McpToolException($"전송 중 오류: {ex.Message}" + P()); }
+            }
+        }, ct);
+    }
+
+    private static Task<T> WithSftp<T>(HostEntry conn, Func<Renci.SshNet.SftpClient, T> f) => WithSftp(conn, (c, _) => f(c));
 
     private async Task<string> SftpListAsync(JsonElement a)
     {
@@ -104,18 +127,29 @@ public partial class MainWindow
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Nubis", SftpPanel.SafeLocalName(h.DisplayName));
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"받기: {path}\n저장 위치: {root}";
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 파일 다운로드를 요청합니다"),
+        var ok = await OnUi(() => AskApproval("sftp_download", L.T("Claude 가 파일 다운로드를 요청합니다"),
             L.T("서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호)."), new[] { target }, what));
         AuditLog.Write("sftp_download", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 
-        return await WithSftp(conn, c =>
+        var count = 0;
+        long bytes = 0;
+        try
+        {
+            return await WithSftp(conn, (c, ct) => DownloadCore(c, ct),
+                () => $"중단 전까지 파일 {count}개 받음 ({SftpPanel.HumanSize(bytes)}), 받던 파일은 일부만 저장됐을 수 있음 — 저장 위치 {root}");
+        }
+        catch (McpToolException ex)
+        {
+            AuditLog.Write("sftp_download", new[] { target }, path, $"실패 (파일 {count}개 받음): {ex.Message}");
+            throw;
+        }
+
+        string DownloadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
             Directory.CreateDirectory(root);
             var attr = c.GetAttributes(path);
             var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
-            var count = 0;
-            long bytes = 0;
             var full = Path.GetFullPath(root).TrimEnd('\\') + "\\";
             void Get(string remote, bool isDir, string local)
             {
@@ -127,15 +161,19 @@ public partial class MainWindow
                         Get(f.FullName, f.IsDirectory && !f.IsSymbolicLink, Path.Combine(local, SftpPanel.SafeLocalName(f.Name)));
                     return;
                 }
-                if (++count > 5000) throw new McpToolException("파일이 5000개를 넘어 중단했습니다.");
-                using var fs = File.Create(local);
-                c.DownloadFile(remote, fs);
-                bytes += fs.Length;
+                if (count >= 5000) throw new McpToolException("파일이 5000개를 넘어 중단했습니다.");
+                ct.ThrowIfCancellationRequested();
+                using (var fs = File.Create(local))
+                {
+                    c.DownloadFile(remote, new CancellableStream(fs, ct));
+                    bytes += fs.Length;
+                }
+                count++;   // 다 받은 파일만 센다 (실패 메시지의 진행 상황)
             }
             Get(path, attr.IsDirectory, top);
             AuditLog.Write("sftp_download", new[] { target }, path, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}");
             return $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {top}";
-        });
+        }
     }
 
     private async Task<string> SftpUploadAsync(JsonElement a)
@@ -146,24 +184,35 @@ public partial class MainWindow
         var overwrite = BoolArg(a, "overwrite") == true;
         if (local.Length == 0 || remoteDir.Length == 0) throw new McpToolException("local_path 와 remote_dir 가 필요합니다.");
         if (!Path.IsPathFullyQualified(local)) throw new McpToolException("local_path 는 절대 경로여야 합니다.");
-        if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir) is { } why) throw new McpToolException(why);
+        if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } why) throw new McpToolException(why);
         var isDir = Directory.Exists(local);
         if (!isDir && !File.Exists(local)) throw new McpToolException($"로컬 경로가 없습니다: {local}");
 
         var files = isDir ? Directory.EnumerateFiles(local, "*", SearchOption.AllDirectories).ToList() : new List<string> { local };
         if (files.Count > 5000) throw new McpToolException("파일이 5000개를 넘습니다.");
-        var blocked = files.Select(f => McpHelpers.BlockedUploadReason(f, AppPaths.DataDir)).FirstOrDefault(r => r != null);
+        var blocked = files.Select(f => McpHelpers.BlockedUploadReason(f, AppPaths.DataDir, AppPaths.RootDir)).FirstOrDefault(r => r != null);
         if (blocked != null) throw new McpToolException(blocked);
         var total = files.Sum(f => new FileInfo(f).Length);
 
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"올리기: {local}{(isDir ? $" (폴더, 파일 {files.Count}개)" : "")} — {SftpPanel.HumanSize(total)}\n원격 폴더: {remoteDir}" + (overwrite ? "\n같은 이름이 있으면 덮어씀" : "");
-        var ok = await OnUi(() => ApprovalDialog.Ask(this, L.T("Claude 가 파일 업로드를 요청합니다"),
+        var ok = await OnUi(() => AskApproval("sftp_upload", L.T("Claude 가 파일 업로드를 요청합니다"),
             L.T("이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요."), new[] { target }, what));
         AuditLog.Write("sftp_upload", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 
-        return await WithSftp(conn, c =>
+        var done = 0;
+        try
+        {
+            return await WithSftp(conn, (c, ct) => UploadCore(c, ct), () => $"파일 {files.Count}개 중 {done}개 올림, 올리던 파일은 원격에 일부만 남았을 수 있음");
+        }
+        catch (McpToolException ex)
+        {
+            AuditLog.Write("sftp_upload", new[] { target }, local, $"실패 ({files.Count}개 중 {done}개 올림): {ex.Message}");
+            throw;
+        }
+
+        string UploadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
             var name = Path.GetFileName(local.TrimEnd('\\'));
             var root = SftpPanel.Combine(remoteDir, name);
@@ -173,18 +222,20 @@ public partial class MainWindow
                 if (!c.Exists(root)) c.CreateDirectory(root);
                 foreach (var d in Directory.EnumerateDirectories(local, "*", SearchOption.AllDirectories))
                 {
+                    ct.ThrowIfCancellationRequested();
                     var rd = SftpPanel.Combine(root, Path.GetRelativePath(local, d).Replace('\\', '/'));
                     if (!c.Exists(rd)) c.CreateDirectory(rd);
                 }
             }
             foreach (var f in files)
             {
+                ct.ThrowIfCancellationRequested();
                 var remote = isDir ? SftpPanel.Combine(root, Path.GetRelativePath(local, f).Replace('\\', '/')) : root;
-                using var fs = File.OpenRead(f);
-                c.UploadFile(fs, remote, true);
+                using (var fs = File.OpenRead(f)) c.UploadFile(new CancellableStream(fs, ct), remote, true);
+                done++;
             }
             AuditLog.Write("sftp_upload", new[] { target }, local, $"완료 {files.Count}개 {SftpPanel.HumanSize(total)}");
             return $"올렸습니다: {files.Count}개 ({SftpPanel.HumanSize(total)}) → {root}";
-        });
+        }
     }
 }

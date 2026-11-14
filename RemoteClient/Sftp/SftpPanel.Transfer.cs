@@ -67,43 +67,42 @@ public partial class SftpPanel
     private async Task UploadAsync(string[] localPaths, string target)
     {
         if (_busy || target.Length == 0) return;
+        // 준비(폴더 훑기·서버에 같은 이름이 있는지 확인)도 오래 걸릴 수 있어 처음부터 전송 중으로 표시한다 —
+        // 화면이 멈춘 것처럼 보이지 않게, 그 사이 두 번째 업로드·사용자 전환이 끼어들지 않게
+        var ct = BeginTransfer(L.T("업로드 목록 확인 중..."), 0);
         try
         {
             var c = await ClientAsync();
 
             // 전송 계획: (로컬 파일, 원격 경로, 크기) + 만들 폴더
-            var files = new List<(string Local, string Remote, long Size)>();
-            var dirs = new List<string>();
-            foreach (var p in localPaths)
-            {
-                var name = Path.GetFileName(p.TrimEnd('\\'));
-                if (Directory.Exists(p))
-                {
-                    var root = Combine(target, name);
-                    dirs.Add(root);
-                    foreach (var d in Directory.EnumerateDirectories(p, "*", SearchOption.AllDirectories))
-                        dirs.Add(Combine(root, Path.GetRelativePath(p, d).Replace('\\', '/')));
-                    foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
-                        files.Add((f, Combine(root, Path.GetRelativePath(p, f).Replace('\\', '/')), new FileInfo(f).Length));
-                }
-                else if (File.Exists(p)) files.Add((p, Combine(target, name), new FileInfo(p).Length));
-            }
+            var (files, dirs) = await Task.Run(() => PlanUpload(localPaths, target, ct), ct);
 
             // 이미 있는 파일 (폴더 안의 파일까지): 덮어쓰기 / 건너뛰기 / 취소
-            var existing = await Task.Run(() => files.Where(f => c.Exists(f.Remote)).Select(f => f.Remote).ToHashSet());
+            var existing = await Task.Run(() =>
+            {
+                var set = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var f in files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (c.Exists(f.Remote)) set.Add(f.Remote);
+                }
+                return set;
+            }, ct);
             if (existing.Count > 0)
             {
                 var choice = Dialog.Choose(Window.GetWindow(this), L.F("서버에 같은 이름의 파일이 {0}개 있습니다.", existing.Count), L.T("업로드"),
                     L.T("덮어쓰기"), L.T("건너뛰기"), L.T("취소"), MessageBoxImage.Question,
                     string.Join("\n", existing.Take(15)) + (existing.Count > 15 ? "\n..." : ""));
-                if (choice is -1 or 2) return;
+                if (choice is -1 or 2) { EndTransfer(null); return; }
                 if (choice == 1) files = files.Where(f => !existing.Contains(f.Remote)).ToList();
             }
-            if (files.Count == 0 && dirs.Count == 0) return;
+            if (files.Count == 0 && dirs.Count == 0) { EndTransfer(null); return; }
 
             var total = files.Sum(f => f.Size);
             long done = 0;
-            var ct = BeginTransfer(L.F("업로드 준비 ({0}개, {1})", files.Count, HumanSize(total)), total);
+            TransferText.Text = L.F("업로드 준비 ({0}개, {1})", files.Count, HumanSize(total));
+            TransferProgress.IsIndeterminate = total == 0;
+            TransferProgress.Value = 0;
             await Task.Run(() => { foreach (var d in dirs) if (!c.Exists(d)) c.CreateDirectory(d); }, ct);
             foreach (var (local, remote, size) in files)
             {
@@ -119,6 +118,35 @@ public partial class SftpPanel
         catch (OperationCanceledException) { EndTransfer(L.T("업로드를 취소했습니다.")); }
         catch (Exception ex) { EndTransfer(L.F("업로드 실패: {0}", ex.Message)); }
         await NavigateAsync(_cwd);
+    }
+
+    /// <summary>업로드 계획: 올릴 파일(로컬, 원격 경로, 크기)과 만들 폴더. 폴더는 하위까지 훑는다 (백그라운드 스레드에서)</summary>
+    private static (List<(string Local, string Remote, long Size)> Files, List<string> Dirs) PlanUpload(string[] localPaths, string target, CancellationToken ct)
+    {
+        var files = new List<(string Local, string Remote, long Size)>();
+        var dirs = new List<string>();
+        foreach (var p in localPaths)
+        {
+            ct.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(p.TrimEnd('\\'));
+            if (Directory.Exists(p))
+            {
+                var root = Combine(target, name);
+                dirs.Add(root);
+                foreach (var d in Directory.EnumerateDirectories(p, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    dirs.Add(Combine(root, Path.GetRelativePath(p, d).Replace('\\', '/')));
+                }
+                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    files.Add((f, Combine(root, Path.GetRelativePath(p, f).Replace('\\', '/')), new FileInfo(f).Length));
+                }
+            }
+            else if (File.Exists(p)) files.Add((p, Combine(target, name), new FileInfo(p).Length));
+        }
+        return (files, dirs);
     }
 
     // ===================== 다운로드 =====================

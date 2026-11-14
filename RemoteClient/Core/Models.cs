@@ -37,6 +37,8 @@ public sealed class HostEntry : INotifyPropertyChanged
     public Guid? JumpHostId { get; set; }
     /// <summary>접속용 사본에만: 점프 서버의 접속용 사본 (계정·주소가 채워진 것). 저장하지 않는다</summary>
     [JsonIgnore] public HostEntry? Jump { get; set; }
+    /// <summary>점프 서버로 지정한 호스트가 목록에 없음 (지워짐) — 이 표시가 있는 Jump 로는 연결하지 않는다 (점프 없이 직접 연결 방지)</summary>
+    [JsonIgnore] public bool IsMissingJump { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
@@ -184,11 +186,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     public HostEntry WithDefaults(CloudProfile? p)
     {
         var (vid, source) = ResolveVault(p);
-        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault: source == "host") : this;
+        var preferVault = vid != null && source == "host";
+        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault) : this;
         if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
         if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;
-        if (string.IsNullOrEmpty(c.ProtectedPassword)) c.ProtectedPassword = p.ProtectedDefaultPassword;
+        // 직접 고른 Vault 계정에 비밀번호가 없으면(키 전용 등) 프로필 기본 비밀번호를 몰래 채우지 않는다 — 편집 화면 안내("접속할 때 묻습니다")와 같게
+        if (!preferVault && string.IsNullOrEmpty(c.ProtectedPassword)) c.ProtectedPassword = p.ProtectedDefaultPassword;
         return c;
     }
     [JsonIgnore] public string IconGlyph => Protocol == Protocol.Ssh ? "" : "";
@@ -221,6 +225,8 @@ public sealed class HostEntry : INotifyPropertyChanged
         c.PropertyChanged = null;
         c._highlighted = false;
         c._selected = false;
+        // 얕은 복사면 복제본에서 기억한 답이 원본에도 들어간다
+        c.PromptAnswers = PromptAnswers == null ? null : new Dictionary<string, string>(PromptAnswers);
         return c;
     }
 
@@ -230,6 +236,9 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// </summary>
     public bool RefreshCredentialsFrom(HostEntry fresh)
     {
+        // 점프 서버(바뀐 점프 서버 계정·주소 포함)는 계정 변경 여부와 상관없이 늘 최신으로
+        Jump = fresh.Jump;
+        JumpHostId = fresh.JumpHostId;
         var changed = Username != fresh.Username || ProtectedPassword != fresh.ProtectedPassword || KeyPath != fresh.KeyPath ||
                       KeyMaterial != fresh.KeyMaterial || KeyPassphrase != fresh.KeyPassphrase || VaultId != fresh.VaultId;
         if (!changed) return false;

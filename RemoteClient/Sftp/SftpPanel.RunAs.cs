@@ -32,26 +32,35 @@ public partial class SftpPanel
     {
         if (user == _runAs) return true;
         if (RunAsFailed(user) || _busy) return false;
-        var previous = _runAs;
-        _runAs = user;
-        var old = _client;
-        _client = null;
-        try { old?.Dispose(); } catch { }
+        // 진행 중인 연결 열기·목록 읽기가 끝난 뒤에 바꾼다 (쓰는 중인 연결을 닫지 않게, 연결을 두 번 열지 않게)
+        await _clientLock.WaitAsync();
         try
         {
-            await ClientAsync();
-            if (_runAs != user) return false;   // 전환 실패 → ClientAsync 가 로그인 계정으로 되돌림
-            UpdateRunAsBadge();
-            if (user != null) ShowStatus(L.F("터미널을 따라 SFTP 를 {0} 권한으로 엽니다.", user));
-            return true;
+            if (_closed) return false;
+            if (user == _runAs) return true;   // 기다리는 동안 이미 바뀜
+            if (RunAsFailed(user) || _busy) return false;
+            var previous = _runAs;
+            _runAs = user;
+            var old = _client;
+            _client = null;
+            DisposeLater(old);
+            try
+            {
+                await ClientCoreAsync();
+                if (_runAs != user) return false;   // 전환 실패 → OpenRunAsAsync 가 로그인 계정으로 되돌림
+                UpdateRunAsBadge();
+                if (user != null) ShowStatus(L.F("터미널을 따라 SFTP 를 {0} 권한으로 엽니다.", user));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _runAs = previous;
+                UpdateRunAsBadge();
+                ShowMessage(ex.Message);
+                return false;
+            }
         }
-        catch (Exception ex)
-        {
-            _runAs = previous;
-            UpdateRunAsBadge();
-            ShowMessage(ex.Message);
-            return false;
-        }
+        finally { _clientLock.Release(); }
     }
 
     /// <summary>ClientAsync 에서: 다른 사용자 권한이면 sudo 로 연다. 실패하면 로그인 계정으로 되돌리고 null</summary>
@@ -87,11 +96,12 @@ public partial class SftpPanel
         return answers is { Length: > 0 } ? answers[0] : null;
     }
 
-    /// <summary>터미널이 다시 연결됨 — 새 셸은 로그인 계정이므로 다음 연결부터 로그인 계정으로, 실패 기록도 지운다</summary>
+    /// <summary>터미널이 다시 연결됨 — 새 셸은 로그인 계정이므로 다음 연결부터 로그인 계정으로, 실패 기록(별도 연결 인증 실패 포함)도 지운다</summary>
     public void ResetRunAs() => Dispatcher.Invoke(() =>
     {
         _runAs = null;
         _runAsFailed.Clear();
+        _separateAuthFailed = null;
         UpdateRunAsBadge();
     });
 

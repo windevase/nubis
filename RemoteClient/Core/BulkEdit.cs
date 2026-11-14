@@ -15,7 +15,7 @@ public sealed class BulkEdit
     public Guid? VaultId { get; set; }
     /// <summary>호스트에 직접 적은 사용자명·비밀번호·키 파일을 지운다 (Vault 계정이 쓰이게)</summary>
     public bool ClearOwnCredentials { get; set; }
-    /// <summary>사용자명 (Vault 계정보다 우선). ClearOwnCredentials 뒤에 적용</summary>
+    /// <summary>사용자명. 직접 고른 Vault 계정에 사용자명이 있으면 접속 때는 그 값이 우선. ClearOwnCredentials 뒤에 적용</summary>
     public string? Username { get; set; }
     public int? Port { get; set; }
     /// <summary>공인 IP 로 접속할지. 공인 IP 가 있는 호스트에만 적용</summary>

@@ -40,7 +40,9 @@ public partial class MainWindow
         }
         finally
         {
-            if (switched)
+            // 캡처하는 동안(0.7초 대기 포함) 사용자가 다른 탭·홈으로 옮겼으면 그 선택을 존중하고 되돌리지 않는다.
+            // 캡처가 바꿔 놓은 탭이 아직 선택돼 있을 때만 원래 화면으로 돌아간다
+            if (switched && tab.IsSelected && _tabs.Contains(tab))
             {
                 if (previous != null && _tabs.Contains(previous)) SelectTab(previous);
                 else SelectHome();

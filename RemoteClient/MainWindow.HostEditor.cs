@@ -188,6 +188,12 @@ public partial class MainWindow
         return L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.");
     }
 
+    /// <summary>비밀번호·키를 적거나 지우면 어떤 기본 계정이 쓰일지(또는 안 쓰일지) 안내를 다시 계산</summary>
+    private void OnEdCredentialChanged(object sender, RoutedEventArgs e)
+    {
+        if (_edVaultId == null) UpdateAuthUi();
+    }
+
     // 편집 중인 점프 서버 (ProxyJump)
     private Guid? _edJumpId;
 
@@ -278,6 +284,8 @@ public partial class MainWindow
             return null;
         }
         EditorError.Text = "";
+        // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다 — 원본 호스트를 바꾸기 전에 (취소하면 아무것도 바뀌지 않게)
+        if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
 
         var h = _editing ?? _template?.Clone() ?? new HostEntry();
         h.Protocol = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
@@ -289,8 +297,6 @@ public partial class MainWindow
         h.Port = port;
         h.Label = EdLabel.Text.Trim();
         h.Group = EdGroup.Text.Trim();
-        // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다
-        if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
         var ssh = ProtoSsh.IsChecked == true;
 
         h.VaultId = _edVaultId;

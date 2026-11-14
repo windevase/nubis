@@ -60,7 +60,7 @@ public partial class MainWindow
             && (windows.Count == 0 || ReadOnlyCommands.IsReadOnly(command, useCmd ? CommandShell.Cmd : CommandShell.PowerShell));
         if (!autoApproved)
         {
-            var approved = await OnUi(() => ApprovalDialog.Ask(this, L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
+            var approved = await OnUi(() => AskApproval("run_command", L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
                 L.T("승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다.") + mixed +
                 (skipped.Count > 0 ? L.F("\n제외: {0}건 (중지·미일치)", skipped.Count) : ""), labels, command));
             if (!approved)
@@ -72,6 +72,8 @@ public partial class MainWindow
 
         // 실행 중에는 Claude 패널 위에 "실행 중 · 취소" 줄을 보여 준다 (Claude CLI 에서 Esc 를 눌러도 앱의 실행은 계속되므로)
         using var cts = new CancellationTokenSource();
+        // Claude 에서 요청을 취소하면(Esc) 실행 중 표시줄의 취소와 같게 처리한다
+        using var reqCancel = McpRequest.Token.Register(() => { try { cts.Cancel(); } catch (ObjectDisposedException) { } });
         var started = DateTime.Now;
         await OnUi(() => { BeginRunStatus(cts, L.F("서버 {0}대에서 명령 실행 중: {1}", targets.Count, FirstLine(command))); return 0; });
         List<ExecResult> results;

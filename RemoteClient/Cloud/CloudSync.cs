@@ -68,7 +68,17 @@ public static class CloudSync
             }
             // 기본 접속 주소는 사설 IP (없으면 공인). 공인 IP 는 따로 저장해 호스트별로 골라 쓴다
             var address = inst.PrivateIp.Length > 0 ? inst.PrivateIp : inst.PublicIp;
-            if (address.Length == 0 || inst.InstanceId.Length == 0) continue;
+            if (inst.InstanceId.Length == 0) continue;
+            if (address.Length == 0)
+            {
+                // 주소가 잠깐 없는 서버(할당 해제·IP 교체 중 등): 이미 있는 호스트는 지우지 않고 상태만 갱신 (계정·포트·기억한 답 유지)
+                if (existing.TryGetValue(inst.InstanceId, out var noAddr))
+                {
+                    seen.Add(inst.InstanceId);
+                    noAddr.CloudState = inst.State;
+                }
+                continue;
+            }
             seen.Add(inst.InstanceId);
 
             if (!existing.TryGetValue(inst.InstanceId, out var h))
@@ -97,8 +107,8 @@ public static class CloudSync
             // 새 호스트: 프로필 기본 Vault 는 접속 때 적용되므로 여기서 따로 넣지 않는다
             h.Address = address;
             h.PrivateIp = inst.PrivateIp.Length > 0 ? inst.PrivateIp : null;
-            h.PublicIp = inst.PublicIp.Length > 0 ? inst.PublicIp : null;   // EIP 를 떼면 사라짐
-            if (h.PublicIp == null) h.UsePublicIp = false;
+            // EIP 를 떼면 공인 IP 는 사라지지만 사용자가 고른 "공인 IP 로 접속" 은 유지 — 다시 붙이면 그대로 공인으로 (공인 IP 가 없는 동안은 EffectiveAddress 가 사설로)
+            h.PublicIp = inst.PublicIp.Length > 0 ? inst.PublicIp : null;
             h.Purpose = inst.Purpose;
             h.CloudState = inst.State;
             h.CloudRegion = inst.Region;

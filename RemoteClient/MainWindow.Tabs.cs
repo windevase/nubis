@@ -36,7 +36,7 @@ public partial class MainWindow
         // 다시 연결할 때 저장된 호스트·Vault 의 최신 계정을 반영 (탭을 연 뒤 Vault 비밀번호를 고친 경우)
         CloudProfile? Profile() => _profiles.FirstOrDefault(p => p.Id == saved.CloudProfileId);
         var source = _hosts.Contains(saved)
-            ? new SessionSource(() => saved.ForConnection(Profile(), usePublic), () => saved.CredentialSourceText(Profile()),
+            ? new SessionSource(() => AttachJump(saved, saved.ForConnection(Profile(), usePublic)), () => saved.CredentialSourceText(Profile()),
                 () => saved.PromptAnswers, (question, answer) =>
                 {
                     // "Choose [1] Push, or [2] TOTP" 같은 고정 선택을 이 호스트에 기억 (호스트 편집에서 지울 수 있음)
@@ -96,7 +96,10 @@ public partial class MainWindow
     {
         var (vaultId, source) = saved.ResolveVault(profile);
         if (source != "host") return null;
-        return VaultStore.Get(vaultId) is { HasPassword: true } entry && string.Equals(user, entry.Username, StringComparison.Ordinal)
+        // 비밀번호가 없는 계정(키 전용 등)이어도 사용자명이 같으면 그 계정에 저장 — 저장을 골랐는데 조용히 버려 매번 다시 묻던 문제.
+        // 사용자명은 대소문자를 구분한다 (리눅스 계정 이름)
+        return VaultStore.Get(vaultId) is { } entry && !string.IsNullOrWhiteSpace(entry.Username) &&
+               string.Equals(user, entry.Username, StringComparison.Ordinal)
             ? entry : null;
     }
 
@@ -111,8 +114,13 @@ public partial class MainWindow
     {
         if (saved.Protocol != Protocol.Ssh || saved.JumpHostId is not { } id) return conn;
         var j = _hosts.FirstOrDefault(x => x.Id == id && x.Protocol == Protocol.Ssh && !ReferenceEquals(x, saved));
-        if (j == null) return conn;
         if (ReferenceEquals(conn, saved)) conn = saved.Clone();
+        if (j == null)
+        {
+            // 점프 서버가 지워졌다 — 조용히 직접 연결하지 않고 연결할 때 오류를 내게 표시만 붙인다 (JumpTunnel.Open)
+            conn.Jump = new HostEntry { Label = L.T("삭제된 점프 서버"), Protocol = Protocol.Ssh, IsMissingJump = true };
+            return conn;
+        }
         var jc = j.ForConnection(_profiles.FirstOrDefault(p => p.Id == j.CloudProfileId));
         if (ReferenceEquals(jc, j)) jc = j.Clone();
         jc.Jump = null;

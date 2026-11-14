@@ -181,7 +181,7 @@ public class CloudSyncTests
     }
 
     [Fact]
-    public void 사용자가_고른_공인IP_사용은_재동기화해도_유지되고_EIP를_떼면_해제된다()
+    public void 사용자가_고른_공인IP_사용은_재동기화해도_EIP를_떼도_유지된다()
     {
         var p = Profile();
         var hosts = new List<HostEntry>();
@@ -193,8 +193,9 @@ public class CloudSyncTests
         Assert.True(hosts[0].UsePublicIp);
         Assert.Equal("3.3.3.4", hosts[0].EffectiveAddress);
 
+        // EIP 를 떼면 공인 IP 는 없어지지만 사용자가 고른 설정은 유지 (CLAUDE.md: 동기화는 UsePublicIp 를 바꾸지 않는다) — 그동안은 사설로 접속
         CloudSync.Apply(p, new() { Linux("i-1", pub: "") }, hosts);
-        Assert.False(hosts[0].UsePublicIp);
+        Assert.True(hosts[0].UsePublicIp);
         Assert.Null(hosts[0].PublicIp);
         Assert.Equal("10.0.0.1", hosts[0].EffectiveAddress);
     }

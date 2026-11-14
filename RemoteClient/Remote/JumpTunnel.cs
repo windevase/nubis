@@ -29,10 +29,15 @@ public sealed class JumpTunnel : IDisposable
     /// <param name="jump">점프 서버의 접속용 사본 (계정 채워진 것)</param>
     /// <param name="prompter">대화형이면 점프 서버의 인증 질문(OTP 등)을 묻는다. null 이면 비대화형</param>
     /// <param name="verifyHostKey">점프 서버 호스트키 확인 — 거부 사유, 신뢰하면 null</param>
+    /// <exception cref="JumpTunnelException">점프 서버 계정 없음·호스트키 거부·인증 실패·연결 실패 (대상 서버의 실패와 구분)</exception>
+    /// <exception cref="AuthPromptCancelledException">점프 서버의 인증 질문(OTP 등) 입력을 사용자가 취소함</exception>
     public static JumpTunnel Open(HostEntry jump, string targetHost, int targetPort, AuthPrompter? prompter, Func<HostEntry, HostKeyEventArgs, string?> verifyHostKey)
     {
+        // 점프 서버로 지정한 호스트가 지워졌다 — 점프 없이 직접 연결하지 않는다
+        if (jump.IsMissingJump)
+            throw new JumpTunnelException(L.T("점프 서버로 지정한 호스트가 목록에 없습니다 (삭제됨). 호스트 편집에서 점프 서버를 다시 고르세요."), JumpFailure.Config);
         if (string.IsNullOrWhiteSpace(jump.Username))
-            throw new InvalidOperationException($"점프 서버 '{jump.DisplayName}' 에 저장된 사용자명이 없습니다 (호스트·Vault 에 계정을 저장하세요).");
+            throw new JumpTunnelException(L.F("점프 서버 '{0}' 에 저장된 사용자명이 없습니다 (호스트·Vault 에 계정을 저장하세요).", jump.DisplayName), JumpFailure.Config);
         var client = new SshClient(SshAuth.Build(jump, jump.Username, jump.Password, prompter: prompter)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
         string? keyError = null;
         client.HostKeyReceived += (_, e) => e.CanTrust = (keyError = verifyHostKey(jump, e)) == null;
@@ -40,12 +45,20 @@ public sealed class JumpTunnel : IDisposable
         try { client.Connect(); }
         catch (Exception ex)
         {
+            // Detach 는 Dispose 전에 — 닫힌 클라이언트의 ConnectionInfo 에 접근하면 ObjectDisposedException 이 나서 진짜 사유를 덮는다
+            prompter?.Detach(client);
             client.Dispose();
+            // 사용자가 입력 창을 취소함 — 실패가 아니다 (호출하는 쪽이 "취소" 로 처리)
+            if (ex is AuthPromptCancelledException || prompter?.Cancelled == true)
+                throw ex as AuthPromptCancelledException ?? new AuthPromptCancelledException(ex.Message);
             var reason = keyError ?? ex.Message;
-            if (ex is SshAuthenticationException) throw new SshAuthenticationException($"점프 서버 '{jump.DisplayName}' 인증 실패 — {reason}");
-            throw new InvalidOperationException($"점프 서버 '{jump.DisplayName}' ({jump.Address}:{jump.Port}) 연결 실패 — {reason}", ex);
+            if (keyError != null)
+                throw new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 호스트키 확인 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), JumpFailure.HostKey, ex);
+            if (ex is SshAuthenticationException)
+                throw new JumpTunnelException(L.F("점프 서버 '{0}' 인증 실패 — {1}", jump.DisplayName, reason), JumpFailure.Auth, ex);
+            throw new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 연결 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), JumpFailure.Network, ex);
         }
-        finally { prompter?.Detach(client); }
+        prompter?.Detach(client);
 
         try
         {
@@ -68,4 +81,29 @@ public sealed class JumpTunnel : IDisposable
         try { _forward.Stop(); } catch { }
         try { _client.Dispose(); } catch { }
     }
+}
+
+/// <summary>점프 서버 단계의 실패 종류</summary>
+public enum JumpFailure
+{
+    /// <summary>점프 서버에 계정이 없음 등 설정 문제</summary>
+    Config,
+    /// <summary>점프 서버 호스트키가 저장값과 다르거나 거부됨</summary>
+    HostKey,
+    /// <summary>점프 서버 인증 실패</summary>
+    Auth,
+    /// <summary>점프 서버에 연결하지 못함 (네트워크)</summary>
+    Network,
+}
+
+/// <summary>
+/// 점프 서버 단계에서 실패 — 대상 서버의 인증 실패로 오해하지 않게(대상 계정을 다시 묻지 않게) 따로 구분한다.
+/// 기존 호출하는 쪽(InvalidOperationException 을 잡는 SFTP 도구 등)이 그대로 동작하도록 InvalidOperationException 을 상속.
+/// </summary>
+public sealed class JumpTunnelException(string message, JumpFailure kind, Exception? inner = null) : InvalidOperationException(message, inner)
+{
+    public JumpFailure Kind { get; } = kind;
+    public bool IsAuth => Kind == JumpFailure.Auth;
+    /// <summary>다시 시도해도 같은 결과일 실패 (자동 재연결하지 않음): 계정 없음·호스트키·인증</summary>
+    public bool IsPermanent => Kind != JumpFailure.Network;
 }

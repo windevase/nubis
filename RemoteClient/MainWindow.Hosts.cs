@@ -339,8 +339,16 @@ public partial class MainWindow
         {
             // 클라우드 호스트의 복사본은 직접 관리하는 호스트로 (같은 인스턴스 ID 를 가진 유령 사본 방지)
             var profile = _profiles.FirstOrDefault(p => p.Id == h.CloudProfileId);
-            copy.VaultId = h.EffectiveVaultId(profile);
-            if (copy.VaultId == null)
+            var (vaultId, source) = h.ResolveVault(profile);
+            if (vaultId != null && (source == "host" || !BulkEdit.HasOwnCredentials(copy)))
+                copy.VaultId = vaultId;   // 원본도 그 Vault 계정으로 로그인 — 복사본에 직접 지정 (프로필이 없어지므로)
+            else if (vaultId != null && VaultStore.Get(vaultId) is { } v)
+            {
+                // 원본은 기본 계정(프로필·설정)이 호스트에 적힌 값 뒤에 쓰였다 — 직접 지정하면 Vault 가 우선이 되어 로그인 사용자가 바뀌므로 빈 값만 채운다
+                if (string.IsNullOrEmpty(copy.Username)) copy.Username = v.Username;
+                if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = v.ProtectedPassword;
+            }
+            else
             {
                 if (string.IsNullOrEmpty(copy.Username)) copy.Username = profile?.DefaultUsername ?? "";
                 if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = profile?.ProtectedDefaultPassword;
@@ -372,6 +380,11 @@ public partial class MainWindow
         var msg = profile != null
             ? L.F("'{0}' 을(를) 목록에서 지울까요?\n클라우드의 서버는 그대로이며, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.\n(프로필 설정에서 숨김을 해제할 수 있습니다)", h.DisplayName)
             : L.F("'{0}' 호스트를 삭제할까요?", h.DisplayName);
+        // 이 호스트를 점프 서버로 쓰는 호스트 — 지우면 그 호스트들은 점프 서버를 다시 고를 때까지 연결되지 않는다
+        var dependents = _hosts.Where(x => x.JumpHostId == h.Id).ToList();
+        if (dependents.Count > 0)
+            msg += "\n\n" + L.F("이 호스트를 점프 서버로 쓰는 호스트 {0}개는 점프 서버를 다시 고를 때까지 연결되지 않습니다:", dependents.Count) + "\n" +
+                   string.Join("\n", dependents.Take(10).Select(x => "  " + x.DisplayName)) + (dependents.Count > 10 ? "\n  ..." : "");
         if (Dialog.Show(this, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         RemoveHosts(new[] { h });
     }

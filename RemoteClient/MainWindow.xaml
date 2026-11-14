@@ -1099,7 +1099,7 @@
 
                                     <StackPanel x:Name="HostSecretPanel">
                                     <TextBlock x:Name="EdPasswordLabel" Text="{l:Tr '비밀번호'}" Style="{StaticResource FieldLabel}"/>
-                                    <PasswordBox x:Name="EdPassword"/>
+                                    <PasswordBox x:Name="EdPassword" PasswordChanged="OnEdCredentialChanged"/>
                                     <TextBlock x:Name="PwHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
 
                                     <StackPanel x:Name="KeyPanel">
@@ -1109,7 +1109,7 @@
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBox x:Name="EdKey" Tag="{l:Tr 'OpenSSH / PuTTY(.ppk) 키 파일 경로'}"/>
+                                            <TextBox x:Name="EdKey" Tag="{l:Tr 'OpenSSH / PuTTY(.ppk) 키 파일 경로'}" TextChanged="OnEdCredentialChanged"/>
                                             <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="{l:Tr '찾기'}" Margin="8,0,0,0"
                                                     Height="38" Click="OnBrowseKey"/>
                                         </Grid>

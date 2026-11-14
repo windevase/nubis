@@ -48,6 +48,14 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
     public bool LastAnsweredWithSavedPassword { get; internal set; }
 
     /// <summary>
+    /// 사용자가 인증 입력 창(OTP·비밀번호 변경)을 취소했음 — 인증 실패가 아니므로 계정을 다시 묻지 않는다.
+    /// SSH.NET 이 예외 종류를 바꿔 전달하더라도 알 수 있게 예외(AuthPromptCancelledException)와 별도로 둔다.
+    /// </summary>
+    public bool Cancelled { get; internal set; }
+
+    private EventHandler<HostKeyEventArgs>? _hostKeyHandler;
+
+    /// <summary>
     /// Connect 전에 호출. 키 교환이 끝나 호스트키를 받은 뒤(= TCP 연결·키 교환 타임아웃은 그대로 둔 채)
     /// 인증 단계의 대기 시간만 늘린다. SSH.NET 은 인증 응답을 ConnectionInfo.Timeout 만큼만 기다린다.
     /// </summary>
@@ -55,15 +63,28 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
     {
         var ci = client.ConnectionInfo;
         _origTimeout = ci.Timeout;
-        client.HostKeyReceived += (_, _) => { if (ci.Timeout < AuthTimeout) ci.Timeout = AuthTimeout; };
+        if (_hostKeyHandler != null) client.HostKeyReceived -= _hostKeyHandler;
+        _hostKeyHandler = (_, _) => { if (ci.Timeout < AuthTimeout) ci.Timeout = AuthTimeout; };
+        client.HostKeyReceived += _hostKeyHandler;
     }
 
-    /// <summary>Connect 뒤(성공·실패 모두) 호출 — 채널 열기 등 이후 동작의 타임아웃을 원래대로</summary>
+    /// <summary>
+    /// Connect 뒤(성공·실패 모두) 호출 — 채널 열기 등 이후 동작의 타임아웃을 원래대로.
+    /// 호스트키 이벤트 처리기도 뗀다 — 연결 뒤 키 재교환(rekey) 때 다시 3분으로 늘리지 않게.
+    /// </summary>
     public void Detach(BaseClient client)
     {
+        if (_hostKeyHandler != null)
+        {
+            client.HostKeyReceived -= _hostKeyHandler;
+            _hostKeyHandler = null;
+        }
         if (_origTimeout is { } t) client.ConnectionInfo.Timeout = t;
     }
 }
+
+/// <summary>사용자가 서버의 인증 질문(OTP·비밀번호 변경) 입력 창을 취소함 — 인증 실패와 구분한다</summary>
+public sealed class AuthPromptCancelledException(string message) : SshAuthenticationException(message);
 
 public static class SshAuth
 {
@@ -173,7 +194,12 @@ public static class SshAuth
         var canRemember = prompter.RememberAnswer != null;
         var req = new AuthPromptRequest(L.T("서버가 추가 인증을 요구합니다"), e.Instruction?.Trim() ?? "",
             rest.Select(p => new AuthPromptField(p.Request.Trim(), !p.IsEchoed, canRemember)).ToList());
-        var answers = prompter.Ask(req) ?? throw new SshAuthenticationException(L.T("인증 입력이 취소되었습니다."));
+        var answers = prompter.Ask(req);
+        if (answers == null)
+        {
+            prompter.Cancelled = true;
+            throw new AuthPromptCancelledException(L.T("인증 입력이 취소되었습니다."));
+        }
         for (var i = 0; i < rest.Count; i++)
         {
             var answer = i < answers.Length ? answers[i] : "";
@@ -192,8 +218,12 @@ public static class SshAuth
         for (var attempt = 0; attempt < 3; attempt++)
         {
             var a = prompter.Ask(new AuthPromptRequest(L.T("비밀번호 변경"), instruction,
-                [new AuthPromptField(L.T("새 비밀번호"), true), new AuthPromptField(L.T("새 비밀번호 확인"), true)]))
-                ?? throw new SshAuthenticationException(L.T("비밀번호 변경이 취소되었습니다."));
+                [new AuthPromptField(L.T("새 비밀번호"), true), new AuthPromptField(L.T("새 비밀번호 확인"), true)]));
+            if (a == null)
+            {
+                prompter.Cancelled = true;
+                throw new AuthPromptCancelledException(L.T("비밀번호 변경이 취소되었습니다."));
+            }
             if (a.Length >= 2 && a[0].Length > 0 && a[0] == a[1])
             {
                 prompter.NewPassword = a[0];
