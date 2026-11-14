@@ -939,7 +939,7 @@
                         <CheckBox x:Name="AutoReadOnlyBox" Click="OnAutoReadOnlyClick">
                             <TextBlock TextWrapping="Wrap">
                                 <Run Text="{l:Tr '읽기 전용 명령은 승인 없이 실행'}"/>
-                                <Run Text="{l:Tr '  조회 명령(ls, df, systemctl status, Get-* 등)만 바로 실행. 그 외 명령·터미널 입력은 승인 창, 감사 로그 기록'}" Foreground="{StaticResource SubText}"/>
+                                <Run Text="{l:Tr '  조회 명령(ls, pwd, df, systemctl status, Get-* 등)만 바로 실행 — 터미널 입력은 셸 프롬프트일 때만. 그 외 명령은 승인 창, 감사 로그 기록'}" Foreground="{StaticResource SubText}"/>
                             </TextBlock>
                         </CheckBox>
 

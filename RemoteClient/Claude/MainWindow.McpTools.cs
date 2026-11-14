@@ -190,6 +190,21 @@ public partial class MainWindow
                 return $"[session {tab.Id}: {tab.Title}]\n{text}";
             }));
 
+        yield return new McpTool("get_terminal_info",
+            "SSH/로컬 터미널의 현재 상태를 명령 없이 바로 알려준다: 현재 폴더(셸의 OSC 7 또는 프롬프트에서 앱이 추적 중인 값), 로그인 계정, " +
+            "현재 셸 사용자(sudo su - 등으로 바뀌었는지), 셸 프롬프트가 보이는지(명령 실행 중·vim·비밀번호 질문 화면 여부), SFTP 패널 권한. " +
+            "'지금 폴더 어디야', '누구로 로그인돼 있어' 같은 질문에는 pwd/whoami 를 send_to_terminal 로 보내지 말고 이 도구를 먼저 쓴다. " +
+            "session_id 생략 시 사용자가 보고 있는 탭.",
+            Schema(new { session_id = new { type = "integer" } }),
+            a => OnUiAsync(async () =>
+            {
+                var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
+                var info = await tab.Session.GetTerminalInfoAsync()
+                           ?? throw new McpToolException($"'{tab.Title}' 은 RDP 세션이라 터미널 정보가 없습니다. capture_screen 으로 화면을 보세요.");
+                AuditLog.Write("get_terminal_info", new[] { $"session {tab.Id}: {tab.Title}" }, "(터미널 상태 조회)", "조회");
+                return $"[session {tab.Id}: {tab.Title}]\n{info}";
+            }));
+
         yield return new McpTool("get_selection",
             "사용자가 터미널에서 드래그로 선택한 텍스트를 가져온다. session_id 생략 시 현재 탭.",
             Schema(new { session_id = new { type = "integer" } }),
@@ -275,30 +290,37 @@ public partial class MainWindow
 
         yield return new McpTool("send_to_terminal",
             "열려 있는 SSH/로컬 세션의 대화형 터미널에 텍스트를 입력한다 (사용자가 보는 화면에 그대로 타이핑). " +
-            "실행 전에 앱이 사용자 승인을 받는다. 결과는 잠시 후 read_terminal 로 확인.",
+            "실행 전에 앱이 사용자 승인을 받는다 — 사용자가 '읽기 전용 명령은 승인 없이 실행' 을 켰고, 화면이 셸 프롬프트이고, 읽기 전용 명령이면 승인 없이 입력한다. " +
+            "현재 폴더·사용자는 이 도구 대신 get_terminal_info 로 확인할 것. 결과는 wait_for_output 으로 확인.",
             Schema(new
             {
                 session_id = new { type = "integer", description = "생략 시 현재 탭" },
                 text = new { type = "string" },
                 press_enter = new { type = "boolean", description = "끝에 Enter 입력 (기본 true)" },
             }, "text"),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다.");
                 if (tab.Protocol == Protocol.Rdp) throw new McpToolException("RDP 세션에는 입력할 수 없습니다.");
                 var text = Arg(a, "text");
+                var enter = BoolArg(a, "press_enter") != false;
                 var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-                if (!ApprovalDialog.Ask(this, L.T("Claude 가 터미널 입력을 요청합니다"),
+                var shell = tab.Protocol == Protocol.Local ? CommandShell.PowerShell : CommandShell.Sh;
+                // 읽기 전용 자동 승인: 설정을 켰고 + 셸 프롬프트가 보이고(비밀번호 질문·vim 등에 들어가지 않게) + 한 줄 읽기 전용 명령 + Enter
+                var auto = McpHelpers.CanAutoApproveTerminalInput(SettingsStore.Current.AutoApproveReadOnly, text, enter,
+                    await tab.Session.IsAtPromptAsync(), t => ReadOnlyCommands.IsReadOnly(t, shell));
+                if (!auto && !ApprovalDialog.Ask(this, L.T("Claude 가 터미널 입력을 요청합니다"),
                         L.T("아래 세션의 터미널에 텍스트를 입력합니다."), new[] { target }, text))
                 {
                     AuditLog.Write("send_to_terminal", new[] { target }, text, "거부");
                     throw new McpToolException("사용자가 입력을 거부했습니다.");
                 }
-                var ok = tab.Session.SendText(text + (BoolArg(a, "press_enter") == false ? "" : "\r"));
-                AuditLog.Write("send_to_terminal", new[] { target }, text, ok ? "승인·입력" : "승인·실패(세션 끊김)");
+                var ok = tab.Session.SendText(text + (enter ? "\r" : ""));
+                AuditLog.Write("send_to_terminal", new[] { target }, text,
+                    ok ? (auto ? "자동 승인(읽기 전용)·입력" : "승인·입력") : "실패(세션 끊김)");
                 if (!ok) throw new McpToolException("세션이 연결되어 있지 않아 입력하지 못했습니다.");
                 SelectTab(tab);
-                return "입력했습니다. read_terminal 로 결과를 확인하세요.";
+                return (auto ? "읽기 전용 명령이라 승인 없이 입력했습니다. " : "입력했습니다. ") + "wait_for_output 으로 결과를 확인하세요.";
             }));
     }
 

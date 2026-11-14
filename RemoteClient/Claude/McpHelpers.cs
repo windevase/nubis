@@ -23,6 +23,16 @@ public static class McpHelpers
         return n;
     }
 
+    /// <summary>
+    /// send_to_terminal 을 승인 없이 입력해도 되는가. 모두 만족할 때만:
+    ///  - 사용자가 '읽기 전용 명령은 승인 없이 실행'(AutoApproveReadOnly) 을 켰다
+    ///  - 화면에 셸 프롬프트가 보인다 — sudo 비밀번호 질문·vim·mysql 안이면 같은 글자도 다른 뜻이 된다
+    ///  - 한 줄이고 Enter 로 실행한다 (여러 줄·Enter 없는 입력은 프롬프트 상태를 바꿀 수 있음)
+    ///  - ReadOnlyCommands 가 읽기 전용으로 본다 (허용 목록 방식, 애매하면 아님)
+    /// </summary>
+    public static bool CanAutoApproveTerminalInput(bool settingOn, string text, bool pressEnter, bool atPrompt, Func<string, bool> isReadOnly) =>
+        settingOn && atPrompt && pressEnter && text.Trim().Length > 0 && text.IndexOfAny(['\r', '\n']) < 0 && isReadOnly(text);
+
     /// <summary>앞부분에 NUL 이 있거나 제어 문자가 많으면 바이너리로 본다</summary>
     public static bool LooksBinary(ReadOnlySpan<byte> data)
     {

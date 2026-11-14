@@ -366,6 +366,13 @@ public interface ISessionView
     bool SendText(string text);
     /// <summary>끊긴 세션 다시 연결 (연결 중이면 무시)</summary>
     void Reconnect();
+    /// <summary>
+    /// 앱이 이미 알고 있는 터미널 상태 (현재 폴더·사용자 등, Claude 가 읽는 글). 명령을 보내지 않는다.
+    /// 터미널이 아니면(RDP) null. UI 스레드에서 호출
+    /// </summary>
+    System.Threading.Tasks.Task<string?> GetTerminalInfoAsync() => System.Threading.Tasks.Task.FromResult<string?>(null);
+    /// <summary>화면에 셸 프롬프트가 보이는가 (명령 입력 대기 중). 모르면 false. UI 스레드에서 호출</summary>
+    System.Threading.Tasks.Task<bool> IsAtPromptAsync() => System.Threading.Tasks.Task.FromResult(false);
 }
 
 public sealed class SessionTab : INotifyPropertyChanged

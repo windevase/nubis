@@ -72,7 +72,7 @@
   "오프라인 허용 (일, 0 = 막음)": "Allow offline (days, 0 = blocked)",
   "테스트 로그인 후 저장": "Test sign-in and save",
   "읽기 전용 명령은 승인 없이 실행": "Run read-only commands without approval",
-  "  조회 명령(ls, df, systemctl status, Get-* 등)만 바로 실행. 그 외 명령·터미널 입력은 승인 창, 감사 로그 기록": "  Only query commands (ls, df, systemctl status, Get-*, etc.) run immediately. Other commands and terminal input go through the approval dialog and are recorded in the audit log",
+  "  조회 명령(ls, pwd, df, systemctl status, Get-* 등)만 바로 실행 — 터미널 입력은 셸 프롬프트일 때만. 그 외 명령은 승인 창, 감사 로그 기록": "  Only query commands (ls, pwd, df, systemctl status, Get-*, etc.) run immediately — terminal input only at a shell prompt. Other commands go through the approval dialog and are recorded in the audit log",
   "서버 인증서 경고 표시": "Show server certificate warnings",
   "  끄면 인증서를 확인할 수 없는 서버(자체 서명)도 경고 없이 바로 접속 — 다음 접속부터 적용": "  When off, servers whose certificate can't be verified (self-signed) connect without a warning — applies from the next connection",
   "터미널 글꼴": "Terminal font",

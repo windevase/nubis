@@ -74,6 +74,15 @@ public static class TerminalCwd
         return m.Success ? m.Groups["u"].Value : null;
     }
 
+    private static readonly Regex PowerShellPrompt = new(@"^PS (?<p>[A-Za-z]:\\[^>]*|\\\\[^>]+|[A-Za-z]+::[^>]*)>\s*$", RegexOptions.Compiled);
+
+    /// <summary>PowerShell 프롬프트("PS C:\Users\me>")의 현재 폴더. 프롬프트가 아니면 null</summary>
+    public static string? PowerShellCwd(string screen)
+    {
+        var last = screen.Replace("\r", "").Split('\n').Select(l => l.TrimEnd()).LastOrDefault(l => l.Length > 0);
+        return last != null && PowerShellPrompt.Match(last) is { Success: true } m ? m.Groups["p"].Value : null;
+    }
+
     /// <summary>cd 인자를 현재 폴더 기준 절대 경로로 (~, ., .. 처리). "-" 처럼 알 수 없으면 null</summary>
     public static string? Combine(string current, string arg, string home)
     {

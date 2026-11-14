@@ -9,7 +9,7 @@ using Renci.SshNet.Common;
 namespace Nubis;
 
 /// <summary>SSH 세션 탭: XtermView(xterm.js) 화면 ⇄ SSH.NET ShellStream</summary>
-public sealed class SshSessionView : UserControl, ISessionView
+public sealed partial class SshSessionView : UserControl, ISessionView
 {
     private readonly HostEntry _host;
     private readonly XtermView _term = new();

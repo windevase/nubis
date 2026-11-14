@@ -161,7 +161,7 @@ public partial class MainWindow
             _ => "로컬 PowerShell",
         };
         var host = address != null ? $" · {address}:{port}" : "";
-        var how = protocol == Protocol.Rdp ? "capture_screen" : "read_terminal / get_selection / capture_screen";
+        var how = protocol == Protocol.Rdp ? "capture_screen" : "get_terminal_info(현재 폴더·사용자) / read_terminal / get_selection / capture_screen";
         // 탭 제목은 호스트 이름에서 오므로 줄바꿈·따옴표를 정리해 한 줄을 유지
         var safeTitle = title.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
         return $"[Nubis 현재 화면] 사용자가 지금 보고 있는 탭: session_id={id} · \"{safeTitle}\" · {kind}{host} · {StatusText(status)}. " +
@@ -207,7 +207,8 @@ public partial class MainWindow
         "- 사용자는 대화 중에 탭을 자주 바꿉니다. 메시지마다 붙는 '[Nubis 현재 화면]' 줄이 그 메시지를 보낸 순간 사용자가 보고 있던 탭입니다. 이전에 쓰던 session_id 대신 그 줄의 session_id 를 쓰세요.\n" +
         "- 호스트 등록·수정·삭제는 add_host / update_host / delete_host 로 합니다(앱이 승인을 받음). 계정은 비밀번호 대신 list_vault 의 Vault 계정을 vault 로 연결하세요.\n" +
         "- 접속이 안 된다고 하면 먼저 test_connection 으로 DNS·포트·SSH 배너를 확인하세요.\n" +
-        "- send_to_terminal 로 명령을 보낸 뒤에는 wait_for_output 으로 끝날 때까지(또는 원하는 문자열이 나올 때까지) 기다렸다가 결과를 보세요.\n" +
+        "- 터미널의 현재 폴더·로그인 사용자·sudo 전환 여부는 get_terminal_info 로 바로 확인하세요(명령을 보내지 않아 빠르고 승인도 없음). pwd·whoami 를 send_to_terminal 로 보내지 마세요.\n" +
+        "- send_to_terminal 로 명령을 보낸 뒤에는 wait_for_output 으로 끝날 때까지(또는 원하는 문자열이 나올 때까지) 기다렸다가 결과를 보세요. 짧은 명령은 idle_sec=0.5 로 기다리면 빠릅니다.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
         "- 클라우드 서버 목록이 오래됐으면 cloud_sync 로 다시 가져오세요.\n" +
         "- 설정 안내를 부탁받으면 get_setup_status 로 상태를 먼저 보고, open_app_page 로 해당 화면을 열어 사용자와 같은 화면을 보며 한 단계씩 안내하세요. 시작 화면 로그인(SSO) 값은 Claude 가 바꿀 수 없으니 사용자가 직접 입력·저장하도록 안내합니다.\n" +
