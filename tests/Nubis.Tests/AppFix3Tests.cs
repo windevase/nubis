@@ -49,18 +49,20 @@ public class AppFix3Tests
 
         using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))   // 읽기는 되지만 덮어쓰기(File.Copy)는 실패
         {
-            var before = SafeFile.LoadWarnings.Count;
+            // LoadWarnings 는 병렬로 도는 다른 테스트도 쓰므로 이 파일 이름이 든 경고만 센다
+            var name = Path.GetFileName(path);
+            int Mine() { lock (SafeFile.LoadWarnings) return SafeFile.LoadWarnings.Count(w => w.Contains(name)); }
             var first = SafeFile.LoadProtected(path, s => JsonSerializer.Deserialize<string[]>(s), () => Array.Empty<string>(), out var failed1);
             Assert.False(failed1);
             Assert.Equal("old", first.Single());
-            var afterFirst = SafeFile.LoadWarnings.Count;
-            Assert.Equal(before + 1, afterFirst);
+            var afterFirst = Mine();
+            Assert.Equal(1, afterFirst);
             var corrupt = Directory.GetFiles(AppPaths.DataDir, Path.GetFileName(path) + ".corrupt-*").Length;
 
             var second = SafeFile.LoadProtected(path, s => JsonSerializer.Deserialize<string[]>(s), () => Array.Empty<string>(), out var failed2);
             Assert.False(failed2);
             Assert.Equal("old", second.Single());
-            Assert.Equal(afterFirst, SafeFile.LoadWarnings.Count);
+            Assert.Equal(afterFirst, Mine());
             Assert.Equal(corrupt, Directory.GetFiles(AppPaths.DataDir, Path.GetFileName(path) + ".corrupt-*").Length);
         }
     }
