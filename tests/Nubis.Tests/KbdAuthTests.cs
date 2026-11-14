@@ -1,3 +1,4 @@
+using System.Linq;
 using Nubis;
 using Xunit;
 
@@ -72,6 +73,15 @@ public class KbdAuthTests
     [InlineData("Permission denied (gssapi-with-mic).", false, true, "gssapi-with-mic")]
     public void 실패_원인_안내(string message, bool hasKey, bool hasPassword, string expectedPart) =>
         Assert.Contains(expectedPart, KbdAuth.FailureHint(message, hasKey, hasPassword));
+
+    // password 를 먼저 시도하면 2단계 인증(PAM OTP·Push)을 keyboard-interactive 로만 받는 서버에서
+    // password 실패 뒤 keyboard-interactive 까지 거부된다 — OpenSSH 와 같은 순서여야 한다
+    [Fact]
+    public void 인증_방식은_키보드_인터랙티브를_비밀번호보다_먼저_시도한다()
+    {
+        var ci = SshAuth.Build(new HostEntry { Address = "h", Port = 22, Protocol = Protocol.Ssh }, "u", "pw");
+        Assert.Equal(["keyboard-interactive", "password"], ci.AuthenticationMethods.Select(m => m.Name).ToArray());
+    }
 
     // SSH.NET 업데이트로 내부 Session 속성이 바뀌면 SFTP 가 터미널 연결을 공유하지 못하고 별도 연결(재인증)로 넘어간다
     [Fact]

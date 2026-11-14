@@ -64,20 +64,23 @@ public static class SshAuth
     /// </summary>
     public static ConnectionInfo Build(HostEntry host, string user, string password, int timeoutSec = 15, AuthPrompter? prompter = null)
     {
+        // 순서가 시도 순서다 (SSH.NET 은 서버가 허용한 것 중 이 목록 순서대로 시도). OpenSSH 와 같이 키 → keyboard-interactive → password.
+        // password 를 먼저 하면, 2단계 인증(PAM 의 OTP·Push 등)을 keyboard-interactive 로만 받는 서버에서 password 방식이
+        // 다음 질문에 답하지 못해 실패하고, 그 실패 때문에 이어지는 keyboard-interactive 까지 거부된다 (OpenSSH 는 되는데 Nubis 만 실패).
         var methods = new List<AuthenticationMethod>();
         if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
-        if (!string.IsNullOrEmpty(password))
-        {
-            var pw = new PasswordAuthenticationMethod(user, password);
-            pw.PasswordExpired += (_, e) => e.NewPassword = System.Text.Encoding.UTF8.GetBytes(AskNewPassword(prompter));
-            methods.Add(pw);
-        }
         if (!string.IsNullOrEmpty(password) || prompter != null)
         {
             var kbd = new KeyboardInteractiveAuthenticationMethod(user);
             var state = new KbdAuth.State();
             kbd.AuthenticationPrompt += (_, e) => Answer(e, password, state, prompter);
             methods.Add(kbd);
+        }
+        if (!string.IsNullOrEmpty(password))
+        {
+            var pw = new PasswordAuthenticationMethod(user, password);
+            pw.PasswordExpired += (_, e) => e.NewPassword = System.Text.Encoding.UTF8.GetBytes(AskNewPassword(prompter));
+            methods.Add(pw);
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
         var ci = new ConnectionInfo(host.Address, host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
