@@ -90,6 +90,8 @@ public sealed class SshSessionView : UserControl, ISessionView
     {
         await panel.OpenAsync();
         if (!SettingsStore.Current.SftpFollowTerminal) return;
+        // 터미널이 이미 다른 사용자(sudo su -)로 전환된 뒤에 패널을 연 경우
+        if (FollowPromptUser(await _term.ReadBufferAsync(8))) return;
         if ((_lastCwd ?? _promptCwd ?? await TerminalCwdAsync()) is { } cwd) await panel.FollowAsync(cwd);
     }
 
@@ -105,9 +107,46 @@ public sealed class SshSessionView : UserControl, ISessionView
     /// <summary>Enter 친 뒤: OSC 7 을 보내지 않는 셸(대부분의 서버 기본 bash)이면 새 프롬프트가 그려지길 기다린다</summary>
     private void OnCommandEntered()
     {
-        if (_lastCwd != null || !SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true, IsOpen: true }) return;
+        // OSC 7 로 폴더를 받는 셸이어도 프롬프트는 본다 — sudo su - 같은 사용자 전환은 프롬프트로만 알 수 있다
+        if (!SettingsStore.Current.SftpFollowTerminal || _sftp is not { IsVisible: true, IsOpen: true }) return;
         _watchingPrompt = true;
         _term.WatchPrompt();
+    }
+
+    /// <summary>
+    /// 프롬프트의 사용자가 바뀌었으면(sudo su - → root, exit → 로그인 계정) SFTP 도 그 사용자 권한으로 바꾼다.
+    /// 바꾸는 중이면 true — 폴더 따라가기는 전환이 끝난 뒤 새 홈 기준으로 한다.
+    /// </summary>
+    private bool FollowPromptUser(string screen)
+    {
+        if (_sftp == null || _authUser == null || TerminalCwd.PromptUser(screen) is not { } user) return false;
+        var want = user == _authUser ? null : user;
+        if (want == _sftp.RunAs || _sftp.RunAsFailed(want) || _switchingUser) return false;
+        _ = SwitchSftpUserAsync(want, screen);
+        return true;
+    }
+
+    private bool _switchingUser;
+
+    private async System.Threading.Tasks.Task SwitchSftpUserAsync(string? user, string screen)
+    {
+        _switchingUser = true;
+        try
+        {
+            // 새 셸 — 앞 셸이 OSC 7 로 알려준 폴더는 더 이상 맞지 않는다
+            _lastCwd = null;
+            _promptCwd = null;
+            _lastPromptScreen = null;
+            if (_sftp == null || !await _sftp.RunAsAsync(user)) return;
+            // 홈이 바뀌었으니(~ = /root 등) 새 홈 기준으로 프롬프트의 폴더를 다시 계산
+            if (TerminalCwd.Resolve(screen, _sftp.Home, _sftp.Home) is { } cwd)
+            {
+                _promptCwd = cwd;
+                await _sftp.FollowAsync(cwd);
+            }
+            else await _sftp.FollowAsync(_sftp.Home);
+        }
+        finally { _switchingUser = false; }
     }
 
     /// <summary>
@@ -117,10 +156,11 @@ public sealed class SshSessionView : UserControl, ISessionView
     private void OnPromptScreen(string screen)
     {
         if (!_watchingPrompt || _sftp == null) return;
-        if (_lastCwd != null) { _watchingPrompt = false; _term.StopWatchPrompt(); return; }   // 셸이 OSC 7 을 보내기 시작함
         // 화면이 그대로인데 다시 오는 경우(벨 등) — 같은 cd 를 이미 옮긴 폴더 기준으로 한 번 더 계산하지 않게
         if (screen == _lastPromptScreen) return;
         _lastPromptScreen = screen;
+        if (FollowPromptUser(screen)) return;
+        if (_lastCwd != null) return;   // 셸이 OSC 7 로 폴더를 알려줌 — 프롬프트로 계산하지 않는다
         if (TerminalCwd.Resolve(screen, _sftp.Home, _promptCwd ?? _sftp.Home) is not { } cwd) return;   // 아직 명령 실행 중
         if (cwd == _promptCwd) return;   // 폴더 그대로 (패널에서 직접 옮겨 둔 위치는 건드리지 않음)
         _promptCwd = cwd;
@@ -162,7 +202,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         {
             if (_sftp == null)
             {
-                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync);
+                _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync, () => _client);
                 _sftp.CloseRequested += () => ToggleSftp(false);
                 Grid.SetColumn(_sftp, 1);
                 ((Grid)Content).Children.Add(_sftp);
@@ -243,15 +283,22 @@ public sealed class SshSessionView : UserControl, ISessionView
         {
             _hostKeyAccepted = false;
             _hostKeyRejected = false;
+            var target = $"{user}@{_host.DisplayName} ({_host.Address})";
+            // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)은 터미널에 보여준다
+            var prompter = new AuthPrompter(
+                req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
+                banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
             await Task.Run(() =>
             {
-                var client = new SshClient(SshAuth.Build(_host, user, password)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
                 ShellStream? shell = null;
                 try
                 {
                     client.HostKeyReceived += OnHostKey;
                     client.ErrorOccurred += (_, e) => { if (gen == _gen) OnDisconnected(e.Exception.Message); };
-                    client.Connect();
+                    prompter.Attach(client);
+                    try { client.Connect(); }
+                    finally { prompter.Detach(client); }
 
                     shell = client.CreateShellStream("xterm-256color", cols, rows, 0, 0, 65536);
                     shell.DataReceived += OnData;
@@ -283,6 +330,14 @@ public sealed class SshSessionView : UserControl, ISessionView
             _autoAttempts = 0;
             _promptCwd = null;   // 새 셸은 홈 폴더에서 시작
             _lastPromptScreen = null;
+            _sftp?.ResetRunAs();   // 새 셸은 로그인 계정으로 시작
+            if (prompter.NewPassword is { } newPassword)
+            {
+                // 서버 요구로 비밀번호를 바꿈 — 이 호스트에 저장된 비밀번호를 쓰던 경우면 새 값으로 저장
+                if (_saveCredentials != null && password == _host.Password && !string.IsNullOrEmpty(_host.Password)) save = true;
+                password = newPassword;
+                _term.Info(L.T("비밀번호를 변경했습니다."), "32");
+            }
             _authUser = user;
             _authPassword = password;
             // 로그인에 성공한 계정만 저장 (이번 세션에도 반영해 재연결 시 다시 묻지 않음)
@@ -308,6 +363,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             // 저장된 비밀번호가 바뀐 경우 등: 다음 시도에서 계정을 다시 묻는다
             _askCredentials = true;
             _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
+            if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
             _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);

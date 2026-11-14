@@ -32,7 +32,7 @@ Import servers from AWS, Tencent Cloud, Google Cloud and Azure, profile by profi
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys.
 
 **📁 SFTP that follows you**
-The file panel opens with every SSH session and follows the terminal's current folder. Drag files in and out of Explorer. Open a file in VS Code, and every save goes straight back to the server.
+The file panel opens with every SSH session on the same connection (no second sign-in, even with OTP) and follows the terminal's current folder — and its user too: `sudo su -` in the terminal and the panel browses as root. Drag files in and out of Explorer. Open a file in VS Code, and every save goes straight back to the server.
 
 **🔑 Accounts in one Vault**
 Save shared usernames, passwords and SSH keys once. Set a default account for SSH and for RDP and every host without its own account uses it, assign one to a whole group with a right-click, or pick one per host. Change a password in one place and every host uses it.

@@ -157,12 +157,15 @@ To send `Ctrl+C` / `Ctrl+V` straight to the shell instead, turn them off under S
 
 - **Host keys** — the key of a server you connect to for the first time is saved and trusted (you can turn on a confirmation prompt in Settings). **If the key differs from the saved one, Nubis always warns you.** If you reinstalled the server and its key changed, delete the old key in [Known Hosts](#122-known-hosts) and connect again.
 - **Theme · font · syntax highlighting** — set these in [Settings → Terminal](#112-terminal). Changes apply to open terminals right away.
+- **OTP · additional authentication** — when the server asks for more than a password, such as an OTP (verification code), Nubis shows an input window with the server's own wording. The saved password is sent only to a password question, and only once per connection — if the server asks again, Nubis shows the input window instead of resending the same password (avoids account lockout). Servers that require a key plus an OTP, and servers that require an expired password to be changed, are also handled during sign-in. The server's pre-login notice (banner) is shown in the terminal.
+- **Authentication failure hints** — Nubis looks at which methods the server allows (for example, keys only) and tells you the likely cause.
+- Claude's `run_command` and SFTP tools cannot enter an OTP, so they stop and report the reason when a server asks for additional authentication.
 
 ---
 
 ## 5. SFTP file transfer
 
-When an SSH sign-in succeeds, the SFTP panel attaches on the left automatically. It opens a separate SFTP connection with the account the terminal signed in with. Use the folder button on the toolbar to show or hide it, and drag its edge to resize it.
+When an SSH sign-in succeeds, the SFTP panel attaches on the left automatically. It opens an extra SFTP channel on the terminal's SSH connection, so **you don't authenticate again** (an OTP is entered only once). If that isn't possible, for example because the server limits sessions, it opens a separate connection with the same account. Use the folder button on the toolbar to show or hide it, and drag its edge to resize it.
 
 ### 5.1 Browsing
 
@@ -175,6 +178,10 @@ When an SSH sign-in succeeds, the SFTP panel attaches on the left automatically.
   PROMPT_COMMAND='printf "\e]7;file://%s%s\a" "$HOSTNAME" "$PWD"'
   ```
   The **terminal icon** button in the panel moves to the terminal folder on demand.
+- **Follow user switches** — when you become another user (usually root) in the terminal with `sudo su -`, `sudo -i` and so on, Nubis sees the user in the prompt and reopens the panel with that user's permissions. A red user badge appears next to the panel title, and `exit` switches back to your own account.
+  - Nubis runs the server's `sftp-server` through `sudo` on the same SSH connection. With passwordless sudo (NOPASSWD) it opens right away; otherwise it checks once with your sign-in password and asks for the sudo password if that fails or you signed in without a password. A user that failed is not retried during that connection.
+  - Switching with `su -` (root password) without sudo rights, and servers whose sudo configuration uses `requiretty` or doesn't allow running `sftp-server`, are not followed — Nubis tells you why.
+  - Files uploaded while the panel runs as root are owned by root.
 
 ### 5.2 Upload and download
 

@@ -21,6 +21,8 @@ The .NET SDK is a **per-user install** (`%LOCALAPPDATA%\Microsoft\dotnet\dotnet.
 - **If the user is running `publish\Nubis.exe`, publish fails on a file lock.** Do not kill the user's Nubis; ask them to close it. Check with:
   `Get-CimInstance Win32_Process -Filter "Name='Nubis.exe'" | ? ExecutablePath -like '*\publish\Nubis.exe'`
 - After changes, confirm 0 build warnings and that all tests pass.
+- **SSH.NET is a patched fork** (`2026.0.0.1-nubis`, restored from `third_party\SSH.NET\packages` via `nuget.config`). The patch (`third_party\SSH.NET\nubis-sftp-exec.patch`) adds `SftpClient.SftpServerCommand` / `SftpServerPreamble` / `SftpServerError` — open SFTP by running a command (sudo sftp-server) instead of the "sftp" subsystem. Rebuild with `tools\build-sshnet.ps1` (clone tag → apply patch → pack). To upgrade SSH.NET, bump `-Tag`/`-Version`, fix the patch if it no longer applies, and update the csproj. Keep the fork version **above** the upstream one (4-part `x.y.z.1-nubis`) — `x.y.z-nubis` sorts below `x.y.z` and NuGet flags the advisories fixed in it (NU1903).
+- `SharedSftpClient` opens the SFTP panel on the terminal's SSH session by setting SSH.NET's internal `BaseClient.Session` via reflection; `KbdAuthTests` asserts it still exists after an upgrade. The fallback is a separate connection (re-authentication).
 
 ## Structure
 
@@ -45,6 +47,8 @@ The source folder is named `RemoteClient\`, but the project / assembly / namespa
 | `Sessions\LocalTerminalView.cs` / `ConPty.cs` / `TerminalThemes.cs` | Local PowerShell tab · Claude panel (ConPTY, child environment cleanup `ChildEnvironment`) / terminal themes |
 | `Sftp\SftpPanel.xaml(.cs)` + `.Transfer.cs` / `.DragOut.cs` / `.Edit.cs` | SFTP panel: browsing · upload/download · drag out to Explorer (delayed rendering) · edit and auto-upload on save (conflict check) |
 | `Remote\SshExec.cs` / `WinRm.cs` | Non-interactive multi-server command execution · SFTP connection (SSH / hand-written WinRM: 5986 HTTPS → 5985 HTTP + NTLM encryption) |
+| `Remote\SshAuth.cs` + `Dialogs\AuthPromptDialog` | SSH auth methods · keyboard-interactive answers (`KbdAuth`: saved password only to a password prompt, once per connection; OTP etc. asked via `AuthPrompter` in interactive paths, error in non-interactive ones) · password-expired change · failure hints |
+| `Remote\SharedSftpClient.cs` / `SudoSftp.cs` + `Sftp\SftpPanel.RunAs.cs` | SFTP channel on the terminal's SSH session (no re-auth) / SFTP as another user via `sudo sftp-server` when the terminal prompt shows a different user (`TerminalCwd.PromptUser`) |
 | `Cloud\Cloud.cs` / `CloudSync.cs` / `*Provider.cs` | Cloud profiles · `CloudPaths` · provider list / storage · `CloudSync.Apply` merge / 4 providers (AWS SDK, Tencent TC3 hand-signed, GCP · Azure REST) |
 | `Vault\Vault.cs` + dialogs | Vault accounts (username + password / SSH key, `vault.json`). Hosts reference a single `VaultId`, and `WithDefaults` fills values only into the copy used for connecting — values written directly on the host win (`KeyMaterial` · `KeyPassphrase` are `[JsonIgnore]`). The old split form (`Kind`/`ProtectedSecret`, `VaultPasswordId`/`VaultKeyId`) is converted on read |
 | `Core\Models.cs` / `Storage.cs` / `Logging.cs` / `BrandIcons.cs` | Host model · JSON storage (`SafeFile`) · DPAPI (`Secret`) · known_hosts · settings · `AuditLog` · `LogFiles` · vector icons |

@@ -18,6 +18,11 @@
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
                     <TextBlock Text="SFTP" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    <!-- 터미널을 따라 다른 사용자(root 등) 권한으로 열었을 때 -->
+                    <Border x:Name="RunAsBadge" Visibility="Collapsed" Background="#C0392B" CornerRadius="4" Padding="6,1" Margin="8,0,0,0"
+                            VerticalAlignment="Center" ToolTip="{l:Tr '터미널을 따라 sudo 로 이 사용자 권한으로 열었습니다. 올린 파일의 소유자도 이 사용자가 됩니다.'}">
+                        <TextBlock x:Name="RunAsText" Foreground="White" FontSize="11" FontWeight="SemiBold"/>
+                    </Border>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Style="{StaticResource IconButton}" Content="&#xE74A;" Click="OnUp" ToolTip="{l:Tr '상위 폴더 (Backspace)'}"/>

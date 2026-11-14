@@ -56,6 +56,24 @@ public static class TerminalCwd
         return null;
     }
 
+    private static readonly Regex ColonPromptUser =
+        new(@"^(?:\([^)]*\)\s*)?(?<u>[^@\s\[]+)@[^:\s]+:(?:~[^\s]*|/[^\s]*)\s*[$#]$", RegexOptions.Compiled);
+    private static readonly Regex BracketPromptUser =
+        new(@"^(?:\([^)]*\)\s*)?\[(?<u>[^@\s\]]+)@[^\s\]]+ [^\]]+\][$#]$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 커서 줄의 새 프롬프트에 보이는 사용자 ("root@db:~#", "[root@db ~]#") — sudo su - 같은 사용자 전환 감지용.
+    /// 명령을 입력 중이거나 프롬프트가 아니면 null.
+    /// </summary>
+    public static string? PromptUser(string screen)
+    {
+        var last = screen.Replace("\r", "").Split('\n').Select(l => l.TrimEnd()).LastOrDefault(l => l.Length > 0);
+        if (last == null) return null;
+        var m = ColonPromptUser.Match(last);
+        if (!m.Success) m = BracketPromptUser.Match(last);
+        return m.Success ? m.Groups["u"].Value : null;
+    }
+
     /// <summary>cd 인자를 현재 폴더 기준 절대 경로로 (~, ., .. 처리). "-" 처럼 알 수 없으면 null</summary>
     public static string? Combine(string current, string arg, string home)
     {
