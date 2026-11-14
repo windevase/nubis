@@ -182,9 +182,23 @@ public static class VaultStore
     /// - SSH 키: 호스트에 키 파일이 없으면 계정의 키(+키 암호). RDP 는 키를 쓰지 않는다
     /// 항목이 지워졌으면 무시한다.
     /// </summary>
-    public static HostEntry Apply(HostEntry copy, Guid? id = null)
+    /// <param name="preferVault">
+    /// true = 호스트에 직접 고른 Vault 계정: 그 계정이 우선이라 호스트에 따로 적힌 사용자명·비밀번호·키는 쓰지 않는다
+    /// (사용자명은 Vault 에 없을 때만 호스트 값). false = 기본 계정(설정·프로필): 호스트에 비어 있는 값만 채운다.
+    /// </param>
+    public static HostEntry Apply(HostEntry copy, Guid? id = null, bool preferVault = false)
     {
         if (Get(id ?? copy.VaultId) is not { } v) return copy;
+        if (preferVault)
+        {
+            if (!string.IsNullOrWhiteSpace(v.Username)) copy.Username = v.Username;
+            copy.ProtectedPassword = v.ProtectedPassword;
+            copy.KeyPath = null;
+            var useKey = copy.Protocol == Protocol.Ssh && v.HasKey;
+            copy.KeyMaterial = useKey ? v.Key : null;
+            copy.KeyPassphrase = useKey ? v.Passphrase : null;
+            return copy;
+        }
         if (string.IsNullOrWhiteSpace(copy.Username)) copy.Username = v.Username;
         if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = v.ProtectedPassword;
         if (copy.Protocol == Protocol.Ssh && string.IsNullOrWhiteSpace(copy.KeyPath) && v.HasKey)

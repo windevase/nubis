@@ -161,13 +161,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// 접속용 계정을 채운 사본: Vault 항목을 쓰면 그 값을 먼저 채우고(호스트 설정이 우선),
-    /// 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
+    /// 접속용 계정을 채운 사본. 호스트에 직접 고른 Vault 계정이면 그 계정이 우선(호스트에 따로 적힌 값은 숨겨진 채 쓰지 않음),
+    /// 기본 계정(프로필·설정)이면 호스트에 비어 있는 값만 채운다. 클라우드 호스트는 그래도 비어 있는 계정을 프로필 기본 계정으로 채운다.
     /// </summary>
     public HostEntry WithDefaults(CloudProfile? p)
     {
-        var vid = EffectiveVaultId(p);
-        var c = vid != null ? VaultStore.Apply(Clone(), vid) : this;
+        var (vid, source) = ResolveVault(p);
+        var c = vid != null ? VaultStore.Apply(Clone(), vid, preferVault: source == "host") : this;
         if (p == null || (!string.IsNullOrEmpty(c.Username) && !string.IsNullOrEmpty(c.ProtectedPassword))) return c;
         if (ReferenceEquals(c, this)) c = Clone();
         if (string.IsNullOrEmpty(c.Username)) c.Username = p.DefaultUsername;

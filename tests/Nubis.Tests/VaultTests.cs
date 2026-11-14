@@ -111,26 +111,30 @@ public class VaultTests
     }
 
     [Fact]
-    public void 호스트에_직접_적은_값이_Vault_보다_우선한다()
+    public void 직접_고른_Vault_계정이_호스트에_적은_값보다_우선한다()
     {
         var v = new VaultEntry { Name = "t-admin", Username = "Administrator", Password = "vault-pw", Key = Key };
         VaultStore.Upsert(v);
         try
         {
+            // 호스트에 적힌 사용자명·비밀번호·키 파일은 숨겨진 채 쓰지 않는다 (지우지는 않음 — 해제하면 다시 쓰인다)
             var h = new HostEntry { Address = "10.0.0.2", Protocol = Protocol.Ssh, VaultId = v.Id, Username = "me", KeyPath = @"C:\mine.pem" };
             h.Password = "host-pw";
             var c = h.WithDefaults(null);
-            Assert.Equal("me", c.Username);
-            Assert.Equal("host-pw", c.Password);
-            Assert.Equal(@"C:\mine.pem", c.KeyPath);
-            Assert.Null(c.KeyMaterial);                   // 키 파일을 지정했으면 Vault 키는 쓰지 않는다
+            Assert.Equal("Administrator", c.Username);
+            Assert.Equal("vault-pw", c.Password);
+            Assert.Null(c.KeyPath);
+            Assert.Equal(Key, c.KeyMaterial);
+            Assert.Equal("host-pw", h.Password);
+            Assert.Equal(@"C:\mine.pem", h.KeyPath);
 
-            // 사용자명만 직접 적은 경우: 비밀번호·키는 Vault
-            var h2 = new HostEntry { Address = "10.0.0.3", Protocol = Protocol.Ssh, VaultId = v.Id, Username = "deploy" };
-            var c2 = h2.WithDefaults(null);
-            Assert.Equal("deploy", c2.Username);
-            Assert.Equal("vault-pw", c2.Password);
-            Assert.Equal(Key, c2.KeyMaterial);
+            // 해제하면 호스트에 적힌 값으로
+            h.VaultId = null;
+            var own = h.WithDefaults(null);
+            Assert.Equal("me", own.Username);
+            Assert.Equal("host-pw", own.Password);
+            Assert.Equal(@"C:\mine.pem", own.KeyPath);
+            Assert.Null(own.KeyMaterial);
         }
         finally { VaultStore.Remove(v.Id); }
     }

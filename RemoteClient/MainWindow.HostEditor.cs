@@ -132,27 +132,27 @@ public partial class MainWindow
             EdVaultDetail.Text = L.T("다른 계정을 고르거나 해제하세요.");
         }
 
-        VaultHint.Text = v == null
-            ? DefaultVaultHint(ssh)
-            : L.T("이 계정으로 로그인합니다. 아래 칸에 값을 넣으면 그 값이 Vault 보다 우선합니다.");
+        // Vault 계정을 고르면 그 계정이 우선 — 이 호스트에 따로 저장된 계정 정보는 숨기고 쓰지 않는다(지우지 않음).
+        // 해제하면 숨겼던 값이 다시 보이고 그 값으로 로그인한다 (HostEntry.WithDefaults · VaultStore.Apply 와 같은 규칙)
+        var vaultChosen = _edVaultId != null && v != null;
+        var vaultUser = vaultChosen && !string.IsNullOrWhiteSpace(v!.Username) ? v.Username : null;
+        VaultHint.Text = !vaultChosen
+            ? (missing ? "" : DefaultVaultHint(ssh))
+            : v!.HasPassword || (v.HasKey && ssh)
+                ? L.T("이 Vault 계정으로 로그인합니다.")
+                : L.T("이 Vault 계정에는 비밀번호가 없어 접속할 때 비밀번호를 묻습니다.");
+        HostUserPanel.Visibility = vaultUser == null ? Visibility.Visible : Visibility.Collapsed;
+        HostSecretPanel.Visibility = vaultChosen ? Visibility.Collapsed : Visibility.Visible;
+        var hasHidden = vaultChosen && (EdPassword.Password.Length > 0 || EdKey.Text.Trim().Length > 0 ||
+                                        (vaultUser != null && EdUser.Text.Trim().Length > 0));
+        HiddenCredNote.Visibility = hasHidden ? Visibility.Visible : Visibility.Collapsed;
 
-        // 직접 입력 칸: Vault 값을 쓰는지 바로 보이게
-        var vaultUser = v != null && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : null;
-        EdUserLabel.Text = vaultUser != null ? L.T("사용자명 (비워 두면 Vault)") : L.T("사용자명");
-        EdUser.Tag = vaultUser != null ? L.F("Vault 사용자: {0}", vaultUser) : L.T("예: ubuntu  /  DOMAIN\\user");
-        EdPasswordLabel.Text = v?.HasPassword == true ? L.T("비밀번호 (비워 두면 Vault)") : L.T("비밀번호");
-        PwHint.Text = v?.HasPassword == true
-            ? L.T("비워 두면 Vault 계정의 비밀번호를 씁니다.")
-            : v?.HasKey == true && ssh
-                ? L.T("Vault 키로 인증합니다. 키 인증이 안 되는 서버를 위해 비밀번호를 넣어 둘 수도 있습니다.")
-                : v != null && !ssh
-                    ? L.T("이 Vault 계정에는 비밀번호가 없어 RDP 접속 때 비밀번호를 묻습니다.")
-                    : L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
-
-        EdKeyLabel.Text = v?.HasKey == true ? L.T("개인키 파일 (비워 두면 Vault 키)") : L.T("개인키 파일 (선택)");
-        KeyHint.Text = v?.HasKey == true
-            ? L.T("Vault 계정의 키로 인증합니다 (키 암호도 Vault 값). 다른 키를 쓰려면 파일을 지정하세요.")
-            : L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
+        EdUserLabel.Text = vaultChosen ? L.T("사용자명 (이 Vault 계정에 사용자명이 없음)") : L.T("사용자명");
+        EdUser.Tag = L.T("예: ubuntu  /  DOMAIN\\user");
+        EdPasswordLabel.Text = L.T("비밀번호");
+        PwHint.Text = L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
+        EdKeyLabel.Text = L.T("개인키 파일 (선택)");
+        KeyHint.Text = L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
     }
 
     /// <summary>Vault 계정을 고르지 않았을 때 실제로 쓰일 기본 계정 안내 (프로필 기본 계정 · 설정의 기본 Vault)</summary>

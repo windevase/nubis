@@ -50,7 +50,7 @@
 
                 <!-- 직접 적은 값 지우기 -->
                 <CheckBox x:Name="ClearOwnCheck" Grid.Row="1" Grid.ColumnSpan="2" Margin="0,0,0,14"
-                          Content="{l:Tr '호스트에 직접 적은 사용자명·비밀번호·키 파일 지우기 (Vault 계정이 쓰이게)'}"/>
+                          Content="{l:Tr '호스트에 직접 적은 사용자명·비밀번호·키 파일 지우기'}"/>
 
                 <!-- 사용자명 -->
                 <CheckBox x:Name="UserCheck" Grid.Row="2" Style="{StaticResource RowCheck}" Content="{l:Tr '사용자명'}"/>

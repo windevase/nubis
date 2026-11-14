@@ -61,6 +61,11 @@ public partial class MainWindow
             // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
             if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
         }
+        else if (saved.ResolveVault(profile).source == "host")
+        {
+            // 직접 고른 Vault 계정이 우선인 호스트에 다른 사용자명으로 들어옴 — 호스트에 적어도 쓰이지 않으므로 저장하지 않는다
+            return;
+        }
         else
         {
             saved.Username = user;
@@ -71,14 +76,14 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 접속 때 입력한 계정으로 바꿀 Vault 계정. 호스트가 <b>직접 고른</b> Vault 계정의 비밀번호를 쓰고 있었고
-    /// (호스트에 직접 적은 비밀번호 없음) 입력한 사용자명이 그 계정과 같을 때만. 다른 사용자명을 입력했거나
-    /// 프로필·설정의 기본 계정(여러 호스트가 함께 씀)이면 null — 호스트에만 저장해 다른 호스트의 로그인을 깨뜨리지 않는다.
+    /// 접속 때 입력한 계정으로 바꿀 Vault 계정. 호스트가 <b>직접 고른</b> Vault 계정(호스트 값보다 우선)이고
+    /// 입력한 사용자명이 그 계정과 같을 때만. 다른 사용자명을 입력했거나
+    /// 프로필·설정의 기본 계정(여러 호스트가 함께 씀)이면 null — 다른 호스트의 로그인을 깨뜨리지 않는다.
     /// </summary>
     internal static VaultEntry? CredentialSaveTarget(HostEntry saved, CloudProfile? profile, string user)
     {
         var (vaultId, source) = saved.ResolveVault(profile);
-        if (source != "host" || !string.IsNullOrEmpty(saved.ProtectedPassword)) return null;
+        if (source != "host") return null;
         return VaultStore.Get(vaultId) is { HasPassword: true } entry && string.Equals(user, entry.Username, StringComparison.Ordinal)
             ? entry : null;
     }

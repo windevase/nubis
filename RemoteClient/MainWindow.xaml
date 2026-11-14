@@ -662,7 +662,7 @@
 
                         <TextBlock Text="{l:Tr '기본 Vault 계정'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
                         <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
-                                   Text="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 이 계정으로 로그인합니다. 우선순위: 호스트에 고른 계정·직접 입력한 값 → 클라우드 프로필 기본 계정 → 여기 기본 계정. 호스트 목록에서 그룹을 우클릭하면 그룹 전체에 다른 계정을 지정할 수 있습니다.'}"/>
+                                   Text="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 이 계정으로 로그인합니다. 우선순위: 호스트에 고른 계정 → 호스트에 직접 입력한 값 → 클라우드 프로필 기본 계정 → 여기 기본 계정. 호스트 목록에서 그룹을 우클릭하면 그룹 전체에 다른 계정을 지정할 수 있습니다.'}"/>
                         <Grid MaxWidth="640" HorizontalAlignment="Stretch">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="130"/>
@@ -1072,10 +1072,16 @@
                                         </StackPanel>
                                     </Button>
                                     <TextBlock x:Name="VaultHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                    <!-- Vault 를 고르면 이 호스트에 따로 저장된 계정 정보는 숨기고 쓰지 않는다 (해제하면 다시 보이고 쓰인다) -->
+                                    <TextBlock x:Name="HiddenCredNote" FontSize="11" Foreground="{StaticResource Accent}" Margin="2,6,0,0" TextWrapping="Wrap"
+                                               Visibility="Collapsed" Text="{l:Tr '이 호스트에 따로 저장된 계정 정보가 있지만 Vault 계정이 우선이라 숨겨 두었습니다. Vault 계정을 해제하면 다시 보이고 그 값으로 로그인합니다.'}"/>
 
-                                    <TextBlock x:Name="EdUserLabel" Text="{l:Tr '사용자명'}" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="EdUser" Tag="{l:Tr '예: ubuntu  /  DOMAIN\\user'}"/>
+                                    <StackPanel x:Name="HostUserPanel">
+                                        <TextBlock x:Name="EdUserLabel" Text="{l:Tr '사용자명'}" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="EdUser" Tag="{l:Tr '예: ubuntu  /  DOMAIN\\user'}"/>
+                                    </StackPanel>
 
+                                    <StackPanel x:Name="HostSecretPanel">
                                     <TextBlock x:Name="EdPasswordLabel" Text="{l:Tr '비밀번호'}" Style="{StaticResource FieldLabel}"/>
                                     <PasswordBox x:Name="EdPassword"/>
                                     <TextBlock x:Name="PwHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
@@ -1092,6 +1098,7 @@
                                                     Height="38" Click="OnBrowseKey"/>
                                         </Grid>
                                         <TextBlock x:Name="KeyHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                    </StackPanel>
                                     </StackPanel>
                                 </StackPanel>
                             </ScrollViewer>
