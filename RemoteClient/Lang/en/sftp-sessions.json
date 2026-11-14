@@ -142,6 +142,9 @@
   "서버 인증 질문에 기억한 답 {0}개 — 예: {1} → {2}": "{0} remembered answer(s) to server sign-in questions — e.g. {1} → {2}",
   "(빈 값)": "(empty)",
   "지우기": "Clear",
+  "점프 서버 {0} ({1}) 를 거쳐 연결합니다.": "Connecting through jump host {0} ({1}).",
+  "점프 서버 · {0}@{1} ({2})": "Jump host · {0}@{1} ({2})",
+  "점프 서버를 거치는 호스트는 터미널 연결 위에서만 SFTP 를 열 수 있습니다. 터미널이 연결된 뒤 새로고침을 누르세요.": "For hosts reached through a jump host, SFTP opens only on the terminal's connection. Press Refresh once the terminal is connected.",
   "[sudo] {0} 의 비밀번호": "[sudo] password for {0}",
   "터미널을 따라 sudo 로 이 사용자 권한으로 열었습니다. 올린 파일의 소유자도 이 사용자가 됩니다.": "Opened as this user with sudo, following the terminal. Uploaded files will also be owned by this user."
 }

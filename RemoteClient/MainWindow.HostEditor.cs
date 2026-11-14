@@ -47,6 +47,8 @@ public partial class MainWindow
         _edVaultId = h?.VaultId;
         _edClearAnswers = false;
         UpdateRememberedUi(h);
+        _edJumpId = h?.JumpHostId;
+        UpdateJumpUi();
         UpdateAuthUi();
         _editorSnapshot = EditorSnapshot();
 
@@ -64,7 +66,7 @@ public partial class MainWindow
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
     private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
-        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId, _edClearAnswers);
+        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId, _edClearAnswers, _edJumpId);
 
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
@@ -100,6 +102,7 @@ public partial class MainWindow
     private void UpdateProtoUi()
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        JumpPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         GatewayPanel.Visibility = ProtoRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         if (ProtoRdp.IsChecked == true)
         {
@@ -185,6 +188,36 @@ public partial class MainWindow
         return L.T("여러 서버가 같은 계정을 쓰면 Vault 에 한 번 저장해 두고 골라 쓰세요. 아래에 직접 입력해도 됩니다.");
     }
 
+    // 편집 중인 점프 서버 (ProxyJump)
+    private Guid? _edJumpId;
+
+    private void UpdateJumpUi()
+    {
+        var j = _edJumpId is { } id ? _hosts.FirstOrDefault(x => x.Id == id) : null;
+        EdJumpButton.Content = _edJumpId == null ? L.T("없음 (바로 연결)")
+            : j == null ? L.T("삭제된 호스트 — 다른 호스트를 고르거나 없음으로")
+            : $"{j.DisplayName}  ({j.Address})";
+    }
+
+    /// <summary>점프 서버로 쓸 SSH 호스트 고르기 (자기 자신 제외)</summary>
+    private void OnPickJump(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu { PlacementTarget = EdJumpButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        var none = new MenuItem { Header = L.T("없음 (바로 연결)") };
+        none.Click += (_, _) => { _edJumpId = null; UpdateJumpUi(); };
+        menu.Items.Add(none);
+        menu.Items.Add(new Separator());
+        foreach (var h in _hosts.Where(x => x.Protocol == Protocol.Ssh && !ReferenceEquals(x, _editing))
+                                .OrderBy(x => x.Group, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+        {
+            var item = new MenuItem { Header = $"{h.DisplayName}  ({h.Address})" + (h.Group.Length > 0 ? $"  · {h.Group}" : ""), IsChecked = h.Id == _edJumpId };
+            var id = h.Id;
+            item.Click += (_, _) => { _edJumpId = id; UpdateJumpUi(); };
+            menu.Items.Add(item);
+        }
+        menu.IsOpen = true;
+    }
+
     // 저장할 때 기억한 인증 답을 지울지 (지우기 버튼)
     private bool _edClearAnswers;
 
@@ -266,6 +299,7 @@ public partial class MainWindow
         h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
         h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
         if (_edClearAnswers) h.PromptAnswers = null;
+        h.JumpHostId = ssh ? _edJumpId : null;
 
         if (_editing == null) _hosts.Add(h);
         _template = null;

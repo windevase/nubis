@@ -48,15 +48,18 @@ public static class SshExec
             if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
                 return new ExecResult(h, false, null, "", "저장된 계정 정보가 없습니다 (호스트 또는 클라우드 프로필 설정에 계정 저장 필요)", sw.ElapsedMilliseconds);
 
+            // 점프 서버(ProxyJump)를 거치면 터널로 사설 주소에만 (비대화형 — 점프 서버가 OTP 를 요구하면 실패)
+            using var tunnel = h.Jump is { } jump ? JumpTunnel.Open(jump, h.Address, h.Port, null, SshAuth.VerifyAcceptNew) : null;
+
             // 시도 순서: 사설 IP → 공인 IP. 연결이 안 될 때만 다음 주소로 (인증 실패·호스트키 불일치는 바로 중단)
             SshClient? client = null;
             var errors = new List<string>();
             string usedAddress = "";
-            foreach (var addr in h.AddressCandidates())
+            foreach (var addr in tunnel != null ? [h.Address] : h.AddressCandidates())
             {
                 var target = h.Clone();
                 target.Address = addr;
-                var c = new SshClient(SshAuth.Build(target, h.Username, h.Password));
+                var c = new SshClient(SshAuth.Build(target, h.Username, h.Password, tunnel: tunnel));
                 string? hostKeyError = null;
                 // 비대화형이므로 처음 보는 서버는 저장 후 신뢰(accept-new), 저장값과 다르면 거부
                 c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
@@ -104,11 +107,13 @@ public static class SshExec
         if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
             throw new InvalidOperationException("저장된 계정 정보가 없습니다 (호스트·Vault·클라우드 프로필 설정에 계정 저장 필요)");
         var errors = new List<string>();
-        foreach (var addr in h.AddressCandidates())
+        // 점프 서버를 거치면 터널을 SFTP 클라이언트가 닫힐 때 함께 닫는다
+        var tunnel = h.Jump is { } jump ? JumpTunnel.Open(jump, h.Address, h.Port, null, SshAuth.VerifyAcceptNew) : null;
+        foreach (var addr in tunnel != null ? [h.Address] : h.AddressCandidates())
         {
             var target = h.Clone();
             target.Address = addr;
-            var c = new SftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec));
+            var c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel);
             string? hostKeyError = null;
             c.HostKeyReceived += (_, e) => e.CanTrust = (hostKeyError = SshAuth.VerifyAcceptNew(target, e)) == null;
             try
@@ -125,6 +130,16 @@ public static class SshExec
             }
         }
         throw new InvalidOperationException("SFTP 연결 실패 — " + string.Join(" / ", errors));
+    }
+
+    /// <summary>점프 서버 터널을 쓰는 SFTP 연결 — 닫을 때 터널도 닫는다</summary>
+    private sealed class TunneledSftpClient(ConnectionInfo info, JumpTunnel? tunnel) : SftpClient(info)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            if (disposing) tunnel?.Dispose();
+        }
     }
 
     private static string Trim(string? s)

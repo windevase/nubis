@@ -132,7 +132,10 @@ public partial class SftpPanel : UserControl
             Debug.WriteLine($"SFTP 채널을 터미널 연결에서 열지 못해 별도 연결로 넘어감: {ex.Message}");
         }
 
-        // 2) 별도 연결 — 서버가 OTP 등을 요구하면 다시 묻는다
+        // 2) 별도 연결 — 서버가 OTP 등을 요구하면 다시 묻는다.
+        //    점프 서버를 거치는 호스트는 터미널 연결 공유로만 (점프 서버를 건너뛰고 직접 붙지 않게)
+        if (auth.Host.Jump != null)
+            throw new InvalidOperationException(L.T("점프 서버를 거치는 호스트는 터미널 연결 위에서만 SFTP 를 열 수 있습니다. 터미널이 연결된 뒤 새로고침을 누르세요."));
         var target = $"SFTP · {auth.User}@{auth.Host.DisplayName} ({auth.Host.Address})";
         var prompter = new AuthPrompter(req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)));
         var client = new SftpClient(SshAuth.Build(auth.Host, auth.User, auth.Password, prompter: prompter));

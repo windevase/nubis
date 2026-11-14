@@ -309,7 +309,18 @@ public sealed class SshSessionView : UserControl, ISessionView
             _hostKeyRejected = false;
             await Task.Run(() =>
             {
-                var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                // 점프 서버(ProxyJump)를 거치면 먼저 터널을 연다 — 점프 서버의 OTP 등도 입력 창으로 묻는다
+                JumpTunnel? tunnel = null;
+                if (_host.Jump is { } jump)
+                {
+                    _term.Info(L.F("점프 서버 {0} ({1}) 를 거쳐 연결합니다.", jump.DisplayName, jump.Address));
+                    var jumpTarget = L.F("점프 서버 · {0}@{1} ({2})", jump.Username, jump.DisplayName, jump.Address);
+                    var jumpPrompter = new AuthPrompter(
+                        req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), jumpTarget, req)),
+                        banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
+                    tunnel = JumpTunnel.Open(jump, _host.Address, _host.Port, jumpPrompter, SshAuth.VerifyAcceptNew);
+                }
+                var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter, tunnel: tunnel)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
                 ShellStream? shell = null;
                 try
                 {
@@ -328,6 +339,7 @@ public sealed class SshSessionView : UserControl, ISessionView
                     // 연결은 됐는데 셸 생성에 실패한 경우에도 연결을 남기지 않는다
                     try { shell?.Dispose(); } catch { }
                     try { client.Dispose(); } catch { }
+                    tunnel?.Dispose();
                     throw;
                 }
 
@@ -336,10 +348,12 @@ public sealed class SshSessionView : UserControl, ISessionView
                 {
                     try { shell.Dispose(); } catch { }
                     try { client.Dispose(); } catch { }
+                    tunnel?.Dispose();
                     throw new OperationCanceledException();
                 }
                 _client = client;
                 _shell = shell;
+                _tunnel = tunnel;
             });
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
@@ -407,7 +421,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _ = ConnectAsync();
             return;
         }
-        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.HasPublicIp && _host.Address != _host.PublicIp)
+        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.Jump == null && _host.HasPublicIp && _host.Address != _host.PublicIp)
         {
             // 사설 IP 로 연결이 안 되면(VPN 꺼짐 등) 공인 IP 로 한 번 더 — 인증 실패는 여기로 오지 않는다
             _triedPublic = true;
@@ -548,15 +562,19 @@ public sealed class SshSessionView : UserControl, ISessionView
 
     private void DisposeSsh()
     {
-        var shell = _shell; var client = _client;
-        _shell = null; _client = null;
+        var shell = _shell; var client = _client; var tunnel = _tunnel;
+        _shell = null; _client = null; _tunnel = null;
         Task.Run(() =>
         {
             try { shell?.Dispose(); } catch { }
             try { if (client?.IsConnected == true) client.Disconnect(); } catch { }
             try { client?.Dispose(); } catch { }
+            tunnel?.Dispose();   // 점프 서버 연결은 대상 서버 연결을 닫은 뒤에
         });
     }
+
+    /// <summary>점프 서버 터널 (ProxyJump 를 쓸 때만)</summary>
+    private JumpTunnel? _tunnel;
 
     // ---------- ISessionView ----------
     public void FocusSession() => _term.FocusTerminal();

@@ -29,6 +29,7 @@ public partial class MainWindow
         // 세션은 주소(공인 IP 재시도)·계정을 바꿔 쓰므로 저장된 원본이 아니라 항상 사본을 넘긴다
         // (ForConnection 은 바꿀 것이 없으면 원본을 그대로 돌려준다)
         if (ReferenceEquals(host, saved)) host = saved.Clone();
+        host = AttachJump(saved, host);
         var viaPublic = saved.HasPublicIp && host.Address == saved.PublicIp && saved.PublicIp != saved.PrimaryAddress;
         // 접속 때 입력한 계정 저장 (목록에 있는 호스트만. 빠른 접속은 저장 안 함)
         Action<string, string>? save = _hosts.Contains(saved) ? (u, p) => SaveEnteredCredentials(saved, u, p) : null;
@@ -100,7 +101,24 @@ public partial class MainWindow
     }
 
     private HostEntry WithProfileDefaults(HostEntry h) =>
-        h.WithDefaults(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId));
+        AttachJump(h, h.WithDefaults(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)));
+
+    /// <summary>
+    /// 점프 서버(ProxyJump): 목록의 다른 SSH 호스트를 접속용 사본(계정·주소 채운 것)으로 붙인다.
+    /// 점프 서버의 점프는 쓰지 않는다 (한 단계만). 점프 서버가 지워졌으면 붙이지 않는다.
+    /// </summary>
+    private HostEntry AttachJump(HostEntry saved, HostEntry conn)
+    {
+        if (saved.Protocol != Protocol.Ssh || saved.JumpHostId is not { } id) return conn;
+        var j = _hosts.FirstOrDefault(x => x.Id == id && x.Protocol == Protocol.Ssh && !ReferenceEquals(x, saved));
+        if (j == null) return conn;
+        if (ReferenceEquals(conn, saved)) conn = saved.Clone();
+        var jc = j.ForConnection(_profiles.FirstOrDefault(p => p.Id == j.CloudProfileId));
+        if (ReferenceEquals(jc, j)) jc = j.Clone();
+        jc.Jump = null;
+        conn.Jump = jc;
+        return conn;
+    }
 
     private SessionTab AddTab(SessionTab tab)
     {

@@ -33,6 +33,10 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// 가려진 질문은 빈 답만 저장한다 (KbdAuth.CanUseRemembered). hosts.json 은 파일 전체가 DPAPI 암호화
     /// </summary>
     public Dictionary<string, string>? PromptAnswers { get; set; }
+    /// <summary>SSH: 이 호스트를 거쳐 접속 (ProxyJump). 목록의 다른 SSH 호스트 Id</summary>
+    public Guid? JumpHostId { get; set; }
+    /// <summary>접속용 사본에만: 점프 서버의 접속용 사본 (계정·주소가 채워진 것). 저장하지 않는다</summary>
+    [JsonIgnore] public HostEntry? Jump { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }

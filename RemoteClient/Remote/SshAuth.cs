@@ -72,7 +72,8 @@ public static class SshAuth
     /// prompter 가 있으면(대화형) 비밀번호로 답할 수 없는 질문(OTP 등)을 사용자에게 묻고,
     /// 비밀번호가 없어도 keyboard-interactive 를 시도한다 (키 + OTP 를 요구하는 서버).
     /// </summary>
-    public static ConnectionInfo Build(HostEntry host, string user, string password, int timeoutSec = 15, AuthPrompter? prompter = null)
+    /// <param name="tunnel">점프 서버 터널을 거치면 그 로컬 포트로 접속 (호스트키는 호출하는 쪽이 대상 서버 기준으로 확인)</param>
+    public static ConnectionInfo Build(HostEntry host, string user, string password, int timeoutSec = 15, AuthPrompter? prompter = null, JumpTunnel? tunnel = null)
     {
         // 순서가 시도 순서다 (SSH.NET 은 서버가 허용한 것 중 이 목록 순서대로 시도). OpenSSH 와 같이 키 → keyboard-interactive → password.
         // password 를 먼저 하면, 2단계 인증(PAM 의 OTP·Push 등)을 keyboard-interactive 로만 받는 서버에서 password 방식이
@@ -101,7 +102,7 @@ public static class SshAuth
             methods.Add(pw);
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
-        var ci = new ConnectionInfo(host.Address, host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
+        var ci = new ConnectionInfo(tunnel?.LocalHost ?? host.Address, tunnel?.LocalPort ?? host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
         if (prompter?.Banner is { } banner)
             ci.AuthenticationBanner += (_, e) => { if (!string.IsNullOrWhiteSpace(e.BannerMessage)) banner(e.BannerMessage); };
         return ci;
