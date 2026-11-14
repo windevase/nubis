@@ -109,7 +109,7 @@ public partial class MainWindow
             return exe.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
                 ? $"\"{exe}\" {args}"
                 : $"cmd.exe /d /s /c \"\"{exe}\" {args}\"";
-        }, ClaudeWorkDir, L.T("Claude Code 가 종료되었습니다."));
+        }, ClaudeWorkDir, L.T("Claude Code 가 종료되었습니다."), killTreeOnClose: true);
         ClaudeHost.Content = _claudeView;
     }
 

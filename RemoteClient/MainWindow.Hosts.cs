@@ -30,7 +30,10 @@ public partial class MainWindow
         if (searching)
         {
             var tokens = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            list = list.Where(h => tokens.All(t => MatchesSearch(h, t, profiles)));
+            // "vault:" 검색에 쓰는 Vault 이름 목록은 한 번만 (호스트마다 VaultStore.All() 을 부르지 않게)
+            var vaultNames = tokens.Any(t => t.StartsWith("vault:", StringComparison.OrdinalIgnoreCase))
+                ? VaultStore.All().Select(e => e.Name).ToList() : new List<string>();
+            list = list.Where(h => tokens.All(t => MatchesSearch(h, t, profiles, vaultNames)));
         }
 
         var filtered = list.ToList();
@@ -130,11 +133,11 @@ public partial class MainWindow
                && vn.Contains(query, StringComparison.CurrentCultureIgnoreCase);
     }
 
-    private static bool MatchesSearch(HostEntry h, string q, Dictionary<Guid, CloudProfile> profiles)
+    private static bool MatchesSearch(HostEntry h, string q, Dictionary<Guid, CloudProfile> profiles, IReadOnlyList<string> vaultNames)
     {
         var profile = h.CloudProfileId is { } pid && profiles.TryGetValue(pid, out var p) ? p : null;
         if (q.StartsWith("vault:", StringComparison.OrdinalIgnoreCase))
-            return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && VaultNameMatches(v.Name, q[6..], VaultStore.All().Select(e => e.Name));
+            return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && VaultNameMatches(v.Name, q[6..], vaultNames);
         return Contains(h.DisplayName, q) || Contains(h.Address, q) || Contains(h.PrivateIp, q) || Contains(h.PublicIp, q) ||
                Contains(h.Username, q) || Contains(h.Group, q) || Contains(h.ProtocolText, q) ||
                Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.Purpose, q) ||
@@ -335,33 +338,56 @@ public partial class MainWindow
         copy.Label = L.F("{0} (복사본)", string.IsNullOrWhiteSpace(h.Label) ? h.Address : h.Label);
         copy.LastConnected = null;
         copy.Favorite = false;
-        if (h.IsCloud)
-        {
-            // 클라우드 호스트의 복사본은 직접 관리하는 호스트로 (같은 인스턴스 ID 를 가진 유령 사본 방지)
-            var profile = _profiles.FirstOrDefault(p => p.Id == h.CloudProfileId);
-            var (vaultId, source) = h.ResolveVault(profile);
-            if (vaultId != null && (source == "host" || !BulkEdit.HasOwnCredentials(copy)))
-                copy.VaultId = vaultId;   // 원본도 그 Vault 계정으로 로그인 — 복사본에 직접 지정 (프로필이 없어지므로)
-            else if (vaultId != null && VaultStore.Get(vaultId) is { } v)
-            {
-                // 원본은 기본 계정(프로필·설정)이 호스트에 적힌 값 뒤에 쓰였다 — 직접 지정하면 Vault 가 우선이 되어 로그인 사용자가 바뀌므로 빈 값만 채운다
-                if (string.IsNullOrEmpty(copy.Username)) copy.Username = v.Username;
-                if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = v.ProtectedPassword;
-            }
-            else
-            {
-                if (string.IsNullOrEmpty(copy.Username)) copy.Username = profile?.DefaultUsername ?? "";
-                if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = profile?.ProtectedDefaultPassword;
-            }
-            copy.Group = profile?.GroupName ?? "";
-            copy.CloudProfileId = null;
-            copy.CloudInstanceId = null;
-            copy.CloudState = null;
-            copy.CloudRegion = null;
-            copy.CloudName = null;
-        }
+        // 클라우드 호스트의 복사본은 직접 관리하는 호스트로 (같은 인스턴스 ID 를 가진 유령 사본 방지)
+        var note = h.IsCloud ? DetachFromCloud(copy) : null;
         // 저장은 편집 패널에서 "저장" 을 눌렀을 때만 (취소하면 사본이 남지 않음)
         OpenEditor(null, copy);
+        if (note != null) EditorError.Text = note;
+    }
+
+    /// <summary>
+    /// 클라우드 호스트(의 사본)를 직접 관리하는 호스트로 바꾼다. 프로필이 없어지므로 원본이 실제로 쓰던 계정을 호스트에 옮긴다.
+    /// 옮기지 못한 것이 있으면 편집 패널에 보여 줄 안내를 돌려준다.
+    /// </summary>
+    private string? DetachFromCloud(HostEntry copy)
+    {
+        var profile = _profiles.FirstOrDefault(p => p.Id == copy.CloudProfileId);
+        var (vaultId, source) = copy.ResolveVault(profile);
+        string? note = null;
+        var v = VaultStore.Get(vaultId);
+        if (vaultId != null && (source == "host" || !BulkEdit.HasOwnCredentials(copy)))
+            copy.VaultId = vaultId;   // 원본도 그 Vault 계정으로 로그인 — 복사본에 직접 지정 (프로필이 없어지므로)
+        else if (v != null && source == "default")
+        {
+            // 설정의 기본 Vault 계정: 프로필이 없어져도 복사본에 그대로 적용된다 — 비밀번호를 옮겨 적으면
+            // 호스트 값이 생겨 기본 계정(SSH 키 포함)이 더는 쓰이지 않으므로 아무것도 바꾸지 않는다
+        }
+        else if (v != null)
+        {
+            // 원본은 프로필 기본 계정이 호스트에 적힌 사용자명 뒤에 쓰였다 (호스트에 비밀번호·키 파일이 있으면 Vault 를 안 쓰므로 여기는 사용자명만 있는 경우).
+            // Vault 에 사용자명이 없거나 같으면 직접 지정해도 로그인 사용자·비밀번호·키가 그대로다
+            if (string.IsNullOrWhiteSpace(v.Username) || string.Equals(v.Username, copy.Username, StringComparison.Ordinal))
+                copy.VaultId = vaultId;
+            else
+            {
+                // 직접 지정하면 Vault 의 사용자명이 우선이 되어 로그인 사용자가 바뀌므로 빈 값만 채운다 — 키는 옮길 수 없다
+                if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = v.ProtectedPassword;
+                if (copy.Protocol == Protocol.Ssh && v.HasKey)
+                    note = L.F("원본이 쓰던 Vault 계정 '{0}' 의 SSH 키는 사용자명이 달라 옮기지 못했습니다. 키로 로그인하려면 Vault 계정을 직접 고르세요.", v.Name);
+            }
+        }
+        else
+        {
+            if (string.IsNullOrEmpty(copy.Username)) copy.Username = profile?.DefaultUsername ?? "";
+            if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = profile?.ProtectedDefaultPassword;
+        }
+        copy.Group = profile?.GroupName ?? "";
+        copy.CloudProfileId = null;
+        copy.CloudInstanceId = null;
+        copy.CloudState = null;
+        copy.CloudRegion = null;
+        copy.CloudName = null;
+        return note;
     }
 
     private void OnMenuFavorite(object sender, RoutedEventArgs e)
@@ -380,13 +406,27 @@ public partial class MainWindow
         var msg = profile != null
             ? L.F("'{0}' 을(를) 목록에서 지울까요?\n클라우드의 서버는 그대로이며, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.\n(프로필 설정에서 숨김을 해제할 수 있습니다)", h.DisplayName)
             : L.F("'{0}' 호스트를 삭제할까요?", h.DisplayName);
-        // 이 호스트를 점프 서버로 쓰는 호스트 — 지우면 그 호스트들은 점프 서버를 다시 고를 때까지 연결되지 않는다
-        var dependents = _hosts.Where(x => x.JumpHostId == h.Id).ToList();
-        if (dependents.Count > 0)
-            msg += "\n\n" + L.F("이 호스트를 점프 서버로 쓰는 호스트 {0}개는 점프 서버를 다시 고를 때까지 연결되지 않습니다:", dependents.Count) + "\n" +
-                   string.Join("\n", dependents.Take(10).Select(x => "  " + x.DisplayName)) + (dependents.Count > 10 ? "\n  ..." : "");
+        msg += JumpDependentsNote(new[] { h });
         if (Dialog.Show(this, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         RemoveHosts(new[] { h });
+    }
+
+    /// <summary>지울 호스트를 점프 서버로 쓰는 (같이 지우지 않는) 호스트</summary>
+    internal static List<HostEntry> JumpDependents(IEnumerable<HostEntry> all, IReadOnlyCollection<HostEntry> deleting)
+    {
+        var ids = deleting.Select(x => x.Id).ToHashSet();
+        return all.Where(x => x.JumpHostId is { } j && ids.Contains(j) && !ids.Contains(x.Id)).ToList();
+    }
+
+    /// <summary>
+    /// 삭제 확인 문구에 붙일 안내: 이 호스트(들)를 점프 서버로 쓰는 호스트는 점프 서버를 다시 고를 때까지 연결되지 않는다. 없으면 ""
+    /// </summary>
+    private string JumpDependentsNote(IReadOnlyCollection<HostEntry> deleting)
+    {
+        var dependents = JumpDependents(_hosts, deleting);
+        if (dependents.Count == 0) return "";
+        return "\n\n" + L.F("이 호스트를 점프 서버로 쓰는 호스트 {0}개는 점프 서버를 다시 고를 때까지 연결되지 않습니다:", dependents.Count) + "\n" +
+               string.Join("\n", dependents.Take(10).Select(x => "  " + x.DisplayName)) + (dependents.Count > 10 ? "\n  ..." : "");
     }
 
     /// <summary>확인 없이 삭제 (확인은 호출하는 쪽에서). 클라우드 호스트는 다음 동기화에서도 다시 나타나지 않게 숨긴다</summary>

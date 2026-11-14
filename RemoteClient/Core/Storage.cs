@@ -65,12 +65,44 @@ public static class AppPaths
                 foreach (var f in Directory.GetFiles(legacy))
                 {
                     var target = Path.Combine(dir, Path.GetFileName(f));
-                    if (!File.Exists(target)) File.Copy(f, target);
+                    try
+                    {
+                        if (!File.Exists(target)) File.Copy(f, target);
+                        RemoveMigratedPlaintext(f, target);
+                    }
+                    catch { /* 이 파일은 다음 실행에서 다시 시도 */ }
                 }
             }
         }
         catch { }
         return dir;
+    }
+
+    /// <summary>예전 폴더에서 복사해 온 계정·서버 목록 파일 (평문이면 새 폴더에서 암호화한 뒤 예전 평문을 지운다)</summary>
+    internal static readonly string[] MigratedSecretFiles = { "hosts.json", "cloud_profiles.json", "known_hosts.json", "vault.json", "login.json" };
+
+    /// <summary>
+    /// 복사가 끝난 예전 폴더의 평문 데이터 파일을 지운다 (복사 대체 경로가 평문 hosts.json 등을 남기던 문제).
+    /// 새 폴더의 파일을 암호화하고, 다시 풀어 예전 파일과 내용이 똑같은 것을 확인한 경우에만 지운다 —
+    /// 그 사이 새 폴더 파일이 바뀌었거나 이미 암호화된 예전 파일, 목록에 없는 파일은 건드리지 않는다.
+    /// </summary>
+    internal static void RemoveMigratedPlaintext(string legacyFile, string target)
+    {
+        if (Array.IndexOf(MigratedSecretFiles, Path.GetFileName(legacyFile).ToLowerInvariant()) < 0) return;
+        if (!File.Exists(legacyFile) || !File.Exists(target)) return;
+        var legacyBytes = File.ReadAllBytes(legacyFile);
+        if (SafeFile.IsProtected(legacyBytes)) return;
+        var legacyText = Encoding.UTF8.GetString(legacyBytes).TrimStart('﻿');
+        var targetBytes = File.ReadAllBytes(target);
+        if (!SafeFile.IsProtected(targetBytes))
+        {
+            var targetText = Encoding.UTF8.GetString(targetBytes).TrimStart('﻿');
+            if (targetText != legacyText) return;
+            SafeFile.WriteProtected(target, targetText, keepBackup: false);
+            targetBytes = File.ReadAllBytes(target);
+        }
+        if (!SafeFile.IsProtected(targetBytes) || SafeFile.UnprotectBytes(targetBytes) != legacyText) return;
+        File.Delete(legacyFile);
     }
 }
 
@@ -80,10 +112,35 @@ public static class SafeFile
     /// <summary>시작할 때 사용자에게 보여줄 읽기 실패 경고</summary>
     public static List<string> LoadWarnings { get; } = new();
 
-    public static void WriteAtomic(string path, string content)
+    public static void WriteAtomic(string path, string content) =>
+        WriteDurable(path, new UTF8Encoding(false).GetBytes(content), keepBackup: true);
+
+    /// <summary>직전 저장본 (읽지 못하면 이 파일로 복구)</summary>
+    public static string BackupPath(string path) => path + ".bak";
+
+    /// <summary>
+    /// 임시 파일에 쓰고 디스크까지 내린(Flush) 뒤 원본과 바꾼다. 쓰는 도중 전원이 꺼져도 0바이트 원본이 남지 않게.
+    /// keepBackup 이면 바뀌기 전 원본을 .bak 으로 남긴다 (File.Replace). 원본이 없거나 Replace 를 못 쓰는 환경이면 Move
+    /// </summary>
+    internal static void WriteDurable(string path, byte[] bytes, bool keepBackup)
     {
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, content);
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        {
+            fs.Write(bytes, 0, bytes.Length);
+            fs.Flush(flushToDisk: true);
+        }
+        if (keepBackup && File.Exists(path))
+        {
+            try
+            {
+                File.Replace(tmp, path, BackupPath(path), ignoreMetadataErrors: true);
+                return;
+            }
+            catch (IOException) { /* 아래 Move 로 (Replace 가 실패해도 tmp 는 남아 있다) */ }
+            catch (UnauthorizedAccessException) { }
+            catch (PlatformNotSupportedException) { }
+        }
         File.Move(tmp, path, overwrite: true);
     }
 
@@ -104,19 +161,21 @@ public static class SafeFile
             ? Encoding.UTF8.GetString(ProtectedData.Unprotect(bytes[Magic.Length..], FileEntropy, DataProtectionScope.CurrentUser))
             : Encoding.UTF8.GetString(bytes).TrimStart('﻿');
 
-    public static void WriteProtected(string path, string content)
-    {
-        var tmp = path + ".tmp";
-        File.WriteAllBytes(tmp, ProtectBytes(content));
-        File.Move(tmp, path, overwrite: true);
-    }
+    /// <param name="keepBackup">false = 직전 원본을 .bak 으로 남기지 않는다 (평문 → 암호화 변환처럼 예전 내용을 남기면 안 될 때)</param>
+    public static void WriteProtected(string path, string content, bool keepBackup = true) =>
+        WriteDurable(path, ProtectBytes(content), keepBackup);
 
     /// <summary>
     /// 암호화 파일 읽기. 예전 평문 파일이면 읽은 뒤 바로 암호화해 다시 쓴다.
-    /// 풀 수 없으면(다른 PC·Windows 계정) Load 와 같이 원본을 보관하고 빈 값으로 시작한다.
+    /// 읽지 못하면 원본을 .corrupt 사본으로 보관하고, 직전 저장본(.bak)이 읽히면 그것으로 복구, 아니면 빈 값으로 시작한다.
     /// </summary>
-    public static T LoadProtected<T>(string path, Func<string, T?> parse, Func<T> fallback) where T : class
+    public static T LoadProtected<T>(string path, Func<string, T?> parse, Func<T> fallback) where T : class =>
+        LoadProtected(path, parse, fallback, out _);
+
+    /// <param name="failed">원본도 .bak 도 읽지 못해 fallback 을 돌려줬으면 true (파일이 없을 때는 false)</param>
+    public static T LoadProtected<T>(string path, Func<string, T?> parse, Func<T> fallback, out bool failed) where T : class
     {
+        failed = false;
         if (!File.Exists(path)) return fallback();
         try
         {
@@ -124,22 +183,24 @@ public static class SafeFile
             var value = parse(UnprotectBytes(bytes)) ?? fallback();
             if (!IsProtected(bytes))
             {
-                try { WriteProtected(path, File.ReadAllText(path)); } catch { }
+                // 평문을 .bak 으로 남기지 않는다
+                try { WriteProtected(path, UnprotectBytes(bytes), keepBackup: false); } catch { }
             }
             return value;
         }
         catch (Exception ex)
         {
-            var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
-            try { File.Copy(path, backup, overwrite: true); } catch { }
             var why = ex is CryptographicException ? L.T("이 PC·이 Windows 계정에서 만든 파일이 아니라 풀 수 없습니다") : ex.Message.Split('\n')[0];
-            lock (LoadWarnings)
-                LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why));
-            return fallback();
+            return Recover(path, bytes => parse(UnprotectBytes(bytes)), fallback, why, out failed);
         }
     }
 
-    public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback) where T : class
+    /// <param name="restoreBackup">
+    /// false = 읽지 못해도 .bak 으로 되돌리지 않고 fallback(기본값)으로 시작한다. settings.json 용 — 로그인을 잘못 설정해 들어갈 수 없을 때
+    /// 사용자가 settings.json 을 직접 고치는 것이 안내된 해결 방법인데, 고치다 JSON 을 틀리면 .bak(로그인이 켜진 예전 설정)이 되살아나
+    /// 다시 갇히게 된다. 예전처럼 기본값(로그인 꺼짐)으로 시작하는 편이 안전하다.
+    /// </param>
+    public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback, bool restoreBackup = true) where T : class
     {
         if (!File.Exists(path)) return fallback();
         try
@@ -148,13 +209,67 @@ public static class SafeFile
         }
         catch (Exception ex)
         {
-            // 손상된 파일을 빈 값으로 덮어쓰기 전에 원본을 따로 보관
-            var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
-            try { File.Copy(path, backup, overwrite: true); } catch { }
-            lock (LoadWarnings)
-                LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, ex.Message.Split('\n')[0]));
-            return fallback();
+            return Recover(path, bytes => parse(Encoding.UTF8.GetString(bytes).TrimStart('﻿')), fallback, ex.Message.Split('\n')[0], out _, restoreBackup);
         }
+    }
+
+    // 이미 .corrupt 사본을 만들고 경고한 손상 파일 (경로 → 수정 시각·크기). .bak 을 원본 자리로 되돌려 쓰지 못한 경우 등
+    // 같은 손상 파일을 다시 읽을 때마다 .corrupt 사본과 경고가 쌓이지 않게 한 번만 처리한다
+    private static readonly Dictionary<string, (DateTime stamp, long length)> ReportedCorrupt = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>이 손상 파일을 처음 보는지 (처음이면 기록하고 true)</summary>
+    private static bool FirstReport(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            var key = Path.GetFullPath(path);
+            var stamp = (info.LastWriteTimeUtc, info.Length);
+            lock (ReportedCorrupt)
+            {
+                if (ReportedCorrupt.TryGetValue(key, out var seen) && seen == stamp) return false;
+                ReportedCorrupt[key] = stamp;
+                return true;
+            }
+        }
+        catch { return true; }
+    }
+
+    /// <summary>
+    /// 읽기 실패 처리: 손상된 원본을 빈 값으로 덮어쓰기 전에 .corrupt 사본으로 보관하고,
+    /// 직전 저장본(.bak)이 읽히면 그 내용을 원본 자리로 되돌려 쓴다 (전원이 꺼져 0바이트가 된 경우 등).
+    /// 같은 손상 파일(수정 시각·크기)을 다시 읽으면 사본·경고는 다시 만들지 않는다.
+    /// </summary>
+    private static T Recover<T>(string path, Func<byte[], T?> parseBytes, Func<T> fallback, string why, out bool failed, bool restoreBackup = true) where T : class
+    {
+        var first = FirstReport(path);
+        var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
+        if (first) { try { File.Copy(path, backup, overwrite: true); } catch { } }
+        var bak = BackupPath(path);
+        if (restoreBackup)
+        {
+            try
+            {
+                if (File.Exists(bak) && parseBytes(File.ReadAllBytes(bak)) is { } recovered)
+                {
+                    try { File.Copy(bak, path, overwrite: true); } catch { /* 되돌려 쓰지 못함 — 다음 읽기도 여기로 오지만 FirstReport 로 사본·경고는 한 번만 */ }
+                    if (first)
+                        lock (LoadWarnings)
+                            LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 직전 저장본({1})으로 복구했습니다.\n읽지 못한 원본은 {2} 에 보관했습니다.\n({3})",
+                                Path.GetFileName(path), bak, backup, why));
+                    failed = false;
+                    return recovered;
+                }
+            }
+            catch { /* .bak 도 읽지 못함 — 빈 값으로 */ }
+        }
+        if (first)
+            lock (LoadWarnings)
+                LoadWarnings.Add(restoreBackup
+                    ? L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why)
+                    : L.F("{0} 을(를) 읽지 못해 기본 설정으로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why));
+        failed = true;
+        return fallback();
     }
 }
 
@@ -166,14 +281,22 @@ public static class Secret
     public static string Protect(string plain) =>
         Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(plain), Entropy, DataProtectionScope.CurrentUser));
 
-    public static string Unprotect(string? cipher)
+    public static string Unprotect(string? cipher) => TryUnprotect(cipher, out var plain) ? plain : "";
+
+    /// <summary>
+    /// 비어 있으면 "" 로 성공, 풀리지 않으면(다른 PC·계정의 암호문, 손상) false.
+    /// Unprotect 는 실패를 "" 로 돌려줘 빈 비밀번호와 구분되지 않으므로, 구분이 필요하면 이것을 쓴다.
+    /// </summary>
+    public static bool TryUnprotect(string? cipher, out string plain)
     {
-        if (string.IsNullOrEmpty(cipher)) return "";
+        plain = "";
+        if (string.IsNullOrEmpty(cipher)) return true;
         try
         {
-            return Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(cipher), Entropy, DataProtectionScope.CurrentUser));
+            plain = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(cipher), Entropy, DataProtectionScope.CurrentUser));
+            return true;
         }
-        catch { return ""; }
+        catch { return false; }
     }
 }
 
@@ -287,7 +410,8 @@ public static class SettingsStore
     public static event Action? Changed;
 
     private static AppSettings Load(string path) =>
-        SafeFile.Load(path, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings());
+        // .bak 자동 복구 안 함: 사용자가 settings.json 을 직접 고치다 틀려도 예전(로그인이 켜진) 설정으로 되돌아가지 않고 기본값으로
+        SafeFile.Load(path, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings(), restoreBackup: false);
 
     /// <summary>
     /// AppPaths.UseDataDir 다음에 부른다: 그 계정의 settings.json 을 읽는다.
@@ -331,20 +455,71 @@ public static class SettingsStore
 }
 
 /// <summary>SSH 서버 호스트키 지문 저장소 ("host:port" → "keytype SHA256:...")</summary>
+/// <remarks>
+/// known_hosts.json 을 읽지 못하면(손상·다른 PC 파일, .bak 복구도 실패) 빈 목록으로 보지 않는다 — 그러면 모든 서버가
+/// "처음 보는 서버" 가 되어 비대화형 연결이 키를 전부 자동 신뢰(accept-new)하고 바뀐 키 경고도 사라진다.
+/// 대신 <see cref="LoadFailed"/> 를 켜고 <see cref="Get"/> 이 어떤 지문과도 같지 않은 <see cref="UnavailableMark"/> 를 돌려준다:
+/// 호출하는 쪽은 "저장값과 다름" 으로 처리하게 된다 (VerifyAcceptNew·WinRM 은 거부, 대화형 접속은 확인 창).
+/// 그동안 Set 은 파일에 쓰지 않고(손상된 원본 위에 키 하나짜리 목록을 쓰면 나머지 서버가 다시 accept-new 가 됨)
+/// 이번 실행 동안만 기억한다. 파일을 고치거나 지우면(수정 시각·크기가 바뀌면) 다시 읽는다.
+/// </remarks>
 public static class KnownHostStore
 {
     private static readonly object Gate = new();
+    // 읽기 실패를 한 번만 처리 (Get 마다 .corrupt 사본과 경고가 새로 생기던 문제). 같은 파일(경로·수정 시각·크기)이면 다시 읽지 않는다
+    private static (string path, DateTime stamp, long length)? _failedFile;
+    // 파일을 읽지 못하는 동안 대화형 확인 창에서 신뢰한 키 (이번 실행에서만)
+    private static readonly Dictionary<string, string> SessionTrust = new();
 
+    /// <summary>known_hosts.json 을 읽지 못해 저장된 호스트키를 확인할 수 없는 상태</summary>
+    public static bool LoadFailed { get; private set; }
+
+    /// <summary>LoadFailed 동안 Get 이 돌려주는 값 — 어떤 지문과도 같지 않다 (호출하는 쪽이 "저장된 값과 다름" 으로 처리)</summary>
+    public static string UnavailableMark => L.T("(known_hosts.json 을 읽지 못해 저장된 호스트키를 확인할 수 없음)");
+
+    /// <summary>읽은 목록. 읽지 못했으면 null (LoadFailed). Gate 안에서 부른다</summary>
+    private static Dictionary<string, string>? TryLoad()
+    {
+        var path = AppPaths.KnownHostsFile;
+        if (!File.Exists(path)) { LoadFailed = false; _failedFile = null; return new Dictionary<string, string>(); }
+        var info = new FileInfo(path);
+        var stamp = (path, info.LastWriteTimeUtc, info.Length);
+        if (_failedFile is { } f && f == stamp) { LoadFailed = true; return null; }
+        var all = SafeFile.LoadProtected(path, s => JsonSerializer.Deserialize<Dictionary<string, string>>(s),
+            () => new Dictionary<string, string>(), out var failed);
+        if (failed)
+        {
+            _failedFile = stamp;
+            if (!LoadFailed)
+                lock (SafeFile.LoadWarnings)
+                    SafeFile.LoadWarnings.Add(L.T("저장된 SSH 호스트키를 확인할 수 없어, 파일을 복구하거나 지울 때까지 접속할 때마다 호스트키를 확인합니다 (Claude 일괄 실행·SFTP 의 자동 신뢰는 거부)."));
+            LoadFailed = true;
+            return null;
+        }
+        LoadFailed = false;
+        _failedFile = null;
+        SessionTrust.Clear();
+        return all;
+    }
+
+    /// <summary>저장된 호스트키 목록 (화면 표시용). 파일을 읽지 못했으면 이번 실행에서 신뢰한 키만</summary>
     public static Dictionary<string, string> Load()
     {
         lock (Gate)
-        {
-            return SafeFile.LoadProtected(AppPaths.KnownHostsFile, s => JsonSerializer.Deserialize<Dictionary<string, string>>(s),
-                () => new Dictionary<string, string>());
-        }
+            return TryLoad() ?? new Dictionary<string, string>(SessionTrust);
     }
 
-    public static string? Get(string key) => Load().TryGetValue(key, out var v) ? v : null;
+    /// <summary>
+    /// 저장된 지문. 처음 보는 서버면 null. 파일을 읽지 못했으면 <see cref="UnavailableMark"/> (이번 실행에서 확인 창으로 신뢰한 키는 그 값)
+    /// </summary>
+    public static string? Get(string key)
+    {
+        lock (Gate)
+        {
+            if (TryLoad() is { } all) return all.TryGetValue(key, out var v) ? v : null;
+            return SessionTrust.TryGetValue(key, out var t) ? t : UnavailableMark;
+        }
+    }
 
     // 사용자가 대화형 확인 창에서 거부한 키 표시 ("REJECTED " + 지문)
     private const string RejectedPrefix = "REJECTED ";
@@ -355,7 +530,7 @@ public static class KnownHostStore
     {
         lock (Gate)
         {
-            var all = Load();
+            if (TryLoad() is not { } all) { SessionTrust[key] = value; return; }   // 손상된 원본 위에 쓰지 않는다
             all[key] = value;
             SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -365,7 +540,7 @@ public static class KnownHostStore
     {
         lock (Gate)
         {
-            var all = Load();
+            if (TryLoad() is not { } all) { SessionTrust.Remove(key); return; }
             if (all.Remove(key))
                 SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
         }

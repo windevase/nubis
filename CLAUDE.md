@@ -35,7 +35,8 @@ The source folder is named `RemoteClient\`, but the project / assembly / namespa
 | `MainWindow.Groups.cs` / `.Preferences.cs` | Group context-menu bulk actions (Vault account · public/private IP · connect all) / default Vault account · convenience settings. Account precedence is decided in one place: `HostEntry.ResolveVault` |
 | `MainWindow.Selection.cs` + `Core\BulkEdit.cs` + `Dialogs\BulkEditDialog` | Multi-card selection (Ctrl/Shift+click · Ctrl+A, selection bar · selection menu) / bulk-edit apply logic (UI-independent, `BulkEditTests`) / bulk-edit window |
 | `Claude\MainWindow.ClaudePanel.cs` | Claude panel (`claude` CLI via ConPTY), current-tab hint hook (`active-session.txt`) |
-| `Claude\MainWindow.McpTools.cs` | **The full MCP tool registration list** (`BuildTools`, `ExtraTools`) + basic tools · settings-change implementation. Register new tools here |
+| `Claude\MainWindow.McpTools.cs` | **The full MCP tool registration list** (`BuildTools`, `ExtraTools`) + basic tools · settings-change implementation. Register new tools here (terminal tools live in `MainWindow.McpTerminal.cs` and are yielded from `BuildTools`) |
+| `Claude\MainWindow.McpApproval.cs` | `AskApprovalAsync` — every MCP approval goes through it: one dialog at a time, closed as rejected when Claude cancels the request (`notifications/cancelled` → `McpRequest.Token`) |
 | `Claude\MainWindow.Mcp*.cs` | Tool implementations: `McpHosts` (add · edit · delete hosts, Vault list, cloud sync) · `McpDiagnostics` (test_connection, wait_for_output) · `McpSftp` · `McpCapture` · `McpRunCommand` |
 | `Claude\McpServer.cs` | Minimal MCP server (Streamable HTTP, JSON responses, 127.0.0.1 + Bearer token). Tool results are a string or `McpImage` |
 | `Claude\ClaudeGuard.cs` | Claude panel permission deny rules (`<data>\claude\nubis-permissions.json`, rewritten every launch) — blocks reading account files · shell access · DPAPI decryption · editing settings.json |

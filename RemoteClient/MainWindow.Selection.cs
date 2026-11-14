@@ -31,9 +31,17 @@ public partial class MainWindow
     /// <summary>선택한 호스트 (화면 순서, 목록에서 사라진 호스트는 뺀다)</summary>
     private List<HostEntry> SelectedHosts()
     {
-        _selected.RemoveWhere(h => !_hosts.Contains(h));
-        var order = VisibleHosts();
-        return _selected.OrderBy(h => order.IndexOf(h) is var i and >= 0 ? i : int.MaxValue).ToList();
+        var all = _hosts.ToHashSet();
+        _selected.RemoveWhere(h => !all.Contains(h));
+        return OrderByScreen(_selected, VisibleHosts());
+    }
+
+    /// <summary>화면 순서대로 (화면에 없는 호스트는 뒤로). 위치는 사전으로 한 번만 계산 (IndexOf 반복은 O(n²))</summary>
+    internal static List<HostEntry> OrderByScreen(IEnumerable<HostEntry> hosts, IReadOnlyList<HostEntry> order)
+    {
+        var index = new Dictionary<HostEntry, int>(order.Count);
+        for (var i = 0; i < order.Count; i++) index.TryAdd(order[i], i);
+        return hosts.OrderBy(h => index.TryGetValue(h, out var i) ? i : int.MaxValue).ToList();
     }
 
     /// <summary>카드 클릭. 처리했으면 true (더블 클릭 연결 등 기본 동작 생략)</summary>
@@ -187,6 +195,11 @@ public partial class MainWindow
         var cloud = hosts.Count(h => h.IsCloud);
         var msg = L.F("호스트 {0}개를 삭제할까요?", hosts.Count);
         if (cloud > 0) msg += "\n" + L.F("이 중 클라우드 호스트 {0}개는 목록에서만 지우고, 다음 동기화에서도 다시 나타나지 않도록 숨깁니다.", cloud);
+        // 선택은 검색어를 바꿔도 유지되므로, 지금 검색·필터로 보이지 않는 호스트도 함께 지워진다는 것을 알린다
+        var shown = _groups.SelectMany(g => g.Hosts).ToHashSet();
+        var hidden = hosts.Count(h => !shown.Contains(h));
+        if (hidden > 0) msg += "\n" + L.F("이 중 {0}개는 지금 검색·필터 때문에 목록에 보이지 않는 호스트입니다.", hidden);
+        msg += JumpDependentsNote(hosts);
         if (Dialog.Show(this, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Question,
                 string.Join("\n", hosts.Take(15).Select(h => h.DisplayName)) + (hosts.Count > 15 ? "\n..." : "")) != MessageBoxResult.Yes) return;
         ClearSelection();

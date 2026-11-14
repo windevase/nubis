@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Threading;
 
 namespace Nubis;
@@ -16,10 +17,25 @@ public partial class MainWindow
     /// Claude 에서 Esc 등으로 요청을 취소하면(notifications/cancelled) 열려 있는 이 승인 창을 거부로 닫고,
     /// 승인 직후라도 취소됐으면 실행하지 않는다 — 취소된 요청이 나중에 승인돼 명령·입력·전송이 실행되는 일을 막는다.
     /// 취소면 감사 로그를 남기고 McpToolException, 아니면 승인 여부를 돌려준다 (승인·거부 감사 로그는 호출한 쪽이 남긴다).
+    /// 승인 창은 한 번에 하나만 띄운다 (_approvalGate): 다른 요청의 승인 창이 열려 있으면 그 창이 닫힐 때까지 비동기로 기다린다.
+    /// 예전에는 두 번째 요청의 모달 창이 첫 창 위에 겹쳐 떠(중첩 메시지 루프), 첫 창을 승인해도 두 번째 창에 답할 때까지 실행되지 않았다.
+    /// 기다리는 중에도 요청 취소를 반영한다.
     /// </summary>
-    private bool AskApproval(string tool, string title, string description, IReadOnlyList<string> targets, string command)
+    private async Task<bool> AskApprovalAsync(string tool, string title, string description, IReadOnlyList<string> targets, string command)
     {
         var ct = McpRequest.Token;
+        if (ct.IsCancellationRequested) ThrowCancelled(tool, targets, command, false);
+        try { await _approvalGate.WaitAsync(ct); }
+        catch (OperationCanceledException) { ThrowCancelled(tool, targets, command, false); }
+        try { return ShowApproval(tool, title, description, targets, command, ct); }
+        finally { _approvalGate.Release(); }
+    }
+
+    /// <summary>승인 창을 한 번에 하나만 띄우기 위한 게이트 (UI 스레드에서만 사용)</summary>
+    private readonly SemaphoreSlim _approvalGate = new(1, 1);
+
+    private bool ShowApproval(string tool, string title, string description, IReadOnlyList<string> targets, string command, CancellationToken ct)
+    {
         if (ct.IsCancellationRequested) ThrowCancelled(tool, targets, command, false);
 
         // Ask 는 창을 만들자마자 Owner 를 지정하므로, 그 전에 열려 있던 승인 창과 비교해 이번 창을 찾는다.

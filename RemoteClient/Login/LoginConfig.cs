@@ -119,7 +119,12 @@ public sealed class LoginState
     public string Account { get; set; } = "";
     /// <summary>바뀌지 않는 계정 ID (GitHub 사용자 번호, Google sub, Microsoft oid) — 프로필 폴더 이름</summary>
     public string AccountId { get; set; } = "";
+    /// <summary>마지막 온라인 로그인 시각 (오프라인 진입으로는 갱신하지 않는다)</summary>
     public DateTime LastSuccessUtc { get; set; }
+    /// <summary>마지막 온라인 로그인(LastSuccessUtc) 때 GitHub Organization 멤버 확인을 통과했는지</summary>
+    public bool OrgMember { get; set; }
+    /// <summary>그때 확인한 Organization 이름 (설정의 GitHubOrg 를 바꾸면 인정하지 않는다)</summary>
+    public string Org { get; set; } = "";
 
     public string ProfileKey => Profiles.Key(Provider, AccountId, Account);
 
@@ -129,11 +134,19 @@ public sealed class LoginState
     public static LoginState? Load() =>
         File.Exists(FilePath) ? SafeFile.LoadProtected<LoginState>(FilePath, s => JsonSerializer.Deserialize<LoginState>(s), () => new LoginState()) : null;
 
-    public static void Save(LoginIdentity who, LoginConfig cfg) =>
-        SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(new LoginState
+    /// <summary>온라인 로그인 성공 기록. orgMember = 이번 로그인에서 GitHub Organization 멤버 확인을 통과했는지</summary>
+    public static void Save(LoginIdentity who, LoginConfig cfg, bool orgMember = false) =>
+        SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(Create(who, cfg, orgMember, DateTime.UtcNow)));
+
+    internal static LoginState Create(LoginIdentity who, LoginConfig cfg, bool orgMember, DateTime nowUtc)
+    {
+        var org = cfg.Provider == LoginProviderKind.GitHub ? cfg.GitHubOrg.Trim() : "";
+        return new LoginState
         {
-            Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, AccountId = who.Id, LastSuccessUtc = DateTime.UtcNow,
-        }));
+            Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, AccountId = who.Id, LastSuccessUtc = nowUtc,
+            OrgMember = orgMember && org.Length > 0, Org = orgMember ? org : "",
+        };
+    }
 
     public static void Clear()
     {
@@ -144,4 +157,29 @@ public sealed class LoginState
     public bool Within(LoginConfig cfg, TimeSpan span, DateTime nowUtc) =>
         span > TimeSpan.Zero && Provider == cfg.Provider && ClientId == cfg.ClientId && Account.Length > 0 &&
         LastSuccessUtc <= nowUtc && nowUtc - LastSuccessUtc <= span;
+
+    /// <summary>
+    /// 저장된 계정이 지금 설정으로도 허용되는지. 허용 목록에서 지운 계정이 로그인 유지·오프라인 허용으로 계속 들어오지 않게.
+    /// GitHub Organization 멤버 허용은 로그인 없이 다시 확인할 수 없으므로, 마지막 온라인 로그인 때 같은 Organization 확인을
+    /// 통과한 기록이 있을 때만 인정한다 (기간은 호출하는 쪽의 Within — 유지 시간·오프라인 허용 기간 — 으로 제한).
+    /// offline = 오프라인 진입: 소유자(OwnerKey)는 허용 목록과 상관없이 인정 (인터넷이 없을 때 소유자가 갇히지 않게).
+    /// </summary>
+    public bool StillAllowed(LoginConfig cfg, bool offline = false)
+    {
+        if (Account.Length == 0) return false;
+        if (cfg.IsAllowed(new LoginIdentity(Provider, Account, "", AccountId), orgMember: OrgStillVerified(cfg))) return true;
+        return offline && cfg.OwnerKey.Length > 0 && ProfileKey == cfg.OwnerKey;
+    }
+
+    /// <summary>마지막 온라인 로그인 때 지금 설정과 같은 GitHub Organization 의 멤버로 확인됐는지</summary>
+    private bool OrgStillVerified(LoginConfig cfg)
+    {
+        var org = cfg.GitHubOrg.Trim();
+        return OrgMember && Provider == LoginProviderKind.GitHub && cfg.Provider == LoginProviderKind.GitHub &&
+               org.Length > 0 && string.Equals(Org, org, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>로그인 화면 없이 들어갈 수 있는지: 기간(마지막 온라인 로그인 기준) 안이고 지금도 허용 계정</summary>
+    public bool CanEnterWithout(LoginConfig cfg, TimeSpan span, DateTime nowUtc, bool offline = false) =>
+        Within(cfg, span, nowUtc) && StillAllowed(cfg, offline);
 }

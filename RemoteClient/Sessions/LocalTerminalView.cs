@@ -11,6 +11,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     private readonly Func<string> _commandLine;
     private readonly string _workingDir;
     private readonly string _exitHint;
+    private readonly bool _killTreeOnClose;
     private PseudoConsoleProcess? _pty;
     private bool _closed;
     private SessionStatus _status = SessionStatus.Connecting;
@@ -20,8 +21,10 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     public SessionStatus Status => _status;
 
     /// <param name="commandLine">실행할 명령줄 (재시작할 때마다 다시 계산)</param>
-    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null)
+    /// <param name="killTreeOnClose">닫을 때 하위 프로세스 트리까지 끝낸다 (Claude 패널만 true — PowerShell 탭에서 띄운 GUI 앱은 남긴다)</param>
+    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null, bool killTreeOnClose = false)
     {
+        _killTreeOnClose = killTreeOnClose;
         _commandLine = commandLine;
         _workingDir = workingDir;
         _exitHint = exitHint ?? L.T("프로세스가 종료되었습니다.");
@@ -39,7 +42,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     {
         if (_closed) return;
         _pty?.Dispose();
-        var pty = new PseudoConsoleProcess();
+        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose };
         pty.Output += _term.Write;
         pty.Exited += code => Dispatcher.BeginInvoke(() =>
         {

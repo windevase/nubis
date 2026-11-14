@@ -72,6 +72,7 @@ public sealed class TencentProvider : ICloudProvider
                 var resp = await CallAsync(id, key, token, "DescribeInstances", region, $"{{\"Offset\":{offset},\"Limit\":100}}", ct);
                 foreach (var inst in resp.Arr("InstanceSet"))
                 {
+                    if (IsGone(inst.Str("InstanceState"))) continue;
                     var tags = inst.Arr("Tags").GroupBy(t => t.Str("Key")).ToDictionary(g => g.Key, g => g.First().Str("Value"));
                     var (name, purpose) = CloudInstance.SplitName(inst.Str("InstanceName"));
                     purpose = tags.GetValueOrDefault("Purpose") ?? tags.GetValueOrDefault("purpose") ?? purpose;
@@ -91,6 +92,15 @@ public sealed class TencentProvider : ICloudProvider
         if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
         return new CloudFetchResult(items, errors);
     }
+
+    /// <summary>
+    /// 없어진 인스턴스: TERMINATING(삭제 중), LAUNCH_FAILED(생성 실패).
+    /// AWS 의 terminated 와 같이 목록에서 뺀다 (조회 자체는 성공이므로 부분 실패로 보지 않음).
+    /// SHUTDOWN(격리·회수 대기)은 갱신·복구할 수 있는 상태라 빼지 않는다 — 빼면 동기화가 그 호스트와 사용자 설정(계정·포트 등)을 지운다.
+    /// 상태는 그대로 SHUTDOWN 으로 남아 중지된 서버처럼 보인다.
+    /// </summary>
+    internal static bool IsGone(string state) =>
+        state.ToUpperInvariant() is "TERMINATING" or "LAUNCH_FAILED";
 
     /// <summary>TC3-HMAC-SHA256 Authorization 헤더 값 (CVM, POST /, content-type;host;x-tc-action 서명)</summary>
     internal static string Authorization(string secretId, string secretKey, string action, string payload, long ts)

@@ -30,7 +30,7 @@ public partial class MainWindow
     {
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         if (SettingsStore.Current.AutoApproveReadOnly) { AuditLog.Write(tool, new[] { target }, what, "자동 승인(읽기 전용)"); return; }
-        var ok = await OnUi(() => AskApproval(tool, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
+        var ok = await OnUiAsync(() => AskApprovalAsync(tool, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
             L.T("승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음)."), new[] { target }, what));
         AuditLog.Write(tool, new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
@@ -127,7 +127,7 @@ public partial class MainWindow
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Nubis", SftpPanel.SafeLocalName(h.DisplayName));
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"받기: {path}\n저장 위치: {root}";
-        var ok = await OnUi(() => AskApproval("sftp_download", L.T("Claude 가 파일 다운로드를 요청합니다"),
+        var ok = await OnUiAsync(() => AskApprovalAsync("sftp_download", L.T("Claude 가 파일 다운로드를 요청합니다"),
             L.T("서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호)."), new[] { target }, what));
         AuditLog.Write("sftp_download", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
@@ -144,6 +144,18 @@ public partial class MainWindow
             AuditLog.Write("sftp_download", new[] { target }, path, $"실패 (파일 {count}개 받음): {ex.Message}");
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            // 접속 전 취소(Task.Run 의 토큰, WithSftp 첫 ThrowIfCancellationRequested)는 McpToolException 으로 바뀌지 않는다 — 취소 기록을 남긴다
+            AuditLog.Write("sftp_download", new[] { target }, path, $"요청 취소로 중단 (파일 {count}개 받음)");
+            throw new McpToolException($"요청이 취소되어 중단했습니다 (파일 {count}개 받음).");
+        }
+        catch (Exception ex)
+        {
+            // 접속·인증 실패 등도 '승인' 기록만 남지 않게 결과를 적는다
+            AuditLog.Write("sftp_download", new[] { target }, path, $"실패 (파일 {count}개 받음): {ex.Message}");
+            throw;
+        }
 
         string DownloadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
@@ -151,6 +163,7 @@ public partial class MainWindow
             var attr = c.GetAttributes(path);
             var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
             var full = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            var skipped = new List<string>();
             void Get(string remote, bool isDir, string local)
             {
                 if (!Path.GetFullPath(local).StartsWith(full, StringComparison.OrdinalIgnoreCase)) throw new McpToolException("허용되지 않는 파일 이름이 있어 중단했습니다.");
@@ -158,7 +171,21 @@ public partial class MainWindow
                 {
                     Directory.CreateDirectory(local);
                     foreach (var f in c.ListDirectory(remote).Where(f => f.Name is not "." and not ".."))
-                        Get(f.FullName, f.IsDirectory && !f.IsSymbolicLink, Path.Combine(local, SftpPanel.SafeLocalName(f.Name)));
+                    {
+                        var childLocal = Path.Combine(local, SftpPanel.SafeLocalName(f.Name));
+                        if (!f.IsSymbolicLink) { Get(f.FullName, f.IsDirectory, childLocal); continue; }
+                        // 심볼릭 링크: 대상을 stat 해서 일반 파일이면 내용을 받고, 폴더 링크는 따라가지 않는다
+                        // (순환·받는 폴더 밖(/ 등)으로 이어져 끝없이 받는 일을 막음). 깨진 링크도 건너뛰고 결과에 적는다
+                        ct.ThrowIfCancellationRequested();
+                        Renci.SshNet.Sftp.SftpFileAttributes? linkTarget;
+                        try { linkTarget = c.GetAttributes(f.FullName); }
+                        catch (Renci.SshNet.Common.SftpPathNotFoundException) { linkTarget = null; }
+                        catch (Renci.SshNet.Common.SftpPermissionDeniedException) { linkTarget = null; }
+                        if (linkTarget == null) skipped.Add($"{f.FullName} (깨진 링크 또는 대상 권한 없음)");
+                        else if (linkTarget.IsDirectory) skipped.Add($"{f.FullName} (폴더 링크 — 따라가지 않음)");
+                        else if (!linkTarget.IsRegularFile) skipped.Add($"{f.FullName} (일반 파일이 아닌 링크 대상)");
+                        else Get(f.FullName, false, childLocal);
+                    }
                     return;
                 }
                 if (count >= 5000) throw new McpToolException("파일이 5000개를 넘어 중단했습니다.");
@@ -171,8 +198,11 @@ public partial class MainWindow
                 count++;   // 다 받은 파일만 센다 (실패 메시지의 진행 상황)
             }
             Get(path, attr.IsDirectory, top);
-            AuditLog.Write("sftp_download", new[] { target }, path, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}");
-            return $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {top}";
+            var note = skipped.Count == 0 ? "" : $", 심볼릭 링크 {skipped.Count}개 건너뜀";
+            AuditLog.Write("sftp_download", new[] { target }, path, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}{note}");
+            return $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {top}" +
+                   (skipped.Count == 0 ? "" : $"\n건너뛴 심볼릭 링크 {skipped.Count}개:\n" + string.Join("\n", skipped.Take(50)) +
+                                              (skipped.Count > 50 ? $"\n… 외 {skipped.Count - 50}개" : ""));
         }
     }
 
@@ -196,7 +226,7 @@ public partial class MainWindow
 
         var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
         var what = $"올리기: {local}{(isDir ? $" (폴더, 파일 {files.Count}개)" : "")} — {SftpPanel.HumanSize(total)}\n원격 폴더: {remoteDir}" + (overwrite ? "\n같은 이름이 있으면 덮어씀" : "");
-        var ok = await OnUi(() => AskApproval("sftp_upload", L.T("Claude 가 파일 업로드를 요청합니다"),
+        var ok = await OnUiAsync(() => AskApprovalAsync("sftp_upload", L.T("Claude 가 파일 업로드를 요청합니다"),
             L.T("이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요."), new[] { target }, what));
         AuditLog.Write("sftp_upload", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
@@ -211,9 +241,21 @@ public partial class MainWindow
             AuditLog.Write("sftp_upload", new[] { target }, local, $"실패 ({files.Count}개 중 {done}개 올림): {ex.Message}");
             throw;
         }
+        catch (OperationCanceledException)
+        {
+            AuditLog.Write("sftp_upload", new[] { target }, local, $"요청 취소로 중단 ({files.Count}개 중 {done}개 올림)");
+            throw new McpToolException($"요청이 취소되어 중단했습니다 ({files.Count}개 중 {done}개 올림).");
+        }
+        catch (Exception ex)
+        {
+            AuditLog.Write("sftp_upload", new[] { target }, local, $"실패 ({files.Count}개 중 {done}개 올림): {ex.Message}");
+            throw;
+        }
 
         string UploadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
+            // 승인 대기 중 최상위 경로가 링크·정션으로 바뀌었을 수 있다 — 접속 뒤 쓰기 전에 다시 검사 (파일별 핸들 검사는 아래)
+            if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } again) throw new McpToolException(again);
             var name = Path.GetFileName(local.TrimEnd('\\'));
             var root = SftpPanel.Combine(remoteDir, name);
             if (c.Exists(root) && !overwrite) throw new McpToolException($"원격에 이미 있습니다: {root} (덮어쓰려면 overwrite=true)");
@@ -231,7 +273,12 @@ public partial class MainWindow
             {
                 ct.ThrowIfCancellationRequested();
                 var remote = isDir ? SftpPanel.Combine(root, Path.GetRelativePath(local, f).Replace('\\', '/')) : root;
-                using (var fs = File.OpenRead(f)) c.UploadFile(new CancellableStream(fs, ct), remote, true);
+                // 승인 뒤 읽기 직전에 다시 검사한다: 파일을 열고 그 핸들의 실제 경로·하드 링크 수로 판단한 뒤 같은 핸들로 읽는다
+                // (승인 대기 중 링크로 바꿔치기·id_rsa 하드 링크 차단)
+                FileStream fs;
+                try { fs = McpHelpers.OpenUploadFile(f, AppPaths.DataDir, AppPaths.RootDir); }
+                catch (InvalidOperationException ex) { throw new McpToolException($"{ex.Message} — {f}"); }
+                using (fs) c.UploadFile(new CancellableStream(fs, ct), remote, true);
                 done++;
             }
             AuditLog.Write("sftp_upload", new[] { target }, local, $"완료 {files.Count}개 {SftpPanel.HumanSize(total)}");

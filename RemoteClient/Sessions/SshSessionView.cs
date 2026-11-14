@@ -100,6 +100,16 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         if ((_lastCwd ?? _promptCwd ?? await TerminalCwdAsync()) is { } cwd) await panel.FollowAsync(cwd);
     }
 
+    /// <summary>
+    /// 다시 연결된 뒤 sudo 사용자였던 패널: 새 연결로 다시 읽어(이때 로그인 계정으로 연결되며 Home 이 로그인 계정 홈으로 바뀐다)
+    /// 그 홈으로 옮긴다. 앞 폴더(/root 등)를 못 읽어 오류가 잠깐 보여도 홈으로 옮기면 사라진다.
+    /// </summary>
+    private static async System.Threading.Tasks.Task RefreshSftpToHomeAsync(SftpPanel panel)
+    {
+        await panel.RefreshAsync();
+        await panel.FollowAsync(panel.Home);
+    }
+
     /// <summary>터미널 현재 폴더: OSC 7 로 받은 값, 없으면 화면 프롬프트에서 읽기</summary>
     private async System.Threading.Tasks.Task<string?> TerminalCwdAsync()
     {
@@ -333,9 +343,14 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
             banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"),
             _source?.PromptAnswers?.Invoke(),
-            _source?.RememberAnswer is { } rememberAnswer ? (q, a) => Dispatcher.Invoke(() => rememberAnswer(q, a)) : null);
+            _source?.RememberAnswer is { } rememberAnswer ? (q, a) => Dispatcher.Invoke(() => rememberAnswer(q, a)) : null)
+        {
+            // 직전 시도가 기억한 답으로 실패했으면 이번에는 기억한 답을 쓰지 않고 묻는다 (틀린 기억값으로 반복 실패·잠금 방지)
+            SkipRemembered = _skipRemembered,
+        };
 
         AuthPrompter? jumpPrompter = null;
+        var authenticated = false;
         try
         {
             _hostKeyAccepted = false;
@@ -351,14 +366,16 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                     jumpPrompter = new AuthPrompter(
                         req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), jumpTarget, req)),
                         banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
-                    tunnel = JumpTunnel.Open(jump, _host.Address, _host.Port, jumpPrompter, SshAuth.VerifyAcceptNew);
+                    // 점프 서버 호스트키도 대상 서버와 같은 정책으로 (설정 "처음 보는 서버 확인"·바뀐 키 경고)
+                    tunnel = JumpTunnel.Open(jump, _host.Address, _host.Port, jumpPrompter, VerifyJumpHostKey);
                 }
-                var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter, tunnel: tunnel)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+                SshClient? client = null;
                 ShellStream? shell = null;
                 try
                 {
+                    // 키 읽기 실패(키 암호 틀림 등)로 Build 가 실패해도 점프 터널을 닫는다 (자동 재연결마다 터널이 새지 않게)
+                    client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter, tunnel: tunnel)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
                     client.HostKeyReceived += OnHostKey;
-                    client.ErrorOccurred += (_, e) => { if (gen == _gen) OnDisconnected(e.Exception.Message); };
                     prompter.Attach(client);
                     try { client.Connect(); }
                     finally { prompter.Detach(client); }
@@ -366,12 +383,15 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                     shell = client.CreateShellStream("xterm-256color", cols, rows, 0, 0, 65536);
                     shell.DataReceived += OnData;
                     shell.Closed += (_, _) => { if (gen == _gen) OnDisconnected(null); };
+                    // 오류 이벤트는 연결·셸이 준비된 뒤에 — 연결 중의 오류는 아래 catch 가 처리한다
+                    // (먼저 달면 핸드셰이크 오류가 OnDisconnected 의 자동 재연결과 catch 경로를 둘 다 타 재연결이 겹친다)
+                    client.ErrorOccurred += (_, e) => { if (gen == _gen) OnDisconnected(e.Exception.Message); };
                 }
                 catch
                 {
                     // 연결은 됐는데 셸 생성에 실패한 경우에도 연결을 남기지 않는다
                     try { shell?.Dispose(); } catch { }
-                    try { client.Dispose(); } catch { }
+                    try { client?.Dispose(); } catch { }
                     tunnel?.Dispose();
                     throw;
                 }
@@ -388,6 +408,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                 _shell = shell;
                 _tunnel = tunnel;
             });
+            authenticated = true;
+            _skipRemembered = false;
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
             if (_status == SessionStatus.Disconnected) return;
@@ -396,9 +418,12 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _autoAttempts = 0;
             _triedPublic = false;
             _promptCwd = null;   // 새 셸은 홈 폴더에서 시작
+            _lastCwd = null;     // 앞 셸이 OSC 7 로 알려준 폴더는 새 셸과 맞지 않는다 (get_terminal_info 가 옛 값을 보고하지 않게)
             _lastPromptScreen = null;
             _loginPromptHost = null;   // 새 로그인 — 첫 프롬프트의 호스트를 다시 읽는다
             _ = CaptureLoginPromptHostAsync(gen);
+            // 패널이 sudo 사용자(RunAs)였으면 그 폴더(/root 등)는 로그인 계정으로 못 열 수 있다 — 다시 연결 뒤 홈으로
+            var sftpWasRunAs = _sftp?.RunAs != null;
             _sftp?.ResetRunAs();   // 새 셸은 로그인 계정으로 시작
             if (prompter.NewPassword is { } newPassword)
             {
@@ -427,7 +452,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                 }
                 // 패널이 이미 보이는 경우: 로그인 전에 열어 "로그인이 끝난 뒤…" 안내에 머문 패널은 지금 열고,
                 // 다시 연결된 경우는 새 연결로 목록을 새로 고친다
-                if (sftpShown && _sftp != null) _ = _sftp.IsOpen ? _sftp.RefreshAsync() : OpenSftpAsync(_sftp);
+                if (sftpShown && _sftp != null)
+                    _ = !_sftp.IsOpen ? OpenSftpAsync(_sftp) : sftpWasRunAs ? RefreshSftpToHomeAsync(_sftp) : _sftp.RefreshAsync();
                 if (IsVisible) _term.FocusTerminal();
             });
         }
@@ -451,10 +477,20 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             SetStatus(SessionStatus.Disconnected);
             if (ex.Kind == JumpFailure.HostKey)
                 _term.Info(L.T("점프 서버의 호스트키를 신뢰할 수 없습니다. 점프 서버에 직접 접속해 키를 확인한 뒤 Enter 키를 누르면 다시 연결합니다."), "33");
+            else if (ex.Kind == JumpFailure.AuthPhase)
+                _term.Info(L.T("비밀번호·OTP 가 다시 전송되지 않도록 자동으로 다시 연결하지 않습니다. Enter 키를 누르면 다시 연결합니다."), "33");
             else if (ex.IsPermanent)
                 _term.Info(L.T("점프 서버의 계정(호스트·Vault)을 확인한 뒤 Enter 키를 누르면 다시 연결합니다."), "33");
             else if (!ScheduleAutoReconnect())
                 _term.Info(L.T("Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"));
+        }
+        catch (SshKeyLoadException ex)
+        {
+            // 로컬 키를 읽지 못함 (키 암호 틀림·파일 없음) — 연결 실패가 아니므로 자동 재연결하지 않는다
+            _term.Info(L.F("연결 실패: {0}", ex.Message), "31");
+            _term.Info(L.T("SSH 키와 키 암호(호스트·Vault)를 확인한 뒤 Enter 키를 누르면 다시 연결합니다."), "33");
+            DisposeSsh();
+            SetStatus(SessionStatus.Disconnected);
         }
         catch (SshAuthenticationException ex)
         {
@@ -476,9 +512,10 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
         }
-        catch (Exception ex) when (_hostKeyAccepted && !_retriedAfterHostKey)
+        catch (Exception ex) when (_hostKeyAccepted && !_retriedAfterHostKey && !prompter.AuthStarted)
         {
-            // 호스트키 확인 창을 읽는 동안 키 교환 시간이 초과될 수 있음 — 키는 저장됐으니 한 번 자동 재시도
+            // 호스트키 확인 창을 읽는 동안 키 교환 시간이 초과될 수 있음 — 키는 저장됐으니 한 번 자동 재시도.
+            // 인증을 이미 시작했으면(비밀번호·OTP 를 보냄) 재시도하지 않는다 (아래)
             _retriedAfterHostKey = true;
             _publicRetryPending = _triedPublic;   // 공인 IP 로 시도하던 중이면 그 주소로 다시
             _connecting = false;
@@ -487,9 +524,21 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _ = ConnectAsync();
             return;
         }
-        catch (Exception ex) when (IsNetworkError(ex) && !_triedPublic && _host.Jump == null && _host.HasPublicIp && _host.Address != _host.PublicIp)
+        catch (Exception ex) when (SshFailure.IsPermanent(ex, prompter.AuthStarted))
         {
-            // 사설 IP 로 연결이 안 되면(VPN 꺼짐 등) 공인 IP 로 한 번 더 — 인증 실패는 여기로 오지 않는다
+            // 비밀번호·OTP 답을 실제로 보낸 뒤(인증 중·인증 뒤)의 끊김·시간 초과 — OTP·Push 승인 대기 초과, 서버의 LoginGraceTime·MaxAuthTries 등.
+            // 네트워크 오류로 보고 공인 IP 재시도·자동 재연결을 하면 비밀번호와 새 Push·OTP 요청이 또 나가 계정이 잠길 수 있다.
+            // 공개키만 써 본 시도(재부팅 중 pam_nologin, VPN 순단)는 여기로 오지 않고 아래에서 네트워크 실패로 다시 시도한다
+            _term.Info(L.F("연결 실패: {0}", ex.Message.Split('\n')[0]), "31");
+            if (!authenticated)
+                _term.Info(L.T("인증 중 또는 인증 뒤에 연결이 끊기거나 시간이 초과되었습니다 (OTP·Push 승인 대기 시간 초과, 서버의 인증 시도 횟수 제한 등)."), "33");
+            _term.Info(L.T("비밀번호·OTP 가 다시 전송되지 않도록 자동으로 다시 연결하지 않습니다. Enter 키를 누르면 다시 연결합니다."), "33");
+            DisposeSsh();
+            SetStatus(SessionStatus.Disconnected);
+        }
+        catch (Exception ex) when (SshFailure.CanTryPublicIp(ex, prompter.AuthStarted) &&!_triedPublic && _host.Jump == null && _host.HasPublicIp && _host.Address != _host.PublicIp)
+        {
+            // 사설 IP 로 연결이 안 되면(VPN 꺼짐 등) 공인 IP 로 한 번 더 — 인증 실패·인증 단계의 실패는 여기로 오지 않는다
             _triedPublic = true;
             _publicRetryPending = true;   // 다음 ConnectAsync 가 주소를 사설로 되돌리지 않게
             _connecting = false;
@@ -510,18 +559,19 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         finally
         {
             _connecting = false;
+            // 기억한 답(Push 선택 등)을 쓴 시도가 실패함 — 이 탭의 다음 시도는 기억한 답 없이 묻는다 (성공하면 위에서 다시 끈다)
+            if (!authenticated && prompter.UsedRemembered) _skipRemembered = true;
         }
     }
+
+    /// <summary>직전 시도가 기억한 답으로 실패함 — 다음 시도는 기억한 답을 쓰지 않는다</summary>
+    private bool _skipRemembered;
 
     private bool _askCredentials, _hostKeyAccepted, _hostKeyRejected, _retriedAfterHostKey, _triedPublic, _publicRetryPending;
     /// <summary>탭을 열 때의 접속 주소 (공인 IP 로 넘어갔다가도 다음 연결은 이 주소부터)</summary>
     private readonly string _originalAddress;
     private int _autoAttempts;
     private const int MaxAutoAttempts = 5;
-
-    private static bool IsNetworkError(Exception ex) =>
-        ex is System.Net.Sockets.SocketException or SshOperationTimeoutException or SshConnectionException or TimeoutException ||
-        ex.InnerException is System.Net.Sockets.SocketException;
 
     /// <summary>설정 "끊기면 자동으로 다시 연결" 이 켜져 있으면 2·4·8·16·32초 뒤 다시 연결. 예약했으면 true</summary>
     private bool ScheduleAutoReconnect()
@@ -546,28 +596,43 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         _ = ConnectAsync();
     }
 
+    private enum HostKeyDecision { Trusted, AcceptedAfterPrompt, Rejected }
+
     private void OnHostKey(object? sender, HostKeyEventArgs e)
     {
-        var key = SshAuth.HostKeyId(_host);
+        var d = CheckHostKey(_host, e);
+        if (d == HostKeyDecision.AcceptedAfterPrompt) _hostKeyAccepted = true;
+        if (d == HostKeyDecision.Rejected) _hostKeyRejected = true;
+        e.CanTrust = d != HostKeyDecision.Rejected;
+    }
+
+    /// <summary>
+    /// 점프 서버 호스트키 확인 — 대상 서버와 같은 정책(설정 SshHostKeyPrompt, 바뀐 키 경고·거부 기록)을 점프 서버 자신의 주소:포트 기준으로.
+    /// JumpTunnel.Open 의 verifyHostKey (거부 사유, 신뢰하면 null)
+    /// </summary>
+    private string? VerifyJumpHostKey(HostEntry jump, HostKeyEventArgs e) =>
+        CheckHostKey(jump, e) == HostKeyDecision.Rejected ? L.T("호스트키를 신뢰하지 않았습니다.") : null;
+
+    /// <summary>대화형 호스트키 확인 (h = 대상 서버 또는 점프 서버). SSH.NET 의 백그라운드 스레드에서 호출되므로 창은 Dispatcher 로</summary>
+    private HostKeyDecision CheckHostKey(HostEntry h, HostKeyEventArgs e)
+    {
+        var key = SshAuth.HostKeyId(h);
         var fp = SshAuth.Fingerprint(e);
         var known = KnownHostStore.Get(key);
-        if (known == fp) { e.CanTrust = true; return; }
+        if (known == fp) return HostKeyDecision.Trusted;
 
         // Nubis 가 처음 보는 서버: OpenSSH 의 known_hosts 를 참고 — ssh 로 이미 신뢰한 키면 묻지 않고, 다른 키면 바뀐 키처럼 경고
-        var openSsh = known == null ? OpenSshKnownHosts.Check(_host.Address, _host.Port, e.HostKey) : OpenSshKnownHosts.Verdict.Unknown;
+        var openSsh = known == null ? OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey) : OpenSshKnownHosts.Verdict.Unknown;
         if (openSsh == OpenSshKnownHosts.Verdict.Match)
         {
             KnownHostStore.Set(key, fp);
             _term.Info(L.F("OpenSSH known_hosts 에서 신뢰한 호스트키: {0} {1}", key, fp));
-            e.CanTrust = true;
-            return;
+            return HostKeyDecision.Trusted;
         }
         if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
         {
-            _hostKeyRejected = true;
             _term.Info(L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}", fp), "31");
-            e.CanTrust = false;
-            return;
+            return HostKeyDecision.Rejected;
         }
 
         // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)
@@ -576,8 +641,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         {
             KnownHostStore.Set(key, fp);
             _term.Info(L.F("새 호스트키 저장: {0} {1}", key, fp));
-            e.CanTrust = true;
-            return;
+            return HostKeyDecision.Trusted;
         }
         // 사용자가 전에 거부한 키는 "아직 신뢰 안 함" 으로 보고 다시 묻는다
         if (known != null && KnownHostStore.IsRejected(known)) known = null;
@@ -588,7 +652,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                $"{key}\n{fp}", MessageBoxImage.Warning)
             : known == null
             ? (L.T("처음 접속하는 서버입니다"),
-               L.F("{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.", _host.DisplayName),
+               L.F("{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.", h.DisplayName),
                $"{key}\n{fp}", MessageBoxImage.Question)
             : (L.T("호스트키가 바뀌었습니다"),
                L.T("저장된 값과 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 새 키로 교체하고 접속할까요?"),
@@ -596,14 +660,14 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
         var ok = Dispatcher.Invoke(() =>
             Dialog.Show(Window.GetWindow(this), msg, title, MessageBoxButton.YesNo, icon, detail) == MessageBoxResult.Yes);
-        if (ok) { KnownHostStore.Set(key, fp); _hostKeyAccepted = true; }
-        else
+        if (ok)
         {
-            _hostKeyRejected = true;
-            // 거부한 키는 기록해 둔다 — Claude 일괄 실행·SFTP 의 "처음 보는 키 자동 신뢰" 가 이 키를 받아들이지 않도록
-            if (KnownHostStore.Get(key) == null) KnownHostStore.Set(key, KnownHostStore.RejectedMark(fp));
+            KnownHostStore.Set(key, fp);
+            return HostKeyDecision.AcceptedAfterPrompt;
         }
-        e.CanTrust = ok;
+        // 거부한 키는 기록해 둔다 — Claude 일괄 실행·SFTP 의 "처음 보는 키 자동 신뢰" 가 이 키를 받아들이지 않도록
+        if (KnownHostStore.Get(key) == null) KnownHostStore.Set(key, KnownHostStore.RejectedMark(fp));
+        return HostKeyDecision.Rejected;
     }
 
     private void OnData(object? sender, ShellDataEventArgs e)

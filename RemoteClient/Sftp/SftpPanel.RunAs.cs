@@ -17,6 +17,14 @@ public partial class SftpPanel
     /// <summary>확인된 sudo 비밀번호 — 같은 패널에서 다시 열 때 묻지 않게 (메모리에만)</summary>
     private string? _sudoPassword;
     private readonly HashSet<string> _runAsFailed = [];
+    /// <summary>전송 중이라 상태줄에 못 띄운 알림 — 전송이 끝날 때 결과 문구에 붙인다</summary>
+    private string? _pendingNotice;
+
+    /// <summary>전송 결과 문구에 미뤄 둔 알림을 붙인다 (둘 다 없으면 null)</summary>
+    public static string? AppendNotice(string? result, string? notice) =>
+        string.IsNullOrEmpty(notice) ? result
+        : string.IsNullOrEmpty(result) ? notice
+        : result + "\n" + notice;
 
     /// <summary>지금 SFTP 를 여는 사용자 (null 이면 로그인 계정)</summary>
     public string? RunAs => _runAs;
@@ -54,6 +62,8 @@ public partial class SftpPanel
             }
             catch (Exception ex)
             {
+                // 어떤 실패든 기록한다 — 다음 프롬프트마다 다시 시도해 sudo 에 비밀번호를 거듭 보내지 않게 (실패 누적·faillock)
+                if (user != null && ex is not OperationCanceledException) _runAsFailed.Add(user);
                 _runAs = previous;
                 UpdateRunAsBadge();
                 ShowMessage(ex.Message);
@@ -77,12 +87,17 @@ public partial class SftpPanel
             _home = home;
             return client;
         }
-        catch (SudoSftp.SudoException ex)
+        catch (Exception ex)
         {
+            // sudo 거부뿐 아니라 시간 초과·SSH 오류 등 모든 실패를 기록 — 터미널이 다시 연결될 때(ResetRunAs)까지 다시 시도하지 않는다
+            // (다시 시도하면 로그인 비밀번호를 sudo -S 로 또 보내 sudo 실패가 쌓인다)
             _runAsFailed.Add(user);
             _runAs = null;
             UpdateRunAsBadge();
-            ShowStatus(L.F("SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}", user, auth.User, ex.Message));
+            // 전송·편집 열기 중이면(BeginTransfer 가 연결보다 먼저) ShowStatus 가 무시되므로 전송 결과 문구에 붙인다 (EndTransfer)
+            var notice = L.F("SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}", user, auth.User, ex.Message);
+            if (_busy) _pendingNotice = notice;
+            else ShowStatus(notice);
             return null;
         }
     }

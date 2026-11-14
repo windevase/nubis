@@ -145,10 +145,17 @@ public partial class SftpPanel : UserControl
         return client;
     }
 
+    /// <summary>SFTP 요청 하나의 응답 대기 한도 — 터미널 공유·sudo·별도 연결 모두 같은 값</summary>
+    private static readonly TimeSpan SftpOperationTimeout = TimeSpan.FromSeconds(60);
+
     private async Task<SftpClient> OpenClientAsync((HostEntry Host, string User, string Password) auth)
     {
         // 0) 터미널이 다른 사용자로 전환돼 있으면 그 권한으로 (sudo, SftpPanel.RunAs.cs)
-        if (await OpenRunAsAsync(auth) is { } runAs) return runAs;
+        if (await OpenRunAsAsync(auth) is { } runAs)
+        {
+            runAs.OperationTimeout = SftpOperationTimeout;   // 멈춘 채널에서 무한정 기다리지 않게 (별도 연결과 같은 값)
+            return runAs;
+        }
 
         // 1) 터미널 연결 위에 SFTP 채널 — 인증을 다시 하지 않는다 (OTP 서버에서 두 번 묻지 않게)
         try
@@ -156,6 +163,7 @@ public partial class SftpPanel : UserControl
             var shell = _getShell?.Invoke();
             if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
             {
+                shared.OperationTimeout = SftpOperationTimeout;
                 _home = shared.WorkingDirectory;
                 return shared;
             }
@@ -179,12 +187,17 @@ public partial class SftpPanel : UserControl
         {
             // 끊긴 연결을 알아채고, 응답 없는 서버에서 무한정 멈추지 않게
             KeepAliveInterval = TimeSpan.FromSeconds(30),
-            OperationTimeout = TimeSpan.FromSeconds(60),
+            OperationTimeout = SftpOperationTimeout,
         };
         string? keyError = null;
         client.HostKeyReceived += (_, e) => e.CanTrust = (keyError = SshAuth.VerifyAcceptNew(auth.Host, e)) == null;
         prompter.Attach(client);
-        try { await Task.Run(client.Connect); }
+        try
+        {
+            // Detach 는 Dispose 보다 먼저 — 닫힌 클라이언트의 ConnectionInfo 를 건드리면 ObjectDisposedException 이 진짜 오류(호스트 키·인증)를 가린다
+            try { await Task.Run(client.Connect); }
+            finally { try { prompter.Detach(client); } catch { } }
+        }
         catch when (keyError != null) { client.Dispose(); throw new InvalidOperationException(keyError); }
         catch (Exception ex) when (ex is Renci.SshNet.Common.SshAuthenticationException || prompter.Cancelled)
         {
@@ -193,7 +206,6 @@ public partial class SftpPanel : UserControl
             throw new InvalidOperationException(L.F("별도 SFTP 연결의 인증에 실패했습니다: {0}\n터미널이 다시 연결될 때까지 다시 시도하지 않습니다.", ex.Message), ex);
         }
         catch { client.Dispose(); throw; }
-        finally { prompter.Detach(client); }
         _home = client.WorkingDirectory;
         return client;
     }
@@ -359,10 +371,12 @@ public partial class SftpPanel : UserControl
         var msg = L.F("{0}개 항목을 서버에서 삭제할까요?", items.Count) + (dirs > 0 ? L.F("\n(폴더 {0}개는 안의 내용까지 모두 삭제)", dirs) : "") +
                   "\n\n" + string.Join("\n", items.Take(10).Select(i => i.FullName)) + (items.Count > 10 ? "\n..." : "");
         if (Dialog.Show(Window.GetWindow(this)!, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (_busy) { ShowBusyHint(); return; }   // 확인 창을 띄운 사이 다른 전송이 시작됨
+        // 연결을 기다리기 전에 전송 중으로 표시 — 그 사이 다른 작업·사용자 전환이 끼어들지 않게
+        var ct = BeginTransfer(L.T("삭제 중..."), 0);
         try
         {
             var c = await ClientAsync();
-            var ct = BeginTransfer(L.T("삭제 중..."), 0);
             await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink, ct); }, ct);
         }
         catch (OperationCanceledException) { }
@@ -414,6 +428,9 @@ public partial class SftpPanel : UserControl
         _cts = null;
         CancelButton.Visibility = Visibility.Collapsed;
         TransferProgress.IsIndeterminate = false;
+        // 전송 중 sudo 전환에 실패하는 등 미뤄 둔 알림 (SftpPanel.RunAs.cs)
+        result = AppendNotice(result, _pendingNotice);
+        _pendingNotice = null;
         if (result == null) { TransferBar.Visibility = Visibility.Collapsed; return; }
         TransferText.Text = result;
         TransferProgress.Value = 1;
@@ -426,11 +443,22 @@ public partial class SftpPanel : UserControl
     public void Close()
     {
         _closed = true;   // 지금 연결 중인 ClientCoreAsync 는 연결이 끝나면 스스로 닫는다
+        var uploading = _edits.Values.Any(ed => ed.Uploading);
         foreach (var ed in _edits.Values) ed.Dispose();
         _edits.Clear();
         _cts?.Cancel();
         var c = _client;
         _client = null;
-        DisposeLater(c);
+        // 편집용 임시 폴더는 지우지 않는다 — 메모장·VS Code 는 파일을 잠그지 않아, 편집기에 열린 채 저장하지 않은 내용이
+        // 파일을 잃는다. 하루 지난 것은 CleanupEditTemp 가 정리한다. 열기·끌어내기용 임시 폴더만 지운다
+        var temps = TakePanelTempDirs().Where(d => !IsEditTempDir(d)).ToList();
+        // 편집 자동 업로드는 _clientLock 을 잡고 한다 — 올리는 중이면 끝난 뒤에 연결을 닫는다 (서버 파일이 반쯤 쓰인 채 남지 않게)
+        _ = Task.Run(async () =>
+        {
+            var locked = uploading && await _clientLock.WaitAsync(TimeSpan.FromMinutes(2));
+            try { c?.Dispose(); } catch { }
+            finally { if (locked) _clientLock.Release(); }
+            DeleteTempDirs(temps);
+        });
     }
 }

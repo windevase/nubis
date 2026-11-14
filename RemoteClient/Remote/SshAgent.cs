@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Renci.SshNet;
 using Renci.SshNet.Security;
 
@@ -36,8 +38,30 @@ public static class SshAgent
 
     public sealed record Key(byte[] Blob, string Type, string Comment);
 
+    /// <summary>키 목록 요청의 대기 시간 (연결·쓰기·읽기 전체) — 잠겼거나 응답하지 않는 에이전트에 멈추지 않게</summary>
+    public const int ListTimeoutMs = 1000;
+    /// <summary>서명 요청의 대기 시간 — 하드웨어 키(FIDO)·확인 요청이 있는 에이전트는 사용자가 누를 때까지 기다린다</summary>
+    public const int SignTimeoutMs = 60_000;
+
+    /// <summary>
+    /// 에이전트 파이프가 있는가 (연결하지 않고 파이프 목록만 본다 — 빠름). 알 수 없으면 true (연결해 보게).
+    /// 파이프가 없을 때 연결 시도는 대기 시간을 다 채우므로 먼저 확인한다.
+    /// </summary>
+    public static bool PipeExists()
+    {
+        var name = PipeName;
+        if (name.IndexOfAny(['\\', '/']) >= 0) return true;   // 하위 경로가 있는 이름은 목록과 비교하기 어렵다
+        try
+        {
+            foreach (var p in Directory.EnumerateFiles(@"\\.\pipe\"))
+                if (string.Equals(Path.GetFileName(p), name, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+        catch { return true; }
+    }
+
     /// <summary>에이전트에 올라간 키 목록. 에이전트가 없거나 응답이 없으면 빈 목록 (예외 없음)</summary>
-    public static IReadOnlyList<Key> ListKeys(int timeoutMs = 300)
+    public static IReadOnlyList<Key> ListKeys(int timeoutMs = ListTimeoutMs)
     {
         try
         {
@@ -60,6 +84,7 @@ public static class SshAgent
     /// <summary>키 소스: 에이전트의 키마다 서명 알고리즘(HostAlgorithm). 키가 없으면 null</summary>
     public static IPrivateKeySource? KeySource()
     {
+        if (!PipeExists()) return null;   // 에이전트가 없으면 대기 없이
         var keys = ListKeys();
         if (keys.Count == 0) return null;
         var algs = new List<HostAlgorithm>();
@@ -87,36 +112,49 @@ public static class SshAgent
         WriteBytes(ms, data);
         WriteUInt32(ms, flags);
         // 하드웨어 키(FIDO)·확인 요청이 있는 에이전트는 사용자가 누를 때까지 기다린다
-        var reply = Request(ms.ToArray(), 60_000);
+        var reply = Request(ms.ToArray(), SignTimeoutMs);
         if (reply.Length == 0 || reply[0] != SignResponse) throw new InvalidOperationException("ssh-agent 가 서명을 거부했습니다.");
         return new Reader(reply, 1).Bytes();
     }
 
+    /// <summary>
+    /// 요청 하나 (연결 → 쓰기 → 응답 읽기). timeoutMs 는 연결만이 아니라 읽기까지 전체에 적용한다 —
+    /// 잠긴 에이전트·확인을 기다리는 에이전트가 답하지 않아도 무한히 멈추지 않게 (UI 스레드에서도 불림).
+    /// </summary>
     private static byte[] Request(byte[] body, int timeoutMs)
     {
-        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut);
-        pipe.Connect(timeoutMs);
+        using var cts = new CancellationTokenSource(timeoutMs);
+        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        var task = RequestAsync(pipe, body, cts.Token);
+        // 취소가 파이프 입출력에 전달되지 않는 경우에도 기다림을 끝낸다 (pipe 는 using 으로 닫혀 남은 입출력이 끝남)
+        if (Task.WhenAny(task, Task.Delay(timeoutMs + 500)).GetAwaiter().GetResult() != task)
+        {
+            _ = task.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            throw new TimeoutException("ssh-agent 가 응답하지 않습니다.");
+        }
+        try { return task.GetAwaiter().GetResult(); }
+        catch (OperationCanceledException) { throw new TimeoutException("ssh-agent 가 응답하지 않습니다."); }
+    }
+
+    private static async Task<byte[]> RequestAsync(NamedPipeClientStream pipe, byte[] body, CancellationToken ct)
+    {
+        await pipe.ConnectAsync(ct).ConfigureAwait(false);
         var frame = new MemoryStream();
         WriteUInt32(frame, (uint)body.Length);
         frame.Write(body);
-        pipe.Write(frame.ToArray());
-        pipe.Flush();
-        var len = ReadUInt32(pipe);
+        await pipe.WriteAsync(frame.ToArray(), ct).ConfigureAwait(false);
+        await pipe.FlushAsync(ct).ConfigureAwait(false);
+        var head = new byte[4];
+        await pipe.ReadExactlyAsync(head, ct).ConfigureAwait(false);
+        var len = (uint)(head[0] << 24 | head[1] << 16 | head[2] << 8 | head[3]);
         if (len > 256 * 1024) throw new InvalidDataException("ssh-agent 응답이 너무 깁니다.");
         var buf = new byte[len];
-        pipe.ReadExactly(buf);
+        await pipe.ReadExactlyAsync(buf, ct).ConfigureAwait(false);
         return buf;
     }
 
     private static void WriteUInt32(Stream s, uint v) => s.Write([(byte)(v >> 24), (byte)(v >> 16), (byte)(v >> 8), (byte)v]);
     private static void WriteBytes(Stream s, byte[] b) { WriteUInt32(s, (uint)b.Length); s.Write(b); }
-
-    private static uint ReadUInt32(Stream s)
-    {
-        var b = new byte[4];
-        s.ReadExactly(b);
-        return (uint)(b[0] << 24 | b[1] << 16 | b[2] << 8 | b[3]);
-    }
 
     private sealed class Reader(byte[] buf, int pos)
     {

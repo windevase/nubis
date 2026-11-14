@@ -69,6 +69,7 @@ public partial class SftpPanel
         var data = new SftpDragData(this, items, DragTargets(items.Select(i => i.Name), dir), dir);
         try { DragDrop.DoDragDrop(FileList, data, DragDropEffects.Copy | DragDropEffects.Move); }
         catch (System.Runtime.InteropServices.COMException) { }
+        if (Directory.Exists(dir)) TrackTempDir(dir);   // 다른 드라이브로 복사돼 남은 임시 파일은 패널이 닫힐 때 지운다
     }
 
     /// <summary>끌어낼 항목들의 임시 폴더 안 로컬 경로 (Windows 이름으로 바꾼 뒤 겹치면 "이름 (1).확장자")</summary>
@@ -174,17 +175,70 @@ public partial class SftpPanel
         public void SetData(object data) => _extra[data.GetType().FullName ?? "object"] = data;
     }
 
+    /// <summary>
+    /// 받을 파일·폴더 목록 만들기. 폴더 안에서는:
+    /// - 폴더를 가리키는 링크는 따라가지 않고 건너뛴다 (순환 링크로 끝없이 받지 않게), 끊긴 링크·소켓·FIFO·장치 파일도 건너뜀 → skipped
+    /// - 파일을 가리키는 링크는 가리키는 파일의 내용을 받는다
+    /// - Windows 이름으로 바꾼 뒤 겹치는 이름(대소문자만 다름·a:b 와 a_b)은 "이름 (1)" 로 — 서로 덮어쓰지 않게
+    /// </summary>
     private static void Plan(SftpClient c, string remote, bool isDir, string local,
-        List<(string, string, long)> files, List<string> dirs)
+        List<(string, string, long)> files, List<string> dirs, List<string> skipped, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         if (!isDir)
         {
             files.Add((remote, local, c.GetAttributes(remote).Size));
             return;
         }
         dirs.Add(local);
+        var children = new List<(string Name, string Remote, bool IsDir)>();
         foreach (var f in c.ListDirectory(remote).Where(f => f.Name is not "." and not ".."))
-            Plan(c, f.FullName, f.IsDirectory && !f.IsSymbolicLink, Path.Combine(local, SafeLocalName(f.Name)), files, dirs);
+        {
+            ct.ThrowIfCancellationRequested();
+            if (f.IsSymbolicLink)
+            {
+                SftpFileAttributes? target = null;
+                try { target = c.GetAttributes(f.FullName); } catch { /* 끊긴 링크 */ }
+                if (target is { IsSymbolicLink: false, IsDirectory: false } &&
+                    !IsSpecialFile(target.IsSocket, target.IsNamedPipe, target.IsCharacterDevice, target.IsBlockDevice))
+                    children.Add((f.Name, f.FullName, false));
+                else skipped.Add(f.FullName);
+            }
+            else if (f.IsDirectory) children.Add((f.Name, f.FullName, true));
+            // 소켓·FIFO·장치 파일로 "명시된" 것만 건너뛴다 — 권한 비트(파일 종류)를 안 보내는 서버에서는
+            // IsRegularFile·IsDirectory 가 모두 거짓이라, 일반 파일까지 건너뛰지 않게 나머지는 파일로 받는다
+            else if (IsSpecialFile(f.IsSocket, f.IsNamedPipe, f.IsCharacterDevice, f.IsBlockDevice)) skipped.Add(f.FullName);
+            else children.Add((f.Name, f.FullName, false));
+        }
+        var targets = UniqueTargets(children.Select(ch => (ch.Name, ch.IsDir)), local);
+        for (var i = 0; i < children.Count; i++)
+            Plan(c, children[i].Remote, children[i].IsDir, targets[i], files, dirs, skipped, ct);
+    }
+
+    /// <summary>받지 않을 특수 파일인가 — 서버가 소켓·FIFO·문자/블록 장치로 명시한 것만 (종류를 모르면 일반 파일로 본다)</summary>
+    public static bool IsSpecialFile(bool isSocket, bool isNamedPipe, bool isCharacterDevice, bool isBlockDevice) =>
+        isSocket || isNamedPipe || isCharacterDevice || isBlockDevice;
+
+    /// <summary>
+    /// 한 폴더에 받을 항목들의 로컬 경로. Windows 이름으로 바꾼 뒤 서로 겹치거나(대소문자만 다른 이름·a:b 와 a_b)
+    /// exists 가 참인(이미 있는) 경로와 겹치면 "이름 (1).확장자" (폴더는 "이름 (1)")
+    /// </summary>
+    public static List<string> UniqueTargets(IEnumerable<(string Name, bool IsDir)> items, string dir, Func<string, bool>? exists = null)
+    {
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var (name, isDir) in items)
+        {
+            var safe = SafeLocalName(name);
+            var stem = isDir ? safe : Path.GetFileNameWithoutExtension(safe);
+            var ext = isDir ? "" : Path.GetExtension(safe);
+            var candidate = safe;
+            for (var i = 1; used.Contains(candidate) || (exists != null && exists(Path.Combine(dir, candidate))); i++)
+                candidate = $"{stem} ({i}){ext}";
+            used.Add(candidate);
+            result.Add(Path.Combine(dir, candidate));
+        }
+        return result;
     }
 
     /// <summary>

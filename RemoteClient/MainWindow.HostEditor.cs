@@ -50,6 +50,7 @@ public partial class MainWindow
         _edJumpId = h?.JumpHostId;
         UpdateJumpUi();
         UpdateAuthUi();
+        _editorValues = EditorValues();
         _editorSnapshot = EditorSnapshot();
 
         NavHosts.IsChecked = true;
@@ -63,10 +64,28 @@ public partial class MainWindow
 
     private HostEntry? _template;
     private string _editorSnapshot = "";
+    // 편집 패널을 열 때의 칸별 값 — 저장할 때 사용자가 바꾼 칸만 호스트에 반영한다
+    // (열어 둔 사이 클라우드 동기화·Claude update_host 가 바꾼 값을 그대로 덮어쓰지 않게)
+    private string[] _editorValues = Array.Empty<string>();
+
+    // EditorValues 의 칸 순서
+    private const int FProto = 0, FAddress = 1, FPort = 2, FPublicIp = 3, FUsePublic = 4, FLabel = 5, FGroup = 6, FUser = 7,
+                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13;
+
+    /// <summary>편집 칸 값 (칸별)</summary>
+    private string[] EditorValues() => new[]
+    {
+        (ProtoRdp.IsChecked == true).ToString(), EdAddress.Text, EdPort.Text, EdPublicIp.Text, (EdUsePublic.IsChecked == true).ToString(),
+        EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text,
+        _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "",
+    };
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
-    private string EditorSnapshot() => string.Join("\u0001", ProtoRdp.IsChecked == true, EdAddress.Text, EdPort.Text, EdPublicIp.Text,
-        EdUsePublic.IsChecked == true, EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text, _edVaultId, _edClearAnswers, _edJumpId);
+    private string EditorSnapshot() => string.Join("\u0001", EditorValues());
+
+    /// <summary>열 때와 비교해 바뀐 칸 (스냅숏이 없으면 전부 바뀐 것으로)</summary>
+    internal static bool[] ChangedFields(string[] before, string[] now) =>
+        now.Select((v, i) => before.Length != now.Length || before[i] != v).ToArray();
 
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
@@ -287,27 +306,53 @@ public partial class MainWindow
         // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다 — 원본 호스트를 바꾸기 전에 (취소하면 아무것도 바뀌지 않게)
         if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
 
-        var h = _editing ?? _template?.Clone() ?? new HostEntry();
-        h.Protocol = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
-        h.Address = address;
-        if (h.PrivateIp != null) h.PrivateIp = address;
-        var pub = EdPublicIp.Text.Trim();
-        h.PublicIp = pub.Length > 0 ? pub : null;
-        h.UsePublicIp = EdUsePublic.IsChecked == true && h.PublicIp != null;
-        h.Port = port;
-        h.Label = EdLabel.Text.Trim();
-        h.Group = EdGroup.Text.Trim();
+        // 편집하던 호스트가 그사이 목록에서 지워졌으면(클라우드 동기화·Claude delete_host 등) 조용히 버리지 않고 묻는다
+        var editing = _editing;
+        var readd = false;
+        if (editing != null && !_hosts.Contains(editing))
+        {
+            if (Dialog.Show(this, L.F("편집하던 호스트 '{0}' 이(가) 그사이 목록에서 삭제되었습니다 (클라우드 동기화 등).\n편집한 내용으로 새 호스트를 추가할까요?", editing.DisplayName),
+                    L.T("호스트 편집"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return null;
+            readd = true;
+        }
+
+        var h = editing ?? _template?.Clone() ?? new HostEntry();
+        // 기존 호스트는 사용자가 바꾼 칸만 반영 (새 호스트·복제·다시 추가는 전부)
+        var changed = ChangedFields(editing == null || readd ? Array.Empty<string>() : _editorValues, EditorValues());
         var ssh = ProtoSsh.IsChecked == true;
 
-        h.VaultId = _edVaultId;
-        h.Username = EdUser.Text.Trim();
-        h.Password = EdPassword.Password;
-        h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
-        h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
-        if (_edClearAnswers) h.PromptAnswers = null;
-        h.JumpHostId = ssh ? _edJumpId : null;
+        if (changed[FProto]) h.Protocol = ssh ? Protocol.Ssh : Protocol.Rdp;
+        if (changed[FAddress])
+        {
+            h.Address = address;
+            if (h.PrivateIp != null) h.PrivateIp = address;
+        }
+        if (changed[FPublicIp] || changed[FUsePublic])
+        {
+            var pub = EdPublicIp.Text.Trim();
+            h.PublicIp = pub.Length > 0 ? pub : null;
+            h.UsePublicIp = EdUsePublic.IsChecked == true && h.PublicIp != null;
+        }
+        if (changed[FPort]) h.Port = port;
+        if (changed[FLabel]) h.Label = EdLabel.Text.Trim();
+        if (changed[FGroup]) h.Group = EdGroup.Text.Trim();
 
-        if (_editing == null) _hosts.Add(h);
+        if (changed[FVault]) h.VaultId = _edVaultId;
+        if (changed[FUser]) h.Username = EdUser.Text.Trim();
+        // 평문이 같으면 다시 암호화하지 않는다 (암호문이 바뀌면 열린 탭이 "계정이 바뀜" 으로 보고 세션에서 입력한 계정을 버렸다)
+        if (changed[FPassword] && h.Password != EdPassword.Password) h.Password = EdPassword.Password;
+        if (changed[FKey] || changed[FProto]) h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
+        if (changed[FGateway] || changed[FProto]) h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
+        if (_edClearAnswers) h.PromptAnswers = null;
+        if (changed[FJump] || changed[FProto]) h.JumpHostId = ssh ? _edJumpId : null;
+
+        if (readd)
+        {
+            // 클라우드 호스트였으면 직접 관리하는 호스트로 (복제와 같게 — 같은 인스턴스 ID 를 가진 유령 사본 방지)
+            if (h.IsCloud) DetachFromCloud(h);
+            UpdateProfileCounts();
+        }
+        if (editing == null || readd) _hosts.Add(h);
         _template = null;
         SaveHosts();
         RefreshHosts();

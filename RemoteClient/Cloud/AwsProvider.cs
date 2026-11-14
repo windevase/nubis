@@ -75,10 +75,9 @@ public sealed class AwsProvider : ICloudProvider
             var resp = await ec2.DescribeRegionsAsync(new DescribeRegionsRequest(), ct);
             regions = (resp.Regions ?? new()).Select(r => r.RegionName).ToList();
         }
-        catch (Exception ex) when (ex.Message.Contains("SSO", StringComparison.OrdinalIgnoreCase) ||
-                                   ex.Message.Contains("token", StringComparison.OrdinalIgnoreCase) ||
-                                   ex.Message.Contains("expired", StringComparison.OrdinalIgnoreCase))
+        catch (Exception ex) when (IsSsoProfile(chain, p.Name, creds) && LooksLikeSsoTokenError(ex))
         {
+            // SSO 프로필일 때만 SSO 로그인 안내 (액세스 키 프로필의 "security token invalid/expired" 에 SSO 안내가 붙지 않게)
             throw new InvalidOperationException(L.F("SSO 로그인이 필요합니다 (aws sso login --profile {0}) — {1}", p.Name, CloudProviders.FirstLine(ex.Message)));
         }
 
@@ -110,5 +109,39 @@ public sealed class AwsProvider : ICloudProvider
 
         if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
         return new CloudFetchResult(items, errors);
+    }
+
+    /// <summary>SSO 자격 증명을 쓰는 프로필인지 (SSOAWSCredentials 이거나 config 에 sso_* 설정, source_profile 체인 포함)</summary>
+    private static bool IsSsoProfile(CredentialProfileStoreChain chain, string name, Amazon.Runtime.AWSCredentials creds)
+    {
+        if (creds is Amazon.Runtime.SSOAWSCredentials) return true;
+        try
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var n = name; !string.IsNullOrEmpty(n) && seen.Add(n);)
+            {
+                if (!chain.TryGetProfile(n, out var prof)) break;
+                if (HasSsoSettings(prof.Options.SsoStartUrl, prof.Options.SsoSession)) return true;
+                n = prof.Options.SourceProfile;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    internal static bool HasSsoSettings(string? ssoStartUrl, string? ssoSession) =>
+        !string.IsNullOrWhiteSpace(ssoStartUrl) || !string.IsNullOrWhiteSpace(ssoSession);
+
+    /// <summary>SSO 토큰이 없거나 만료된 오류로 보이는지 (SSO 프로필에서만 쓴다)</summary>
+    internal static bool LooksLikeSsoTokenError(Exception ex)
+    {
+        for (var e = ex; e != null; e = e.InnerException)
+        {
+            var m = e.Message ?? "";
+            if (m.Contains("SSO", StringComparison.OrdinalIgnoreCase) || m.Contains("token", StringComparison.OrdinalIgnoreCase) ||
+                m.Contains("expired", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 }

@@ -112,15 +112,17 @@ public partial class MainWindow
         var sw = Stopwatch.StartNew();
         if (await OnUi(() => tab.Status) == SessionStatus.Disconnected) return Done("연결이 끊겨 있습니다", start, sw.Elapsed);
 
+        var atPromptStart = await AtPrompt();
         // 패턴이 이미 나와 있는 경우: send_to_terminal 이 '아직 실행 중' 으로 돌아온 뒤 명령이 끝나며 패턴이 나왔으면 baseline 에 포함돼
-        // 제한 시간까지 기다리게 된다 — 셸 프롬프트로 돌아와 있고 마지막 명령 이후 출력(+지금 프롬프트 줄)에 패턴이 있으면 바로 끝낸다
-        if (pattern.Length > 0 && await AtPrompt() && McpHelpers.OutputSinceLastCommand(start) is { } recent &&
-            McpHelpers.CountMatches(recent, pattern, regex) > 0)
+        // 제한 시간까지 기다리게 된다 — 셸 프롬프트로 돌아와 있고(명령이 끝남) 마지막 명령 이후 출력(+지금 프롬프트 줄)에 패턴이 있으면 바로 끝낸다.
+        // 아직 실행 중이면(tail -f 의 첫 줄에 남은 옛 ERROR, 알아보지 못한 프롬프트 안이라 화면 전체가 '실행 중 출력' 인 경우 등)
+        // 이미 있는 것은 세지 않고 새로 나타날 때만 끝낸다 (아래 반복의 baseline 비교)
+        if (pattern.Length > 0 && McpHelpers.AlreadyPresentAtPrompt(start, pattern, regex, atPromptStart))
             return Done($"'{pattern}' 이(가) 이미 나와 있고 셸 프롬프트로 돌아와 있습니다", start, sw.Elapsed);
 
         // 짧은 명령은 이 도구를 부르기 전에 이미 끝나 있다 — 새 출력이 없어도 화면이 셸 프롬프트면 바로 끝낸다
         // (예전에는 새 출력만 기다려 ls 같은 명령 뒤에 제한 시간(60초)까지 버텼다)
-        if (pattern.Length == 0 && await AtPrompt())
+        if (pattern.Length == 0 && atPromptStart)
         {
             await Task.Delay(150, ct);
             var again = await Read(scan);
@@ -129,8 +131,11 @@ public partial class MainWindow
             lastChange = DateTime.UtcNow;
         }
         // 실행 중인 명령이 앱이 알아보는 프롬프트에서 입력됐으면 끝나면 프롬프트로 돌아온 것을 알 수 있다 →
-        // idle_sec 를 따로 주지 않은 한 '출력이 잠깐 멈춤' 으로 끝내지 않는다 (apt·docker pull·curl 처럼 중간에 조용한 명령)
-        var promptKnown = pattern.Length == 0 && idleArg == null && McpHelpers.HasPromptCommandLine(start);
+        // idle_sec 를 따로 주지 않은 한 '출력이 잠깐 멈춤' 으로 끝내지 않는다 (apt·docker pull·curl 처럼 중간에 조용한 명령).
+        // 화면의 '마지막' 프롬프트+명령 줄이 지금 명령일 때만 (그 뒤에 mysql>·>>>·Password: 같은 다른 프롬프트가 보이면 아님 — 출력 멈춤 규칙).
+        // 이때는 '출력이 N초 멈춤' 상한 없이 프롬프트 복귀 또는 timeout 까지 기다린다 — sleep 30·rsync -q·mysqldump 처럼
+        // 오래 조용한 명령을 10초 만에 끝난 것처럼 돌려주던 문제. 비밀번호·[Y/n] 같은 입력 대기는 RunningCommandFromKnownPrompt 가 걸러 출력 멈춤 규칙을 쓴다
+        var promptKnown = pattern.Length == 0 && idleArg == null && McpHelpers.RunningCommandFromKnownPrompt(start);
         string outcome;
         while (true)
         {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace Nubis;
@@ -70,6 +71,14 @@ public sealed class RdpDefaults
         return Encoding.UTF8.GetString(bytes).TrimStart('﻿');
     }
 
+    /// <summary>
+    /// drivestoredirect 값이 "모든 드라이브" 인지. mstsc 는 전체 선택이면 "*", 일부만 고르면 "C:\;D:\;" 처럼 드라이브 목록,
+    /// "나중에 연결하는 드라이브" 는 "DynamicDrives" 를 쓴다. RDP 컨트롤의 RedirectDrives 는 모든 드라이브를 켜는 스위치뿐이라
+    /// "*" 일 때만 켜고, 특정 드라이브만 고른 경우는 의도보다 넓게 공유하지 않도록 리디렉션하지 않는다.
+    /// </summary>
+    public static bool RedirectsAllDrives(string value) =>
+        value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(d => d == "*");
+
     /// <summary>"이름:형식:값" 줄들을 해석</summary>
     public static RdpDefaults Parse(string text, bool fromFile = false)
     {
@@ -109,8 +118,8 @@ public sealed class RdpDefaults
             BitmapPersistence = B("bitmapcachepersistenable", true),
             RedirectClipboard = B("redirectclipboard", true),
             RedirectPrinters = B("redirectprinters", true),
-            RedirectDrives = B("redirectdrives", false) ||
-                             (v.TryGetValue("drivestoredirect", out var drives) && drives.Length > 0),
+            // drivestoredirect 줄이 있어도 값이 비어 있으면(드라이브를 고르지 않음) redirectdrives 를 따른다
+            RedirectDrives = v.TryGetValue("drivestoredirect", out var drives) && drives.Length > 0 ? RedirectsAllDrives(drives) : B("redirectdrives", false),
             RedirectSmartCards = B("redirectsmartcards", true),
             AudioMode = I("audiomode", 0),
             AutoReconnect = B("autoreconnection enabled", true),

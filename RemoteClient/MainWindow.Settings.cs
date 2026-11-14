@@ -249,7 +249,22 @@ public partial class MainWindow
         // 소유자 = 로그인을 설정한 계정. 소유자가 로그인 방식을 바꾸면 다음 실행 때 프로필을 새 이름으로 옮긴다
         var firstSetup = draft.OwnerKey.Length == 0;
         if (firstSetup) draft.OwnerKey = who.ProfileKey;
-        else if (draft.OwnerKey != who.ProfileKey) { draft.PreviousOwnerKey = draft.OwnerKey; draft.OwnerKey = who.ProfileKey; }
+        else if (draft.OwnerKey != who.ProfileKey)
+        {
+            // 다른 계정으로 테스트 로그인하면 소유자와 프로필 폴더가 그 계정으로 넘어간다 — 조용히 넘기지 않고 확인
+            var targetHasData = Profiles.HasUserData(Profiles.Dir(who.ProfileKey));
+            var ask = L.F("테스트 로그인한 계정({0})이 지금 소유자 프로필({1})과 다릅니다.\n저장하면 소유자가 이 계정으로 바뀌고, 다음 실행 때 지금 프로필의 호스트·Vault·설정을 이 계정의 프로필({2})로 옮깁니다.",
+                          who.Account, draft.OwnerKey, who.ProfileKey) +
+                      (targetHasData ? "\n\n" + L.T("⚠ 이 계정의 프로필에 이미 데이터가 있어 자동으로 합치지 않습니다 (지금 프로필 데이터는 예전 폴더에 남습니다).") : "") +
+                      "\n\n" + L.T("소유자를 바꿀까요?");
+            if (Dialog.Show(this, ask, L.T("시작 화면 로그인"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+            {
+                LoginStatusText.Text = L.T("소유자를 바꾸지 않아 저장하지 않았습니다. 소유자 계정으로 테스트 로그인하세요.");
+                return;
+            }
+            draft.PreviousOwnerKey = draft.OwnerKey;
+            draft.OwnerKey = who.ProfileKey;
+        }
         SettingsStore.UpdateGlobal(s => s.Login = draft);
         LoginSecretBox.Clear();
         AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, $"{LoginConfig.ProviderLabel(draft.Provider)} · 허용 {string.Join(", ", draft.AllowedAccounts)}" +

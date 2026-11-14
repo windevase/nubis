@@ -35,8 +35,26 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
 
     internal string[]? Ask(AuthPromptRequest r) => ask(r);
     internal Action<string>? Banner => banner;
-    internal string? Remembered(string prompt) => remembered != null && remembered.TryGetValue(prompt, out var a) ? a : null;
+    internal string? Remembered(string prompt) =>
+        !SkipRemembered && remembered != null && remembered.TryGetValue(prompt, out var a) ? a : null;
     internal Action<string, string>? RememberAnswer => remember;
+
+    /// <summary>
+    /// 이번 시도에서 서버의 호스트키를 받았거나 인증 질문을 받음 — 이 뒤의 끊김·시간 초과(Push·OTP 대기 초과, LoginGraceTime,
+    /// MaxAuthTries)는 네트워크 오류로 보지 않는다. 공인 IP 재시도·자동 재연결이 비밀번호와 새 Push 를 다시 보내 계정이 잠기지 않게.
+    /// </summary>
+    public bool ReachedAuth { get; internal set; }
+
+    /// <summary>인증을 실제로 시작함 (keyboard-interactive 질문을 받았거나 password 방식으로 비밀번호를 보냄)</summary>
+    public bool AuthStarted { get; internal set; }
+
+    /// <summary>이번 시도에서 호스트에 기억해 둔 답을 썼음 — 실패했으면 다음 시도는 기억한 답 없이 묻는다</summary>
+    public bool UsedRemembered { get; internal set; }
+
+    /// <summary>기억해 둔 답을 쓰지 않고 사용자에게 묻는다 (직전 시도가 기억한 답으로 실패한 경우 탭이 켠다)</summary>
+    public bool SkipRemembered { get; set; }
+
+    internal void MarkAuthStarted() => AuthStarted = ReachedAuth = true;
 
     /// <summary>서버 요구로 비밀번호를 바꿨으면 새 비밀번호 (연결 후 저장값 갱신용)</summary>
     public string? NewPassword { get; internal set; }
@@ -64,7 +82,11 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
         var ci = client.ConnectionInfo;
         _origTimeout = ci.Timeout;
         if (_hostKeyHandler != null) client.HostKeyReceived -= _hostKeyHandler;
-        _hostKeyHandler = (_, _) => { if (ci.Timeout < AuthTimeout) ci.Timeout = AuthTimeout; };
+        _hostKeyHandler = (_, _) =>
+        {
+            ReachedAuth = true;
+            if (ci.Timeout < AuthTimeout) ci.Timeout = AuthTimeout;
+        };
         client.HostKeyReceived += _hostKeyHandler;
     }
 
@@ -85,6 +107,44 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
 
 /// <summary>사용자가 서버의 인증 질문(OTP·비밀번호 변경) 입력 창을 취소함 — 인증 실패와 구분한다</summary>
 public sealed class AuthPromptCancelledException(string message) : SshAuthenticationException(message);
+
+/// <summary>
+/// 로컬 SSH 키를 읽지 못함 (키 암호가 틀림·파일 없음·지원하지 않는 형식) — 다시 시도해도 같으므로 자동 재연결하지 않는다.
+/// 기존 호출하는 쪽(InvalidOperationException·Exception 을 잡는 곳)이 그대로 동작하도록 InvalidOperationException 을 상속.
+/// </summary>
+public sealed class SshKeyLoadException(string message, Exception inner) : InvalidOperationException(message, inner);
+
+/// <summary>연결 실패 분류 (UI·SSH.NET 연결과 무관, 테스트 대상)</summary>
+public static class SshFailure
+{
+    /// <summary>네트워크 계층 실패로 보이는가 (연결 거부·시간 초과·끊김)</summary>
+    public static bool IsNetwork(Exception ex) =>
+        ex is System.Net.Sockets.SocketException or SshOperationTimeoutException or SshConnectionException or TimeoutException ||
+        ex.InnerException is System.Net.Sockets.SocketException;
+
+    /// <summary>
+    /// 다시 시도해도 같거나, 다시 시도하면 위험한 실패 (자동 재연결·공인 IP 재시도 하지 않음):
+    /// 인증 실패·입력 취소·로컬 키 오류, 그리고 비밀번호·keyboard-interactive 답을 실제로 보낸 뒤(authStarted)의 모든 실패 —
+    /// 그 뒤의 시간 초과·끊김을 다시 시도하면 비밀번호와 새 Push·OTP 요청이 또 나가 계정이 잠길 수 있다.
+    /// 공개키만 써 본 시도(재부팅 중 pam_nologin, 인증 중 VPN 순단 등)의 끊김·시간 초과는 네트워크 실패로 보고 다시 시도해도 된다
+    /// (인증 실패 SshAuthenticationException 은 여전히 다시 시도하지 않는다).
+    /// </summary>
+    public static bool IsPermanent(Exception ex, bool authStarted) =>
+        authStarted || ex is SshAuthenticationException or SshKeyLoadException;
+
+    /// <summary>사설 IP 실패 뒤 공인 IP 로 한 번 더 시도해도 되는가 (비밀번호·OTP 를 보내기 전의 네트워크 실패만)</summary>
+    public static bool CanTryPublicIp(Exception ex, bool authStarted) => !IsPermanent(ex, authStarted) && IsNetwork(ex);
+
+    /// <summary>
+    /// 점프 서버 연결 실패의 종류 — 인증을 시작한 뒤(비밀번호·OTP 답을 보냄, 비대화형은 호스트키를 받은 뒤)의 실패는 네트워크 실패로 보지 않는다
+    /// </summary>
+    public static JumpFailure JumpKind(Exception ex, bool keyRejected, bool authStarted) =>
+        keyRejected ? JumpFailure.HostKey
+        : ex is SshAuthenticationException ? JumpFailure.Auth
+        : ex is SshKeyLoadException ? JumpFailure.Config
+        : authStarted ? JumpFailure.AuthPhase
+        : JumpFailure.Network;
+}
 
 public static class SshAuth
 {
@@ -120,7 +180,7 @@ public static class SshAuth
         {
             var pw = new PasswordAuthenticationMethod(user, password);
             pw.PasswordExpired += (_, e) => e.NewPassword = System.Text.Encoding.UTF8.GetBytes(AskNewPassword(prompter));
-            methods.Add(new PasswordUnlessSent(pw, state));
+            methods.Add(new PasswordUnlessSent(pw, state, prompter));
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
         var ci = new ConnectionInfo(tunnel?.LocalHost ?? host.Address, tunnel?.LocalPort ?? host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
@@ -135,7 +195,7 @@ public static class SshAuth
     /// (그 서버에서는 성공할 수 없음) 실패 횟수만 두 배로 쌓여 계정이 빨리 잠긴다.
     /// keyboard-interactive 를 허용하지 않는 서버(password 만)에서는 그대로 password 방식으로 보낸다.
     /// </summary>
-    private sealed class PasswordUnlessSent(PasswordAuthenticationMethod inner, KbdAuth.State state) : AuthenticationMethod(inner.Username)
+    private sealed class PasswordUnlessSent(PasswordAuthenticationMethod inner, KbdAuth.State state, AuthPrompter? prompter) : AuthenticationMethod(inner.Username)
     {
         public override string Name => inner.Name;
 
@@ -143,6 +203,7 @@ public static class SshAuth
         {
             if (state.PasswordUsed)
                 throw new SshAuthenticationException("Permission denied (keyboard-interactive).");
+            prompter?.MarkAuthStarted();   // 비밀번호를 보낸다 — 이 뒤의 실패는 다시 시도하지 않는다
             var result = inner.Authenticate(session);
             AllowedAuthentications = inner.AllowedAuthentications;
             return result;
@@ -158,17 +219,22 @@ public static class SshAuth
     /// <summary>keyboard-interactive 질문 응답: 로그인 비밀번호 질문은 저장된 비밀번호로(한 번만), 나머지는 사용자에게</summary>
     private static void Answer(AuthenticationPromptEventArgs e, string password, KbdAuth.State state, AuthPrompter? prompter)
     {
+        prompter?.MarkAuthStarted();
         var prompts = e.Prompts.OrderBy(p => p.Id).ToList();
         var auto = KbdAuth.AutoFill(prompts.Select(p => p.Request).ToList(), password, state);
         for (var i = 0; i < prompts.Count; i++)
             if (auto[i] != null) prompts[i].Response = auto[i];
 
-        // 호스트에 기억해 둔 답 ("Choose [1] Push, or [2] TOTP" 같은 고정 선택). KbdAuth.CanUseRemembered 참고
+        // 호스트에 기억해 둔 답 ("Choose [1] Push, or [2] TOTP" 같은 고정 선택). KbdAuth.CanRemember 참고 —
+        // 예전에 저장된 OTP 같은 값은 쓰지 않는다
         var memo = new string?[prompts.Count];
         if (prompter != null)
             for (var i = 0; i < prompts.Count; i++)
-                if (auto[i] == null && prompter.Remembered(prompts[i].Request.Trim()) is { } a && KbdAuth.CanUseRemembered(prompts[i].IsEchoed, a))
+                if (auto[i] == null && prompter.Remembered(prompts[i].Request.Trim()) is { } a && KbdAuth.CanRemember(prompts[i].Request.Trim(), prompts[i].IsEchoed, a))
+                {
                     prompts[i].Response = memo[i] = a;
+                    prompter.UsedRemembered = true;
+                }
         var rest = prompts.Where((_, i) => auto[i] == null && memo[i] == null).ToList();
 
         if (prompter != null)
@@ -200,13 +266,18 @@ public static class SshAuth
             prompter.Cancelled = true;
             throw new AuthPromptCancelledException(L.T("인증 입력이 취소되었습니다."));
         }
+        var answered = new List<(string Prompt, string Answer)>();
         for (var i = 0; i < rest.Count; i++)
         {
             var answer = i < answers.Length ? answers[i] : "";
             rest[i].Response = answer;
-            if (req.Remember[i] && KbdAuth.CanUseRemembered(rest[i].IsEchoed, answer))
+            answered.Add((rest[i].Request.Trim(), answer));
+            if (req.Remember[i] && KbdAuth.CanRemember(rest[i].Request.Trim(), rest[i].IsEchoed, answer))
                 prompter.RememberAnswer?.Invoke(rest[i].Request.Trim(), answer);
         }
+        // PAM 이 keyboard-interactive 로 비밀번호 변경을 요구함 ("New password:" → "Retype new password:") —
+        // 두 값이 같으면 연결 성공 뒤 저장된 비밀번호를 새 값으로 갱신하도록 기록 (질문이 여러 번에 나뉘어 와도 State 가 이어 준다)
+        if (KbdAuth.TrackNewPassword(state, answered) is { } newPassword) prompter.NewPassword = newPassword;
     }
 
     /// <summary>서버가 비밀번호 만료를 알림 (SSH_MSG_USERAUTH_PASSWD_CHANGEREQ) — 대화형이면 새 비밀번호를 받는다</summary>
@@ -240,6 +311,16 @@ public static class SshAuth
     /// </summary>
     private static PrivateKeyFile? LoadKey(HostEntry host, string password)
     {
+        // 키 암호가 틀림·파일 없음 등은 연결 실패가 아니다 — 구분해서 자동 재연결하지 않게
+        try { return LoadKeyCore(host, password); }
+        catch (Exception ex) when (ex is not SshKeyLoadException)
+        {
+            throw new SshKeyLoadException(L.F("SSH 키를 읽지 못했습니다 — {0}", ex.Message), ex);
+        }
+    }
+
+    private static PrivateKeyFile? LoadKeyCore(HostEntry host, string password)
+    {
         if (!string.IsNullOrEmpty(host.KeyMaterial))
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(host.KeyMaterial);
@@ -266,7 +347,9 @@ public static class SshAuth
     public static bool HasDefaultKeyFiles()
     {
         var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
-        return DefaultKeyNames.Any(n => System.IO.File.Exists(System.IO.Path.Combine(dir, n))) || SshAgent.ListKeys().Count > 0;
+        if (DefaultKeyNames.Any(n => System.IO.File.Exists(System.IO.Path.Combine(dir, n)))) return true;
+        // UI 스레드에서도 불린다 — 에이전트 파이프가 없으면 묻지 않고, 있어도 짧게만 기다린다 (잠긴·확인 대기 에이전트에 멈추지 않게)
+        return SshAgent.PipeExists() && SshAgent.ListKeys(SshAgent.ListTimeoutMs).Count > 0;
     }
 
     public static IPrivateKeySource[] LoadDefaultKeys()
@@ -321,6 +404,8 @@ public static class KbdAuth
     {
         /// <summary>이번 연결에서 저장된 비밀번호를 이미 답했음 — 또 물으면 틀렸다는 뜻이라 같은 값을 다시 보내지 않는다(계정 잠금 방지)</summary>
         public bool PasswordUsed;
+        /// <summary>keyboard-interactive 비밀번호 변경에서 "New password:" 에 답한 값 (확인 질문과 같으면 새 비밀번호로 확정)</summary>
+        public string? PendingNewPassword;
     }
 
     private static readonly Regex PasswordWord = new(@"password|passwd|passwort|kennwort|mot de passe|contraseña|비밀\s*번호|암호|パスワード|密码|密碼",
@@ -337,6 +422,64 @@ public static class KbdAuth
     /// 가려진 질문의 실제 값(OTP 코드·비밀번호)은 기억하지 않는다.
     /// </summary>
     public static bool CanUseRemembered(bool echoed, string answer) => echoed || answer.Length == 0;
+
+    // OTP·토큰·인증 코드·PIN·비밀번호처럼 답이 비밀인 질문 (화면에 보이게 묻더라도 — Duo 의 "Passcode or option (1-3):" 등)
+    private static readonly Regex SecretPrompt = new(
+        @"\botp\b|one[- ]?time|token|\bcode\b|passcode|\bpin\b|2fa|mfa|authenticator|verif|" +
+        @"password|passwd|passwort|kennwort|일회용|인증\s*(번호|코드)|토큰|보안\s*코드|비밀\s*번호|암호|パスワード|密码|密碼",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex LongDigits = new(@"\d{6,}", RegexOptions.CultureInvariant);
+    private static readonly Regex ShortOption = new(@"^\d{1,2}$", RegexOptions.CultureInvariant);
+    // 선택지 단어 ("push"·"sms"·"phone" — Duo 의 "Passcode or option" 에 숫자 대신 넣는 말). 글자만, 8자 이하
+    private static readonly Regex OptionWord = new(@"^[A-Za-z]{1,8}$", RegexOptions.CultureInvariant);
+    // 선택지를 고르라는 질문 — 이런 질문에서만 선택지 단어를 기억한다 ("Enter OTP:"·"Password:" 의 글자 답은 기억하지 않음)
+    private static readonly Regex OptionPrompt = new(@"\boption|\bchoose|\bchoice|\bselect|\bmethod|\[\d\]|\(\d+\s*-\s*\d+\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex PasswordOnlyPrompt = new(@"password|passwd|passwort|kennwort|비밀\s*번호|암호|パスワード|密码|密碼", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 이 질문의 답을 기억하거나, 기억한 답을 써도 되는가. CanUseRemembered 에 더해
+    /// 6자리 이상 숫자(OTP 코드)는 기억하지 않고, OTP·토큰·코드·비밀번호를 묻는 질문은 짧은 선택지 번호("1" = Push 등)와
+    /// 선택지를 고르라는 질문의 짧은 선택지 단어("push"·"sms" 등, 비밀번호 질문 제외)만 기억한다.
+    /// </summary>
+    public static bool CanRemember(string prompt, bool echoed, string answer)
+    {
+        if (!CanUseRemembered(echoed, answer)) return false;
+        if (answer.Length == 0) return true;   // "Press enter to continue"
+        if (LongDigits.IsMatch(answer)) return false;
+        if (!SecretPrompt.IsMatch(prompt)) return true;
+        var a = answer.Trim();
+        return ShortOption.IsMatch(a) ||
+               (OptionWord.IsMatch(a) && OptionPrompt.IsMatch(prompt) && !PasswordOnlyPrompt.IsMatch(prompt));
+    }
+
+    private static readonly Regex NewWord = new(@"\bnew\b|새\s*(비밀|암호)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex ConfirmWord = new(@"re-?enter|re-?type|again|confirm|repeat|verify|다시|확인", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>새 비밀번호를 묻는 질문인가 ("New password:", "새 비밀번호:") — 확인 질문은 제외</summary>
+    public static bool IsNewPasswordPrompt(string request) =>
+        PasswordWord.IsMatch(request) && NewWord.IsMatch(request) && !ConfirmWord.IsMatch(request);
+
+    /// <summary>새 비밀번호 확인 질문인가 ("Retype new password:", "새 비밀번호 확인:")</summary>
+    public static bool IsConfirmPasswordPrompt(string request) =>
+        PasswordWord.IsMatch(request) && ConfirmWord.IsMatch(request);
+
+    /// <summary>
+    /// 사용자가 답한 질문들로 keyboard-interactive 비밀번호 변경을 추적한다. 새 비밀번호와 확인 값이 같으면 그 값, 아니면 null.
+    /// 질문이 한 번에 오든 여러 번에 나뉘어 오든(State 에 이어 둠) 동작한다.
+    /// </summary>
+    public static string? TrackNewPassword(State state, IReadOnlyList<(string Prompt, string Answer)> answered)
+    {
+        string? confirmed = null;
+        foreach (var (prompt, answer) in answered)
+        {
+            if (IsConfirmPasswordPrompt(prompt))
+            {
+                if (state.PendingNewPassword is { Length: > 0 } pending && answer == pending) confirmed = answer;
+            }
+            else if (IsNewPasswordPrompt(prompt)) state.PendingNewPassword = answer;
+        }
+        return confirmed;
+    }
 
     /// <summary>로그인 비밀번호를 묻는 질문인가 ("Password:", "(current) UNIX password:", "비밀번호:")</summary>
     public static bool IsPasswordPrompt(string request) =>

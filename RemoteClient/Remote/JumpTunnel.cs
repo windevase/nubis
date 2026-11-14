@@ -38,9 +38,21 @@ public sealed class JumpTunnel : IDisposable
             throw new JumpTunnelException(L.T("점프 서버로 지정한 호스트가 목록에 없습니다 (삭제됨). 호스트 편집에서 점프 서버를 다시 고르세요."), JumpFailure.Config);
         if (string.IsNullOrWhiteSpace(jump.Username))
             throw new JumpTunnelException(L.F("점프 서버 '{0}' 에 저장된 사용자명이 없습니다 (호스트·Vault 에 계정을 저장하세요).", jump.DisplayName), JumpFailure.Config);
-        var client = new SshClient(SshAuth.Build(jump, jump.Username, jump.Password, prompter: prompter)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+        ConnectionInfo info;
+        try { info = SshAuth.Build(jump, jump.Username, jump.Password, prompter: prompter); }
+        catch (SshKeyLoadException ex)
+        {
+            // 점프 서버의 키를 읽지 못함 (키 암호 틀림 등) — 설정 문제라 다시 시도하지 않는다
+            throw new JumpTunnelException(L.F("점프 서버 '{0}' — {1}", jump.DisplayName, ex.Message), JumpFailure.Config, ex);
+        }
+        var client = new SshClient(info) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
         string? keyError = null;
-        client.HostKeyReceived += (_, e) => e.CanTrust = (keyError = verifyHostKey(jump, e)) == null;
+        var keyReceived = false;
+        client.HostKeyReceived += (_, e) =>
+        {
+            keyReceived = true;
+            e.CanTrust = (keyError = verifyHostKey(jump, e)) == null;
+        };
         prompter?.Attach(client);
         try { client.Connect(); }
         catch (Exception ex)
@@ -52,11 +64,19 @@ public sealed class JumpTunnel : IDisposable
             if (ex is AuthPromptCancelledException || prompter?.Cancelled == true)
                 throw ex as AuthPromptCancelledException ?? new AuthPromptCancelledException(ex.Message);
             var reason = keyError ?? ex.Message;
-            if (keyError != null)
-                throw new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 호스트키 확인 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), JumpFailure.HostKey, ex);
-            if (ex is SshAuthenticationException)
-                throw new JumpTunnelException(L.F("점프 서버 '{0}' 인증 실패 — {1}", jump.DisplayName, reason), JumpFailure.Auth, ex);
-            throw new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 연결 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), JumpFailure.Network, ex);
+            // 비밀번호·OTP 답을 보낸 뒤의 끊김·시간 초과(OTP·Push 대기 초과, MaxAuthTries 등)는 네트워크 실패가 아니다 —
+            // 다시 시도하면 점프 서버에 비밀번호·새 Push 가 또 나가 계정이 잠길 수 있다.
+            // 키를 신뢰했지만 인증을 시작하기 전(호스트키 확인 창을 오래 띄워 키 교환 시간 초과, 공개키만 시도 중 끊김)은 네트워크 실패로 본다.
+            // 비대화형(prompter 없음)은 인증 시작 여부를 알 수 없으므로 호스트키를 받은 뒤면 인증 단계로 본다 (예전 방식)
+            var authStarted = prompter != null ? prompter.AuthStarted : keyReceived;
+            var kind = SshFailure.JumpKind(ex, keyError != null, authStarted);
+            throw kind switch
+            {
+                JumpFailure.HostKey => new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 호스트키 확인 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), kind, ex),
+                JumpFailure.Auth => new JumpTunnelException(L.F("점프 서버 '{0}' 인증 실패 — {1}", jump.DisplayName, reason), kind, ex),
+                JumpFailure.AuthPhase => new JumpTunnelException(L.F("점프 서버 '{0}' 인증 중 연결이 끊기거나 시간이 초과되었습니다 — {1}", jump.DisplayName, reason), kind, ex),
+                _ => new JumpTunnelException(L.F("점프 서버 '{0}' ({1}) 연결 실패 — {2}", jump.DisplayName, $"{jump.Address}:{jump.Port}", reason), kind, ex),
+            };
         }
         prompter?.Detach(client);
 
@@ -92,8 +112,10 @@ public enum JumpFailure
     HostKey,
     /// <summary>점프 서버 인증 실패</summary>
     Auth,
-    /// <summary>점프 서버에 연결하지 못함 (네트워크)</summary>
+    /// <summary>점프 서버에 연결하지 못함 (네트워크, 인증을 시작하기 전 — 호스트키 확인 창 대기 중 키 교환 시간 초과 포함)</summary>
     Network,
+    /// <summary>인증을 시작한 뒤(비밀번호·OTP 답을 보냄) 끊김·시간 초과 — 다시 시도하면 비밀번호·Push 가 또 나가므로 자동으로 다시 시도하지 않는다</summary>
+    AuthPhase,
 }
 
 /// <summary>
@@ -104,6 +126,6 @@ public sealed class JumpTunnelException(string message, JumpFailure kind, Except
 {
     public JumpFailure Kind { get; } = kind;
     public bool IsAuth => Kind == JumpFailure.Auth;
-    /// <summary>다시 시도해도 같은 결과일 실패 (자동 재연결하지 않음): 계정 없음·호스트키·인증</summary>
+    /// <summary>다시 시도해도 같은 결과이거나 다시 시도하면 위험한 실패 (자동 재연결하지 않음): 계정 없음·호스트키·인증·인증 단계 끊김</summary>
     public bool IsPermanent => Kind != JumpFailure.Network;
 }

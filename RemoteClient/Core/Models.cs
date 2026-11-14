@@ -239,12 +239,24 @@ public sealed class HostEntry : INotifyPropertyChanged
         // 점프 서버(바뀐 점프 서버 계정·주소 포함)는 계정 변경 여부와 상관없이 늘 최신으로
         Jump = fresh.Jump;
         JumpHostId = fresh.JumpHostId;
-        var changed = Username != fresh.Username || ProtectedPassword != fresh.ProtectedPassword || KeyPath != fresh.KeyPath ||
+        // 비밀번호는 풀어서 비교한다 — DPAPI 암호문은 같은 비밀번호도 암호화할 때마다 달라 "바뀜" 으로 잘못 판단했다
+        var changed = Username != fresh.Username || !SamePassword(ProtectedPassword, fresh.ProtectedPassword) || KeyPath != fresh.KeyPath ||
                       KeyMaterial != fresh.KeyMaterial || KeyPassphrase != fresh.KeyPassphrase || VaultId != fresh.VaultId;
         if (!changed) return false;
         (Username, ProtectedPassword, KeyPath, KeyMaterial, KeyPassphrase, VaultId) =
             (fresh.Username, fresh.ProtectedPassword, fresh.KeyPath, fresh.KeyMaterial, fresh.KeyPassphrase, fresh.VaultId);
         return true;
+    }
+
+    /// <summary>
+    /// 두 DPAPI 암호문이 같은 비밀번호인지 (암호문이 같으면 풀지 않는다).
+    /// 어느 한쪽이라도 풀리지 않으면(다른 PC 데이터 등) 둘 다 "" 가 되어 같다고 잘못 보지 않게 암호문 문자열로 비교한다.
+    /// </summary>
+    internal static bool SamePassword(string? protectedA, string? protectedB)
+    {
+        if ((protectedA ?? "") == (protectedB ?? "")) return true;
+        if (!Secret.TryUnprotect(protectedA, out var a) || !Secret.TryUnprotect(protectedB, out var b)) return false;   // 암호문이 다르고 풀 수 없음 → 다름
+        return a == b;
     }
 
     /// <summary>접속할 때 쓰는 계정이 어디서 왔는지 (터미널 첫 줄·카드 툴팁 표시용). 사용자명이 없으면 null</summary>
