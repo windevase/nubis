@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability / 보안 취약점 신고
+    url: https://github.com/windevase/nubis/security/advisories/new
+    about: Please report security problems privately, not as a public issue. / 보안 문제는 공개 이슈 대신 비공개로 신고해 주세요.
+  - name: User Guide / 사용자 가이드
+    url: https://github.com/windevase/nubis/blob/main/docs/guide.md
+    about: Every feature and setting explained. / 모든 기능과 설정 설명.

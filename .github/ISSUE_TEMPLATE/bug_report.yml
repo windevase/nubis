@@ -1,0 +1,60 @@
+name: Bug report / 버그 신고
+description: Something doesn't work as expected. / 기대와 다르게 동작합니다.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problems: do not file them here** — see [SECURITY.md](https://github.com/windevase/nubis/blob/main/SECURITY.md).
+        Remove passwords, keys, tokens and real server addresses from everything below.
+        **보안 문제는 여기에 올리지 마세요** — [SECURITY.md](https://github.com/windevase/nubis/blob/main/SECURITY.md) 를 따라 주세요. 아래 내용에서 비밀번호·키·토큰·실제 서버 주소는 지워 주세요.
+  - type: input
+    id: version
+    attributes:
+      label: Nubis version / 버전
+      description: Shown at the bottom of the sidebar. / 사이드바 맨 아래에 있습니다.
+      placeholder: "0.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area / 영역
+      options:
+        - SSH terminal / SSH 터미널
+        - SFTP panel / SFTP 패널
+        - RDP
+        - Claude panel / Claude 패널
+        - Cloud sync / 클라우드 동기화
+        - Hosts · Vault / 호스트 · Vault
+        - Sign-in screen / 시작 화면 로그인
+        - Other / 기타
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / 무슨 일이 있었나요?
+      description: What you expected and what happened instead. / 기대한 동작과 실제 동작.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce / 재현 방법
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment / 환경
+      description: Windows version, server OS (e.g. Ubuntu 24.04, Windows Server 2022), auth method (password · key · ssh-agent · OTP/MFA · jump host). / Windows 버전, 서버 OS, 인증 방식.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots / 로그·화면
+      description: Terminal messages or screenshots — with secrets removed. / 비밀 값은 지우고 첨부해 주세요.
