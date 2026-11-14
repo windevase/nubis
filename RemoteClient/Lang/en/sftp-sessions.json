@@ -118,6 +118,9 @@
   "SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}": "Could not open SFTP as {0}, opening as {1} instead — {2}",
   "터미널이 {0} 로 전환되어 SFTP 도 {0} 권한으로 엽니다.": "The terminal switched to {0}, so SFTP will also be opened as {0}.",
   "sudo 비밀번호": "sudo password",
+  "(저장된 비밀번호로 답함)": "(answered with the saved password)",
+  "(입력 창)": "(input window)",
+  "저장된 비밀번호로 답했는데 서버가 거부했습니다. 이 호스트(또는 연결된 Vault 계정)의 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다.": "The server rejected the saved password. Check the password for this host (or its linked Vault account). Repeated failures can lock the account.",
   "[sudo] {0} 의 비밀번호": "[sudo] password for {0}",
   "터미널을 따라 sudo 로 이 사용자 권한으로 열었습니다. 올린 파일의 소유자도 이 사용자가 됩니다.": "Opened as this user with sudo, following the terminal. Uploaded files will also be owned by this user."
 }

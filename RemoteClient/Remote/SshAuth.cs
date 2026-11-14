@@ -32,6 +32,12 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
     public string? NewPassword { get; internal set; }
 
     /// <summary>
+    /// 마지막으로 받은 인증 질문에 저장된 비밀번호로만 답했음 — 이 상태로 인증이 실패했으면
+    /// 다음 질문(OTP 등)까지 가지 못하고 저장된 비밀번호가 거부된 것이다.
+    /// </summary>
+    public bool LastAnsweredWithSavedPassword { get; internal set; }
+
+    /// <summary>
     /// Connect 전에 호출. 키 교환이 끝나 호스트키를 받은 뒤(= TCP 연결·키 교환 타임아웃은 그대로 둔 채)
     /// 인증 단계의 대기 시간만 늘린다. SSH.NET 은 인증 응답을 ConnectionInfo.Timeout 만큼만 기다린다.
     /// </summary>
@@ -88,6 +94,20 @@ public static class SshAuth
         var rest = prompts.Where((_, i) => auto[i] == null).ToList();
         for (var i = 0; i < prompts.Count; i++)
             if (auto[i] != null) prompts[i].Response = auto[i];
+
+        if (prompter != null)
+        {
+            // OpenSSH 처럼 서버의 질문을 터미널에 보여준다 — 어느 단계에서 실패했는지 알 수 있게 (답한 값은 쓰지 않음)
+            prompter.LastAnsweredWithSavedPassword = rest.Count == 0 && prompts.Count > 0;
+            if (prompter.Banner is { } show)
+            {
+                var lines = new List<string>();
+                if (!string.IsNullOrWhiteSpace(e.Instruction)) lines.Add(e.Instruction.Trim());
+                for (var i = 0; i < prompts.Count; i++)
+                    lines.Add(prompts[i].Request.Trim() + "  " + (auto[i] != null ? L.T("(저장된 비밀번호로 답함)") : L.T("(입력 창)")));
+                if (lines.Count > 0) show(string.Join("\n", lines));
+            }
+        }
         if (rest.Count == 0) return;
 
         if (prompter == null)

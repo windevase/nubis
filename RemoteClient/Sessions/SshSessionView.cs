@@ -278,16 +278,16 @@ public sealed class SshSessionView : UserControl, ISessionView
 
         _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ...");
         var (cols, rows) = (_term.Cols, _term.Rows);
+        var target = $"{user}@{_host.DisplayName} ({_host.Address})";
+        // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)·질문 진행은 터미널에 보여준다
+        var prompter = new AuthPrompter(
+            req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
+            banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
 
         try
         {
             _hostKeyAccepted = false;
             _hostKeyRejected = false;
-            var target = $"{user}@{_host.DisplayName} ({_host.Address})";
-            // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)은 터미널에 보여준다
-            var prompter = new AuthPrompter(
-                req => Dispatcher.Invoke(() => AuthPromptDialog.Ask(Window.GetWindow(this), target, req)),
-                banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
             await Task.Run(() =>
             {
                 var client = new SshClient(SshAuth.Build(_host, user, password, prompter: prompter)) { KeepAliveInterval = TimeSpan.FromSeconds(30) };
@@ -363,7 +363,9 @@ public sealed class SshSessionView : UserControl, ISessionView
             // 저장된 비밀번호가 바뀐 경우 등: 다음 시도에서 계정을 다시 묻는다
             _askCredentials = true;
             _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
-            if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
+            if (prompter.LastAnsweredWithSavedPassword)
+                _term.Info(L.T("저장된 비밀번호로 답했는데 서버가 거부했습니다. 이 호스트(또는 연결된 Vault 계정)의 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다."), "33");
+            else if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
             _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
