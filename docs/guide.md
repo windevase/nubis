@@ -87,8 +87,9 @@ Click **NEW HOST** to open the editor panel.
 | Name | The name shown on the card (the address if left blank) |
 | Group | The name cards are grouped under (for example, Production). Use the ▾ button next to it to pick an existing group so typos don't split groups (names that differ only in case are shown as one group) |
 | Sign-in account | Pick a [Vault](#7-vault--shared-accounts) account to sign in with its username, password and key. If you don't pick one, the [default account](#73-default-accounts-and-group-assignment) is used (the editor shows which one) |
-| Username · Password | Entered directly. If you picked a Vault account, **leave these blank to use the Vault values; anything you type here wins** |
-| Private key file (SSH) | OpenSSH, PuTTY (.ppk) or PEM key file. The key passphrase is taken from the password field |
+| Username · Password | Entered directly. **When you pick a Vault account these fields are hidden and the Vault account takes priority** (the username field shows only if the Vault account has none). Hidden values are not deleted — clear the Vault account and they reappear and are used again |
+| Private key file (SSH) | OpenSSH, PuTTY (.ppk) or PEM key file. The key passphrase is taken from the password field. Without a key, Nubis tries `id_ed25519` · `id_ecdsa` · `id_rsa` in `~/.ssh` first, like OpenSSH (keys with a passphrase are skipped) |
+| RD Gateway (RDP) | Only for servers reached through an RD Gateway. Leave blank to follow the gateway in the mstsc defaults (`Default.rdp`). The same account signs in to the gateway |
 
 Click **Save** (`Ctrl+S`) or **Save and connect**. Passwords are encrypted with Windows DPAPI before they are stored. If the address or port is invalid, the reason appears at the bottom of the editor. If you close the editor with unsaved changes (`Esc`, clicking outside, or X), Nubis asks before discarding them. **Duplicate** on the card menu adds the copy only when you click Save.
 
@@ -133,7 +134,7 @@ Pick exactly the hosts you want, regardless of group, and change them in one go.
 |---|---|
 | Vault account | Assign an account, or clear it (use the default account) |
 | Clear entered credentials | Removes usernames, passwords and key files entered on the hosts so the Vault account is used |
-| Username · Port | Overwritten as entered (a username wins over the Vault account). You are warned when SSH and RDP are mixed |
+| Username · Port | Overwritten as entered (on hosts with a chosen Vault account, the username is used only if that account has none). You are warned when SSH and RDP are mixed |
 | Group | Manually added hosts only (cloud hosts are grouped by profile). ▾ picks an existing group |
 | Connect via | Private / public IP — hosts that have a public IP only |
 | Favorite | Add / remove |
@@ -155,7 +156,7 @@ Accounts, ports and IP choice are not applied to local PowerShell entries. An ac
 
 To send `Ctrl+C` / `Ctrl+V` straight to the shell instead, turn them off under Settings → Terminal.
 
-- **Host keys** — the key of a server you connect to for the first time is saved and trusted (you can turn on a confirmation prompt in Settings). **If the key differs from the saved one, Nubis always warns you.** If you reinstalled the server and its key changed, delete the old key in [Known Hosts](#122-known-hosts) and connect again.
+- **Host keys** — the key of a server you connect to for the first time is saved and trusted (you can turn on a confirmation prompt in Settings). **If the key differs from the saved one, Nubis always warns you.** Nubis also reads OpenSSH's `~/.ssh/known_hosts` (read-only): servers you already trust in `ssh` are not asked about, and a key that differs from the one `ssh` knows is warned about like a changed key (`@revoked` keys are rejected). If you reinstalled the server and its key changed, delete the old key in [Known Hosts](#122-known-hosts) and connect again.
 - **Theme · font · syntax highlighting** — set these in [Settings → Terminal](#112-terminal). Changes apply to open terminals right away.
 - **OTP · additional authentication** — when the server asks for more than a password, such as an OTP (verification code), Nubis shows an input window with the server's own wording. The saved password is sent only to a password question, and only once per connection — if the server asks again, Nubis shows the input window instead of resending the same password (avoids account lockout). Servers that require a key plus an OTP, and servers that require an expired password to be changed, are also handled during sign-in. The server's pre-login notice (banner) is shown in the terminal.
 - **Authentication failure hints** — Nubis looks at which methods the server allows (for example, keys only) and tells you the likely cause.
@@ -219,6 +220,7 @@ Nubis hosts the Windows built-in Remote Desktop engine (`mstscax`, the same one 
 - Usernames in `DOMAIN\user` form are supported.
 - When you resize the window, the remote resolution follows (Windows 8.1 / Server 2012 R2 or later).
 - Connection quality, color depth, visual effects, redirection (clipboard, printers, drives, smart cards), sound, Windows-key passthrough and auto-reconnect all follow **mstsc's default settings file, `Documents\Default.rdp`**. Defaults you change in mstsc also apply to Nubis.
+- **RD Gateway** — set it in the host editor's RD Gateway field; when blank, the gateway settings in `Default.rdp` are used.
 - Only the server certificate warning follows a Nubis setting ([Settings → RDP](#117-claude--rdp)).
 - While the RDP screen has focus, `Ctrl+Tab` goes to the remote computer. Click a tab to switch.
 - **Full screen** — right-click the tab → Full screen. The remote resolution matches the monitor, and in full screen the Windows key and Alt+Tab go to the remote computer. Use the connection bar at the top to come back.
@@ -249,7 +251,7 @@ Host editor → **Sign-in account** → **Choose a Vault account**. The card sho
 
 | Rule | Behavior |
 |---|---|
-| Priority | The host's chosen Vault account or its own values > the cloud profile's default Vault account > the profile's default username/password > the default Vault account in Settings > asked when you connect |
+| Priority | The host's chosen Vault account > values entered on the host > the cloud profile's default Vault account > the profile's default username/password > the default Vault account in Settings > asked when you connect |
 | RDP | Uses the username and password only (the key is ignored) |
 | Changing values | Applies to every host that uses the account |
 | Password changed on the server | Enter and save the new password when connecting; the Vault account is updated |
