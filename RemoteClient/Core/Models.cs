@@ -118,7 +118,9 @@ public sealed class HostEntry : INotifyPropertyChanged
                 if (IsStopped) parts.Add(CloudState!.ToLowerInvariant());
                 return string.Join(" · ", parts);
             }
-            if (!string.IsNullOrWhiteSpace(Username)) parts.Add(Username);
+            // 실제로 로그인하는 사용자명 — 직접 고른 Vault 계정에 사용자명이 있으면 그 값 (호스트에 숨겨진 값이 아니라)
+            var user = VaultStore.Get(VaultId) is { } v && !string.IsNullOrWhiteSpace(v.Username) ? v.Username : Username;
+            if (!string.IsNullOrWhiteSpace(user)) parts.Add(user);
             var addr = UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress;
             if (!string.IsNullOrWhiteSpace(Label)) parts.Add(Port == DefaultPort(Protocol) ? addr : $"{addr}:{Port}");
             return string.Join(", ", parts);

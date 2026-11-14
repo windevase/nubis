@@ -88,10 +88,10 @@ public static class SshAuth
             sources.AddRange(LoadDefaultKeys());
             if (sources.Count > 0) methods.Add(new PrivateKeyAuthenticationMethod(user, sources.ToArray()));
         }
+        var state = new KbdAuth.State();
         if (!string.IsNullOrEmpty(password) || prompter != null)
         {
             var kbd = new KeyboardInteractiveAuthenticationMethod(user);
-            var state = new KbdAuth.State();
             kbd.AuthenticationPrompt += (_, e) => Answer(e, password, state, prompter);
             methods.Add(kbd);
         }
@@ -99,13 +99,39 @@ public static class SshAuth
         {
             var pw = new PasswordAuthenticationMethod(user, password);
             pw.PasswordExpired += (_, e) => e.NewPassword = System.Text.Encoding.UTF8.GetBytes(AskNewPassword(prompter));
-            methods.Add(pw);
+            methods.Add(new PasswordUnlessSent(pw, state));
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
         var ci = new ConnectionInfo(tunnel?.LocalHost ?? host.Address, tunnel?.LocalPort ?? host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
         if (prompter?.Banner is { } banner)
             ci.AuthenticationBanner += (_, e) => { if (!string.IsNullOrWhiteSpace(e.BannerMessage)) banner(e.BannerMessage); };
         return ci;
+    }
+
+    /// <summary>
+    /// password 방식: 같은 연결에서 keyboard-interactive 로 이미 이 비밀번호를 보냈다가 실패했으면 다시 보내지 않고 멈춘다.
+    /// 그대로 두면 2단계 인증 서버에서 Push 시간 초과·OTP 오류 뒤 같은 비밀번호가 password 방식으로 한 번 더 나가
+    /// (그 서버에서는 성공할 수 없음) 실패 횟수만 두 배로 쌓여 계정이 빨리 잠긴다.
+    /// keyboard-interactive 를 허용하지 않는 서버(password 만)에서는 그대로 password 방식으로 보낸다.
+    /// </summary>
+    private sealed class PasswordUnlessSent(PasswordAuthenticationMethod inner, KbdAuth.State state) : AuthenticationMethod(inner.Username)
+    {
+        public override string Name => inner.Name;
+
+        public override AuthenticationResult Authenticate(Session session)
+        {
+            if (state.PasswordUsed)
+                throw new SshAuthenticationException("Permission denied (keyboard-interactive).");
+            var result = inner.Authenticate(session);
+            AllowedAuthentications = inner.AllowedAuthentications;
+            return result;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     /// <summary>keyboard-interactive 질문 응답: 로그인 비밀번호 질문은 저장된 비밀번호로(한 번만), 나머지는 사용자에게</summary>
