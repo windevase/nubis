@@ -87,16 +87,18 @@ public class HostFix2Tests
         {
             File.Delete(bak);
             File.WriteAllText(path, "{ broken");
-            var warningsBefore = SafeFile.LoadWarnings.Count;
+            // LoadWarnings 는 병렬로 도는 다른 테스트도 쓰므로 known_hosts 경고만 센다
+            int Mine() { lock (SafeFile.LoadWarnings) return SafeFile.LoadWarnings.Count(w => w.Contains("known_hosts") || w.Contains("호스트키")); }
+            var warningsBefore = Mine();
 
             Assert.Equal(KnownHostStore.UnavailableMark, KnownHostStore.Get("10.0.0.1:22"));
             Assert.True(KnownHostStore.LoadFailed);
-            var warningsAfterFirst = SafeFile.LoadWarnings.Count;
+            var warningsAfterFirst = Mine();
             Assert.True(warningsAfterFirst > warningsBefore);
             // 같은 파일이면 다시 읽지 않는다 (.corrupt 사본·경고가 Get 마다 늘지 않음)
             var corruptCount = Directory.GetFiles(AppPaths.DataDir, "known_hosts.json.corrupt-*").Length;
             Assert.Equal(KnownHostStore.UnavailableMark, KnownHostStore.Get("10.0.0.2:22"));
-            Assert.Equal(warningsAfterFirst, SafeFile.LoadWarnings.Count);
+            Assert.Equal(warningsAfterFirst, Mine());
             Assert.Equal(corruptCount, Directory.GetFiles(AppPaths.DataDir, "known_hosts.json.corrupt-*").Length);
 
             // 확인 창으로 신뢰한 키는 이번 실행에서만 기억하고, 손상된 원본 위에 쓰지 않는다
