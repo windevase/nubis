@@ -77,10 +77,43 @@ public class KbdAuthTests
     // password 를 먼저 시도하면 2단계 인증(PAM OTP·Push)을 keyboard-interactive 로만 받는 서버에서
     // password 실패 뒤 keyboard-interactive 까지 거부된다 — OpenSSH 와 같은 순서여야 한다
     [Fact]
-    public void 인증_방식은_키보드_인터랙티브를_비밀번호보다_먼저_시도한다()
+    public void 인증_방식은_키보드_인터랙티브를_비밀번호보다_먼저_시도한다() => WithKeyDir(dir =>
     {
         var ci = SshAuth.Build(new HostEntry { Address = "h", Port = 22, Protocol = Protocol.Ssh }, "u", "pw");
         Assert.Equal(["keyboard-interactive", "password"], ci.AuthenticationMethods.Select(m => m.Name).ToArray());
+    });
+
+    // OpenSSH 처럼 키를 지정하지 않으면 ~/.ssh 의 기본 키를 먼저 시도 — 암호 걸린 키는 묻지 않고 건너뛴다
+    [Fact]
+    public void 키를_지정하지_않으면_기본_키를_먼저_시도한다() => WithKeyDir(dir =>
+    {
+        Assert.False(SshAuth.HasDefaultKeyFiles());
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "id_rsa"), TestKeys.Rsa);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "id_ecdsa"), TestKeys.RsaEncrypted);   // 암호 걸림 → 건너뜀
+        Assert.True(SshAuth.HasDefaultKeyFiles());
+        Assert.Single(SshAuth.LoadDefaultKeys());
+
+        var ci = SshAuth.Build(new HostEntry { Address = "h", Port = 22, Protocol = Protocol.Ssh }, "u", "pw");
+        Assert.Equal(["publickey", "keyboard-interactive", "password"], ci.AuthenticationMethods.Select(m => m.Name).ToArray());
+
+        // 호스트에 키를 지정했으면 기본 키는 쓰지 않는다 (지정한 키 하나만)
+        var withKey = new HostEntry { Address = "h", Port = 22, Protocol = Protocol.Ssh, KeyMaterial = TestKeys.Rsa };
+        var m = Assert.IsType<Renci.SshNet.PrivateKeyAuthenticationMethod>(SshAuth.Build(withKey, "u", "").AuthenticationMethods[0]);
+        Assert.Single(m.KeyFiles);
+    });
+
+    private static void WithKeyDir(System.Action<string> body)
+    {
+        var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Nubis.Tests.sshdir", System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        var old = SshAuth.DefaultKeyDir;
+        SshAuth.DefaultKeyDir = dir;
+        try { body(dir); }
+        finally
+        {
+            SshAuth.DefaultKeyDir = old;
+            try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
     }
 
     // SSH.NET 업데이트로 내부 Session 속성이 바뀌면 SFTP 가 터미널 연결을 공유하지 못하고 별도 연결(재인증)로 넘어간다

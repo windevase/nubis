@@ -69,6 +69,7 @@ public static class SshAuth
         // 다음 질문에 답하지 못해 실패하고, 그 실패 때문에 이어지는 keyboard-interactive 까지 거부된다 (OpenSSH 는 되는데 Nubis 만 실패).
         var methods = new List<AuthenticationMethod>();
         if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
+        else if (LoadDefaultKeys() is { Length: > 0 } defaults) methods.Add(new PrivateKeyAuthenticationMethod(user, defaults));
         if (!string.IsNullOrEmpty(password) || prompter != null)
         {
             var kbd = new KeyboardInteractiveAuthenticationMethod(user);
@@ -161,6 +162,37 @@ public static class SshAuth
         catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(host.KeyPath, password); }
     }
 
+    /// <summary>기본 키 폴더 (null 이면 %USERPROFILE%\.ssh). 테스트가 빈 폴더로 바꾼다</summary>
+    public static string? DefaultKeyDir { get; set; }
+
+    /// <summary>OpenSSH 가 키를 지정하지 않았을 때 시도하는 기본 키 (이 순서)</summary>
+    public static readonly string[] DefaultKeyNames = ["id_ed25519", "id_ecdsa", "id_rsa"];
+
+    /// <summary>
+    /// 호스트·Vault 에 키가 없을 때 OpenSSH 처럼 ~/.ssh 의 기본 키를 시도한다 (ssh host 는 되는데 Nubis 는 비밀번호를 묻는 차이 방지).
+    /// 암호가 걸린 키·읽을 수 없는 키는 건너뛴다 (묻지 않음 — 쓰려면 호스트나 Vault 에 키와 암호를 지정).
+    /// </summary>
+    /// <summary>기본 키 파일이 하나라도 있는가 (비밀번호가 없어도 먼저 키로 시도해 볼지)</summary>
+    public static bool HasDefaultKeyFiles()
+    {
+        var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        return DefaultKeyNames.Any(n => System.IO.File.Exists(System.IO.Path.Combine(dir, n)));
+    }
+
+    public static IPrivateKeySource[] LoadDefaultKeys()
+    {
+        var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        var keys = new List<IPrivateKeySource>();
+        foreach (var name in DefaultKeyNames)
+        {
+            var path = System.IO.Path.Combine(dir, name);
+            if (!System.IO.File.Exists(path)) continue;
+            try { keys.Add(new PrivateKeyFile(path)); }
+            catch { /* 암호가 걸렸거나 지원하지 않는 형식 */ }
+        }
+        return keys.ToArray();
+    }
+
     public static string HostKeyId(HostEntry h) => $"{h.Address}:{h.Port}";
     public static string Fingerprint(HostKeyEventArgs e) => $"{e.HostKeyName} SHA256:{e.FingerPrintSHA256}";
 
@@ -173,7 +205,19 @@ public static class SshAuth
         var id = HostKeyId(h);
         var fp = Fingerprint(e);
         var known = KnownHostStore.Get(id);
-        if (known == null) { KnownHostStore.Set(id, fp); return null; }
+        if (known == null)
+        {
+            // OpenSSH known_hosts 참고: 같은 키면 신뢰, 다른 키·폐기된 키면 거부 (비대화형이라 묻지 않는다)
+            switch (OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey))
+            {
+                case OpenSshKnownHosts.Verdict.Mismatch:
+                    return $"호스트키가 OpenSSH known_hosts 에 저장된 값과 다릅니다 ({fp}). 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
+                case OpenSshKnownHosts.Verdict.Revoked:
+                    return $"OpenSSH known_hosts 에 폐기(@revoked)된 호스트키입니다 ({fp}).";
+            }
+            KnownHostStore.Set(id, fp);
+            return null;
+        }
         if (KnownHostStore.IsRejected(known))
             return "사용자가 이 서버의 호스트키를 거부한 적이 있습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
         return known == fp ? null : $"호스트키가 저장된 값과 다릅니다 ({known} → {fp}). Known Hosts 에서 확인 후 삭제하세요.";

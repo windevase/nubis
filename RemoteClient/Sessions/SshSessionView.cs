@@ -261,7 +261,7 @@ public sealed class SshSessionView : UserControl, ISessionView
         var save = false;
 
         // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
-        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey))
+        if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey && !SshAuth.HasDefaultKeyFiles()))
         {
             var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", user, _saveCredentials != null);
             if (cred == null)
@@ -451,9 +451,26 @@ public sealed class SshSessionView : UserControl, ISessionView
         var known = KnownHostStore.Get(key);
         if (known == fp) { e.CanTrust = true; return; }
 
+        // Nubis 가 처음 보는 서버: OpenSSH 의 known_hosts 를 참고 — ssh 로 이미 신뢰한 키면 묻지 않고, 다른 키면 바뀐 키처럼 경고
+        var openSsh = known == null ? OpenSshKnownHosts.Check(_host.Address, _host.Port, e.HostKey) : OpenSshKnownHosts.Verdict.Unknown;
+        if (openSsh == OpenSshKnownHosts.Verdict.Match)
+        {
+            KnownHostStore.Set(key, fp);
+            _term.Info(L.F("OpenSSH known_hosts 에서 신뢰한 호스트키: {0} {1}", key, fp));
+            e.CanTrust = true;
+            return;
+        }
+        if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
+        {
+            _hostKeyRejected = true;
+            _term.Info(L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}", fp), "31");
+            e.CanTrust = false;
+            return;
+        }
+
         // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)
         // 저장된 키와 다른 경우(중간자 공격 가능)와 사용자가 전에 거부한 키는 아래에서 항상 묻는다
-        if (known == null && !SettingsStore.Current.SshHostKeyPrompt)
+        if (known == null && openSsh == OpenSshKnownHosts.Verdict.Unknown && !SettingsStore.Current.SshHostKeyPrompt)
         {
             KnownHostStore.Set(key, fp);
             _term.Info(L.F("새 호스트키 저장: {0} {1}", key, fp));
@@ -463,7 +480,11 @@ public sealed class SshSessionView : UserControl, ISessionView
         // 사용자가 전에 거부한 키는 "아직 신뢰 안 함" 으로 보고 다시 묻는다
         if (known != null && KnownHostStore.IsRejected(known)) known = null;
 
-        var (title, msg, detail, icon) = known == null
+        var (title, msg, detail, icon) = openSsh == OpenSshKnownHosts.Verdict.Mismatch
+            ? (L.T("호스트키가 바뀌었습니다"),
+               L.T("OpenSSH(known_hosts)에 저장된 이 서버의 키와 다릅니다. 서버를 다시 설치했거나 IP 가 다른 서버로 바뀐 경우가 아니라면 중간자 공격일 수 있습니다.\n그래도 이 키를 신뢰하고 접속할까요?"),
+               $"{key}\n{fp}", MessageBoxImage.Warning)
+            : known == null
             ? (L.T("처음 접속하는 서버입니다"),
                L.F("{0} 서버의 호스트키를 신뢰하고 저장할까요?\n다음 접속부터는 묻지 않습니다.", _host.DisplayName),
                $"{key}\n{fp}", MessageBoxImage.Question)

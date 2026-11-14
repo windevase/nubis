@@ -45,7 +45,7 @@ public static class SshExec
         var sw = Stopwatch.StartNew();
         try
         {
-            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
+            if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
                 return new ExecResult(h, false, null, "", "저장된 계정 정보가 없습니다 (호스트 또는 클라우드 프로필 설정에 계정 저장 필요)", sw.ElapsedMilliseconds);
 
             // 시도 순서: 사설 IP → 공인 IP. 연결이 안 될 때만 다음 주소로 (인증 실패·호스트키 불일치는 바로 중단)
@@ -101,7 +101,7 @@ public static class SshExec
     /// </summary>
     public static SftpClient OpenSftp(HostEntry h, int timeoutSec = 15)
     {
-        if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey))
+        if (string.IsNullOrWhiteSpace(h.Username) || (string.IsNullOrEmpty(h.Password) && !h.HasKey && !SshAuth.HasDefaultKeyFiles()))
             throw new InvalidOperationException("저장된 계정 정보가 없습니다 (호스트·Vault·클라우드 프로필 설정에 계정 저장 필요)");
         var errors = new List<string>();
         foreach (var addr in h.AddressCandidates())
