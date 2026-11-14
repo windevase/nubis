@@ -116,10 +116,14 @@ public sealed class HostEntry : INotifyPropertyChanged
         }
     }
 
+    /// <summary>클라우드 프로필 찾기 (툴팁의 계정 출처 표시용, MainWindow 가 연결)</summary>
+    public static Func<Guid?, CloudProfile?>? ProfileResolver { get; set; }
+
     [JsonIgnore]
     public string ToolTipText =>
         $"{DisplayName}\n" + L.F("사설 {0}", PrimaryAddress) + (HasPublicIp ? "   " + L.F("공인 {0}", PublicIp) : "") + $"   :{Port} ({ProtocolText})\n" +
         L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
+        (Protocol != Protocol.Local && CredentialSourceText(ProfileResolver?.Invoke(CloudProfileId)) is { } src ? L.F("로그인 계정: {0}", src) + "\n" : "") +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
         "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
 
@@ -207,6 +211,36 @@ public sealed class HostEntry : INotifyPropertyChanged
         c._highlighted = false;
         c._selected = false;
         return c;
+    }
+
+    /// <summary>
+    /// 열려 있는 탭의 접속용 사본에 저장된 호스트·Vault 의 최신 계정을 반영한다 (탭은 처음 열 때의 사본을 들고 있어,
+    /// 그 뒤에 Vault 비밀번호를 고쳐도 다시 연결할 때 예전 값을 쓰던 문제). 계정이 바뀌었으면 true.
+    /// </summary>
+    public bool RefreshCredentialsFrom(HostEntry fresh)
+    {
+        var changed = Username != fresh.Username || ProtectedPassword != fresh.ProtectedPassword || KeyPath != fresh.KeyPath ||
+                      KeyMaterial != fresh.KeyMaterial || KeyPassphrase != fresh.KeyPassphrase || VaultId != fresh.VaultId;
+        if (!changed) return false;
+        (Username, ProtectedPassword, KeyPath, KeyMaterial, KeyPassphrase, VaultId) =
+            (fresh.Username, fresh.ProtectedPassword, fresh.KeyPath, fresh.KeyMaterial, fresh.KeyPassphrase, fresh.VaultId);
+        return true;
+    }
+
+    /// <summary>접속할 때 쓰는 계정이 어디서 왔는지 (터미널 첫 줄·카드 툴팁 표시용). 사용자명이 없으면 null</summary>
+    public string? CredentialSourceText(CloudProfile? p)
+    {
+        var (id, source) = ResolveVault(p);
+        if (id != null && VaultStore.Get(id) is { } v)
+            return source switch
+            {
+                "host" => L.F("Vault 계정 '{0}'", v.Name),
+                "profile" => L.F("클라우드 프로필 기본 Vault 계정 '{0}'", v.Name),
+                _ => L.F("기본 Vault 계정 '{0}'", v.Name),
+            };
+        if (!string.IsNullOrEmpty(ProtectedPassword) || !string.IsNullOrWhiteSpace(KeyPath)) return L.T("이 호스트에 저장된 계정");
+        if (p != null && (!string.IsNullOrEmpty(p.DefaultUsername) || !string.IsNullOrEmpty(p.ProtectedDefaultPassword))) return L.T("클라우드 프로필 기본 계정");
+        return null;
     }
 
     // ----- 화면 표시용: 키보드로 고른 카드 -----

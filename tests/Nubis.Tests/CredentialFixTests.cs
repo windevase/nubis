@@ -98,6 +98,40 @@ public class CredentialFixTests
     }
 
     [Fact]
+    public void 열린_탭은_다시_연결할_때_바뀐_Vault_비밀번호를_반영한다()
+    {
+        var v = NewVault("t-refresh", "deploy", "old-pw");
+        try
+        {
+            var saved = new HostEntry { Protocol = Protocol.Ssh, Address = "10.0.0.6", VaultId = v.Id };
+            var tabCopy = saved.WithDefaults(null).Clone();
+            tabCopy.Address = "203.0.113.9";   // 탭이 공인 IP 로 바꿔 쓰던 중
+
+            Assert.False(tabCopy.RefreshCredentialsFrom(saved.WithDefaults(null)));   // 그대로면 바꾸지 않음
+            v.Password = "new-pw";
+            VaultStore.Upsert(v);
+            Assert.True(tabCopy.RefreshCredentialsFrom(saved.WithDefaults(null)));
+            Assert.Equal("new-pw", tabCopy.Password);
+            Assert.Equal("203.0.113.9", tabCopy.Address);   // 주소는 건드리지 않음
+        }
+        finally { VaultStore.Remove(v.Id); }
+    }
+
+    [Fact]
+    public void 로그인_계정의_출처를_알려준다()
+    {
+        var v = NewVault("t-source", "deploy", "pw");
+        try
+        {
+            Assert.Contains("t-source", new HostEntry { Protocol = Protocol.Ssh, VaultId = v.Id }.CredentialSourceText(null));
+            var own = new HostEntry { Protocol = Protocol.Ssh, Username = "u", Password = "p" };
+            WithDefaultSsh(null, () => Assert.NotNull(own.CredentialSourceText(null)));
+            WithDefaultSsh(null, () => Assert.Null(new HostEntry { Protocol = Protocol.Ssh }.CredentialSourceText(null)));
+        }
+        finally { VaultStore.Remove(v.Id); }
+    }
+
+    [Fact]
     public void 사용자명이_없는_Vault_계정이면_호스트의_사용자명을_쓴다()
     {
         var v = NewVault("t-no-user", "", "vault-pw");

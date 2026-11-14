@@ -28,11 +28,15 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private readonly Action<string, string>? _saveCredentials;
     private bool _pendingSave;
 
+    private readonly SessionSource? _source;
+
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
-    public RdpSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
+    /// <param name="source">저장된 호스트의 최신 계정 (다시 연결할 때 반영, 목록에 있는 호스트만)</param>
+    public RdpSessionView(HostEntry host, Action<string, string>? saveCredentials = null, SessionSource? source = null)
     {
         _host = host;
         _saveCredentials = saveCredentials;
+        _source = source;
         Background = (Brush)Application.Current.Resources["Bg"];
 
         _wfh = new WindowsFormsHost { Child = _rdp, Background = Brushes.Black };
@@ -142,6 +146,9 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private void Connect()
     {
         if (_closed) return;
+
+        // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로 다시 읽는다
+        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh)) _user = null;
 
         if (_user == null)
         {

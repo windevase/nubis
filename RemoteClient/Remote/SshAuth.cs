@@ -108,7 +108,7 @@ public static class SshAuth
                 var lines = new List<string>();
                 if (!string.IsNullOrWhiteSpace(e.Instruction)) lines.Add(e.Instruction.Trim());
                 for (var i = 0; i < prompts.Count; i++)
-                    lines.Add(prompts[i].Request.Trim() + "  " + (auto[i] != null ? L.T("(저장된 비밀번호로 답함)") : L.T("(입력 창)")));
+                    lines.Add(prompts[i].Request.Trim() + "  " + (auto[i] != null ? L.T("(비밀번호로 답함)") : L.T("(입력 창)")));
                 if (lines.Count > 0) show(string.Join("\n", lines));
             }
         }

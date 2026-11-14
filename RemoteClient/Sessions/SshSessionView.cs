@@ -46,11 +46,15 @@ public sealed class SshSessionView : UserControl, ISessionView
     private bool _watchingPrompt;
     private string? _lastPromptScreen;
 
+    private readonly SessionSource? _source;
+
     /// <param name="saveCredentials">접속 때 입력한 계정을 저장하는 콜백 (저장 가능한 호스트일 때만)</param>
-    public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null)
+    /// <param name="source">저장된 호스트의 최신 계정·출처 (다시 연결할 때 반영, 목록에 있는 호스트만)</param>
+    public SshSessionView(HostEntry host, Action<string, string>? saveCredentials = null, SessionSource? source = null)
     {
         _host = host;
         _saveCredentials = saveCredentials;
+        _source = source;
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -255,10 +259,21 @@ public sealed class SshSessionView : UserControl, ISessionView
         var gen = ++_gen;   // 이전 연결의 Closed/Error 이벤트는 무시
         DisposeSsh();
 
+        // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로.
+        // 직전에 인증이 거부돼 계정을 물을 차례여도 바뀐 값을 먼저 시도한다
+        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh))
+        {
+            _authUser = null;
+            _authPassword = null;
+            _askCredentials = false;
+            _term.Info(L.T("저장된 계정이 바뀌어 새 값으로 연결합니다."));
+        }
+
         // 다시 연결할 때는 직전에 로그인에 성공한 계정을 그대로 (접속 때 입력만 하고 저장하지 않은 경우에도 다시 묻지 않게)
         var user = _authUser ?? _host.Username;
         var password = _authUser != null ? _authPassword ?? "" : _host.Password;
         var save = false;
+        var credSource = _authUser != null ? L.T("직전에 로그인한 계정") : _source?.CredentialSource();
 
         // 사용자명/인증 수단이 없거나, 직전 시도에서 인증이 거부됐으면 물어본다
         if (_askCredentials || string.IsNullOrWhiteSpace(user) || (string.IsNullOrEmpty(password) && !_host.HasKey && !SshAuth.HasDefaultKeyFiles()))
@@ -274,9 +289,11 @@ public sealed class SshSessionView : UserControl, ISessionView
             user = cred.Value.User;
             password = cred.Value.Password;
             save = cred.Value.Save;
+            credSource = L.T("입력한 계정");
         }
 
-        _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ...");
+        // 어느 계정으로 시도하는지 보이게 (Vault · 호스트에 저장 · 입력) — 인증이 실패했을 때 무엇을 고쳐야 하는지 알 수 있게
+        _term.Info($"Connecting to {user}@{_host.Address}:{_host.Port} ..." + (credSource != null ? $"  ({credSource})" : ""));
         var (cols, rows) = (_term.Cols, _term.Rows);
         var target = $"{user}@{_host.DisplayName} ({_host.Address})";
         // 서버의 인증 질문(OTP·비밀번호 변경 등)은 사용자에게 묻고, 로그인 전 안내문(배너)·질문 진행은 터미널에 보여준다
@@ -364,7 +381,7 @@ public sealed class SshSessionView : UserControl, ISessionView
             _askCredentials = true;
             _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
             if (prompter.LastAnsweredWithSavedPassword)
-                _term.Info(L.T("저장된 비밀번호로 답했는데 서버가 거부했습니다. 이 호스트(또는 연결된 Vault 계정)의 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다."), "33");
+                _term.Info(L.F("{0} 의 비밀번호를 서버가 거부했습니다. 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다.", credSource ?? L.T("저장된 계정")), "33");
             else if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
             _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();

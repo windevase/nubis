@@ -34,6 +34,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         _hosts = HostStore.Load();
         _profiles = CloudStore.Load();
+        HostEntry.ProfileResolver = id => id == null ? null : _profiles.FirstOrDefault(p => p.Id == id);
         _sections = CloudProviders.All.Select(pr => new CloudSection
         {
             Provider = pr.Kind,
