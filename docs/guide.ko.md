@@ -470,7 +470,7 @@ Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 �
 | 도구 | 기능 |
 |---|---|
 | `list_groups` · `list_hosts` | 그룹 · 호스트 검색 |
-| `add_host` · `update_host` · `delete_host` | 호스트 추가 · 수정 · 삭제 (즐겨찾기만 바꿀 때는 승인 없음) |
+| `add_host` · `update_host` · `delete_host` | 호스트 추가 · 수정(이름·태그·주소·계정 등) · 삭제 (즐겨찾기만 바꿀 때는 승인 없음) |
 | `duplicate_host` | 호스트를 계정 설정까지 그대로 복제 |
 | `bulk_update_hosts` | 여러 호스트를 한 번에 수정 (일괄 편집과 같은 규칙) |
 | `set_group_defaults` | 그룹의 SSH/RDP Vault 계정 · 공인 IP 접속 여부 (그룹 우클릭 메뉴와 같음) |

@@ -470,7 +470,7 @@ Claude has 58 tools. Anything you can do by hand in the app, Claude can do too. 
 | Tool | Purpose |
 |---|---|
 | `list_groups` · `list_hosts` | Search groups and hosts |
-| `add_host` · `update_host` · `delete_host` | Add, change and delete hosts (starring a host needs no approval) |
+| `add_host` · `update_host` · `delete_host` | Add, change (name, tags, address, account and so on) and delete hosts (starring a host needs no approval) |
 | `duplicate_host` | Copy a host as a new one, account settings included |
 | `bulk_update_hosts` | Change several hosts at once, with the same rules as bulk edit |
 | `set_group_defaults` | A group's SSH/RDP Vault account and public-IP choice, like the group right-click menu |

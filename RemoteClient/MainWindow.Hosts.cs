@@ -176,7 +176,7 @@ public partial class MainWindow
     private static void FlashHostStatus(string text, ToastKind kind = ToastKind.Success) => Toast.Show(text, kind);
 
     /// <summary>
-    /// 검색어 한 단어가 호스트와 맞는지. 이름·주소(사설/공인)·사용자·그룹·프로토콜·인스턴스 ID·리전·OS·용도·프로필 이름.
+    /// 검색어 한 단어가 호스트와 맞는지. 이름·주소(사설/공인)·사용자·그룹·프로토콜·인스턴스 ID·리전·OS·용도·태그·프로필 이름.
     /// "vault:이름" 은 그 Vault 계정을 쓰는 호스트 (기본 계정으로 쓰는 경우 포함)
     /// </summary>
     /// <summary>검색어 한 단어로 쓰는 Vault 이름 (검색어는 공백으로 나뉘므로 공백을 _ 로)</summary>
@@ -201,7 +201,7 @@ public partial class MainWindow
             return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && VaultNameMatches(v.Name, q[6..], vaultNames);
         return Contains(h.DisplayName, q) || Contains(h.Address, q) || Contains(h.PrivateIp, q) || Contains(h.PublicIp, q) ||
                Contains(h.Username, q) || Contains(h.Group, q) || Contains(h.ProtocolText, q) ||
-               Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.Purpose, q) ||
+               Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.Purpose, q) || Contains(h.TagsText, q) ||
                Contains(profile?.GroupName, q);
     }
 

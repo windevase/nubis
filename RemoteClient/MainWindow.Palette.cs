@@ -59,7 +59,7 @@ public partial class MainWindow
                 Protocol = h.Protocol,
                 Addresses = new[] { h.Address, h.PrivateIp, h.PublicIp },
                 Group = string.IsNullOrWhiteSpace(h.Group) || h.Group == group ? group : $"{group} {h.Group}",
-                Extra = string.Join(' ', user, h.ProtocolText, h.CloudInstanceId, h.CloudRegion, h.Os, h.Purpose),
+                Extra = string.Join(' ', user, h.ProtocolText, h.CloudInstanceId, h.CloudRegion, h.Os, h.Purpose, h.TagsText),
                 LastUsed = h.LastConnected,
                 Favorite = h.Favorite,
                 HasPublicIp = h.HasPublicIp,

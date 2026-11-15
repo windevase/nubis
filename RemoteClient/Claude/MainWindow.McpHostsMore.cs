@@ -34,6 +34,7 @@ public partial class MainWindow
                 use_public_ip = new { type = "boolean" },
                 favorite = new { type = "boolean" },
                 clear_own_credentials = new { type = "boolean", description = "직접 적은 사용자명·비밀번호·키 파일 지우기 (되돌릴 수 없음)" },
+                tags = new { type = "object", additionalProperties = new { type = "string" }, description = "사용자 태그 {\"키\": \"값\"} — 넘긴 키만 바꾸고 다른 태그는 호스트마다 그대로. 값이 빈 문자열이면 그 태그를 지운다. 클라우드 호스트에도 적용" },
             }),
             a => OnUiAsync(() => BulkUpdateHostsFromClaude(a)));
 
@@ -174,7 +175,34 @@ public partial class MainWindow
             edit.ClearOwnCredentials = true;
             Add("직접 적은 사용자명·비밀번호·키 파일: 지움", L.T("직접 적은 사용자명·비밀번호·키 파일: 지움"));
         }
-        if (edit.IsEmpty) throw new McpToolException("바꿀 항목이 없습니다 (set_group · vault · username · port · use_public_ip · favorite · clear_own_credentials).");
+        if (Has(a, "tags"))
+        {
+            var t = a.GetProperty("tags");
+            if (t.ValueKind != JsonValueKind.Object) throw new McpToolException("tags 는 {\"키\": \"값\"} 객체입니다 (값이 빈 문자열이면 그 태그를 지움).");
+            var tags = new List<KeyValuePair<string, string?>>();
+            foreach (var p in t.EnumerateObject())
+                tags.Add(new(p.Name, p.Value.ValueKind switch
+                {
+                    JsonValueKind.String => p.Value.GetString(),
+                    JsonValueKind.Null => null,
+                    JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => p.Value.GetRawText(),
+                    _ => throw new McpToolException($"태그 '{p.Name}' 의 값은 문자열이어야 합니다."),
+                }));
+            if (tags.Count > 0)
+            {
+                try { BulkEdit.ValidateTags(tags); }
+                catch (ArgumentException ex) { throw new McpToolException(ex.Message); }
+                edit.Tags = tags;
+                foreach (var (k, v) in tags)
+                {
+                    var key = McpHelpers.VisibleControlChars(k.Trim());
+                    var val = v?.Trim() is { Length: > 0 } s ? s : null;
+                    Add(val != null ? $"태그 {key}: {val}" : $"태그 {key}: 지움", val != null ? L.F("태그 {0}: {1}", key, val) : L.F("태그 {0}: 지움", key));
+                }
+            }
+        }
+        if (edit.IsEmpty) throw new McpToolException("바꿀 항목이 없습니다 (set_group · vault · username · port · use_public_ip · favorite · clear_own_credentials · tags).");
+        if (edit.TagLimitError(targets) is { } tagLimit) throw new McpToolException(tagLimit);
 
         // 사본에 먼저 적용해 실제로 바뀔 호스트만 고른다 (원본은 승인 후에만)
         var changing = targets.Where(h => edit.Apply(new[] { h.Clone() }) > 0).ToList();

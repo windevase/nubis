@@ -1969,6 +1969,14 @@
                                                 ToolTip="{l:Tr '기존 그룹에서 고르기'}" AutomationProperties.Name="{l:Tr '기존 그룹에서 고르기'}"/>
                                     </Grid>
 
+                                    <!-- 사용자 태그: 한 줄에 키=값 (클라우드 동기화가 건드리지 않음) -->
+                                    <TextBlock x:Name="EdTagsLabel" Text="{l:Tr '태그 (선택)'}" Style="{StaticResource FieldLabel}"/>
+                                    <TextBox x:Name="EdTags" AutomationProperties.LabeledBy="{Binding ElementName=EdTagsLabel}" Height="76" AcceptsReturn="True"
+                                             TextWrapping="NoWrap" Padding="10,8" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"
+                                             HorizontalScrollBarVisibility="Auto" Tag="{l:Tr '한 줄에 하나씩 키=값  (예: 용도=웹 서버)'}"/>
+                                    <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
+                                               Text="{l:Tr '목록 카드에 값이 보이고 검색할 수 있습니다. 클라우드 동기화는 태그를 바꾸지 않습니다.'}"/>
+
                                     <!-- 로그인: Vault 계정(선택) + 직접 입력(비우면 Vault 값) -->
                                     <TextBlock Text="{l:Tr '로그인 계정'}" Style="{StaticResource EdSection}" Margin="0,26,0,8"/>
                                     <Border x:Name="VaultCard" Background="{StaticResource AccentSubtle}" CornerRadius="{StaticResource RadiusLg}" Padding="12,10"

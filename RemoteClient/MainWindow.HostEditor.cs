@@ -57,6 +57,7 @@ public partial class MainWindow
         EdPassword.Password = h?.Password ?? "";
         EdKey.Text = h?.KeyPath ?? "";
         EdGateway.Text = h?.RdpGateway ?? "";
+        EdTags.Text = HostTags.ToText(h?.Tags);
         _edVaultId = h?.VaultId;
         _edClearAnswers = false;
         UpdateRememberedUi(h);
@@ -91,14 +92,14 @@ public partial class MainWindow
 
     // EditorValues 의 칸 순서
     private const int FProto = 0, FAddress = 1, FPort = 2, FPublicIp = 3, FUsePublic = 4, FLabel = 5, FGroup = 6, FUser = 7,
-                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13;
+                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14;
 
     /// <summary>편집 칸 값 (칸별)</summary>
     private string[] EditorValues() => new[]
     {
         (ProtoRdp.IsChecked == true).ToString(), EdAddress.Text, EdPort.Text, EdPublicIp.Text, (EdUsePublic.IsChecked == true).ToString(),
         EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text,
-        _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "",
+        _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "", EdTags.Text,
     };
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
@@ -370,6 +371,15 @@ public partial class MainWindow
             EdPort.Focus();
             return null;
         }
+        // 태그: 한 줄에 키=값 — 잘못된 줄이 있으면 저장하지 않고 알린다 ("키=" 처럼 값이 빈 줄은 태그를 만들지 않음)
+        Dictionary<string, string>? tags;
+        try { tags = HostTags.Apply(null, HostTags.ParseText(EdTags.Text), replace: true, new List<HostTags.Change>()); }
+        catch (Exception ex) when (ex is FormatException or ArgumentException)
+        {
+            EditorError.Text = ex.Message;
+            EdTags.Focus();
+            return null;
+        }
         EditorError.Text = "";
         // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다 — 원본 호스트를 바꾸기 전에 (취소하면 아무것도 바뀌지 않게)
         if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
@@ -404,6 +414,7 @@ public partial class MainWindow
         if (changed[FPort]) h.Port = port;
         if (changed[FLabel]) h.Label = EdLabel.Text.Trim();
         if (changed[FGroup]) h.Group = EdGroup.Text.Trim();
+        if (changed[FTags]) h.Tags = tags;
 
         if (changed[FVault]) h.VaultId = _edVaultId;
         if (changed[FUser]) h.Username = EdUser.Text.Trim();

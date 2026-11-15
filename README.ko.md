@@ -28,7 +28,7 @@ SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽�
 <img src="docs/media/palette-connect.gif" alt="Ctrl+K 로 호스트를 찾아 SSH 접속, 같은 연결로 SFTP 패널이 열림" width="100%">
 
 **☁️ 클라우드 서버가 이미 목록에**
-이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI · OCI `~/.oci/config` 프로필 — `oci session authenticate` 브라우저 로그인 또는 API 키)로 AWS · Tencent Cloud · Google Cloud · Azure · Oracle Cloud(OCI) 의 서버를 프로필별로 가져옵니다. 필요할 때·앱을 켤 때·몇 분마다 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다. 그룹을 우클릭하면 그 그룹 서버 전체를 공인/사설 IP 로 바꾸거나 Vault 계정 하나를 한 번에 지정하고, 카드를 `Ctrl`/`Shift`+클릭으로 골라 계정·사용자명·포트·그룹·접속 IP·즐겨찾기를 한꺼번에 편집할 수도 있습니다.
+이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI · OCI `~/.oci/config` 프로필 — `oci session authenticate` 브라우저 로그인 또는 API 키)로 AWS · Tencent Cloud · Google Cloud · Azure · Oracle Cloud(OCI) 의 서버를 프로필별로 가져옵니다. 필요할 때·앱을 켤 때·몇 분마다 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다. 그룹을 우클릭하면 그 그룹 서버 전체를 공인/사설 IP 로 바꾸거나 Vault 계정 하나를 한 번에 지정하고, 카드를 `Ctrl`/`Shift`+클릭으로 골라 계정·사용자명·포트·그룹·접속 IP·즐겨찾기·태그를 한꺼번에 편집할 수도 있습니다. 호스트마다 `키=값` 태그(`용도=웹`, `env=prod` 등)를 자유롭게 붙일 수 있고, 카드에 보이고 검색되며 클라우드 동기화는 태그를 건드리지 않습니다.
 
 <img src="docs/media/cloud.gif" alt="프로필 그룹으로 정리된 클라우드 서버와 AWS · Tencent · GCP · Azure · OCI Cloud 페이지" width="100%">
 
