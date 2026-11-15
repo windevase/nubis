@@ -67,6 +67,23 @@ public partial class MainWindow
             });
         }
 
+        // 쿠버네티스 클러스터 — 고르면 클러스터 탭
+        foreach (var c in K8sStore.All())
+        {
+            var cluster = c;
+            items.Add(new PaletteItem
+            {
+                Kind = PaletteKind.Action,
+                Title = c.Name,
+                Subtitle = c.Endpoint,
+                Badge = "Kubernetes",
+                Glyph = "",
+                Extra = string.Join(' ', "kubernetes k8s kubectl cluster 클러스터", c.ContextName, c.Region, c.Group),
+                LastUsed = c.LastConnected,
+                Target = (Action)(() => { if (K8sStore.Get(cluster.Id) is { } cur) OpenK8sTab(cur); }),
+            });
+        }
+
         // 앱 동작 — Extra 에 한국어 원문 · 영어 낱말을 넣어 어느 언어로 쳐도 찾게
         void Act(string title, string glyph, string shortcut, string keywords, Action run) => items.Add(new PaletteItem
         {
@@ -92,6 +109,7 @@ public partial class MainWindow
         if (_profiles.Count > 0 && !_syncingAll)
             Act(L.T("모든 클라우드 동기화"), "", "", "모든 클라우드 동기화 sync all cloud refresh", () => _ = SyncAllAsync());
         Act(L.T("Cloud 페이지"), "", "", "클라우드 cloud page aws tencent gcp azure", () => ShowPage(NavCloud));
+        Act(L.T("Kubernetes 페이지"), "", "", "kubernetes k8s kubectl 클러스터 cluster kubeconfig", () => ShowPage(NavK8s));
         Act(L.T("Vault 페이지"), "", "", "vault 계정 비밀번호 키 account password key", () => ShowPage(NavVault));
         Act(L.T("Known Hosts 페이지"), "", "", "known hosts 호스트 키 host key fingerprint", () => ShowPage(NavKnown));
         Act(L.T("설정 페이지"), "", "", "설정 settings preferences options", () => ShowPage(NavSettings));

@@ -23,6 +23,7 @@ Nubis is a Windows remote-access client. It gathers your cloud and on-premises s
 13. [Data files and security](#13-data-files-and-security)
 14. [Keyboard shortcuts](#14-keyboard-shortcuts)
 15. [Troubleshooting](#15-troubleshooting)
+16. [Kubernetes](#16-kubernetes)
 
 ---
 
@@ -37,6 +38,7 @@ Nubis is a Windows remote-access client. It gathers your cloud and on-premises s
 | WebView2 | Included with Windows 10/11 (used for the terminal) |
 | Claude panel (optional) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
 | Cloud import (optional) | A credential profile for each cloud you use — the ones created by the `aws`, `tccli`, `gcloud`, `az` and `oci` CLIs |
+| Kubernetes (optional) | `kubectl` (`winget install Kubernetes.kubectl`), plus the cloud's CLI or auth plugin for cloud clusters ([16.1](#161-requirements)) |
 
 ### 1.2 Installation
 
@@ -69,7 +71,7 @@ Not sure where to start? If you use a cloud provider, begin with [importing clou
 | Area | Description |
 |---|---|
 | Title-bar tabs | The **Hosts** home tab and your open session tabs. When there are too many tabs, scroll them with the mouse wheel or use the ▾ button (**Show all tabs**). On the right: **+** (local PowerShell), **Claude** (Claude panel) and the window buttons |
-| Sidebar | **Hosts** · **Cloud** · **Vault** · **Known Hosts** · **Settings** |
+| Sidebar | **Hosts** · **Cloud** · **Kubernetes** · **Vault** · **Known Hosts** · **Settings** |
 | Hosts page | Search / quick-connect box with **CONNECT**, **NEW HOST**, **IMPORT**, and host cards grouped by name |
 | Editor panel | Opens on the right when you add or edit a host |
 | Claude panel | Vertical panel on the right. Drag its edge to resize it |
@@ -437,6 +439,9 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 | Showing a Vault account's public key (`vault_get_public_key`) or the stored host keys (`list_known_hosts`) | None (written to the audit log) |
 | Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), starring a host, cancelling a cloud sync | None (written to the audit log) |
 | Display and convenience settings (theme, font, copy-on-select, auto reconnect and so on) | None (written to the audit log) |
+| Kubernetes: listing clusters (`list_k8s_clusters`, no credentials included) | None |
+| Kubernetes: opening a cluster tab, a pod shell tab or a log tab (`open_k8s_session`) | None (written to the audit log) |
+| Running `kubectl` on a cluster (`run_kubectl`) | Approval prompt (with read-only auto-approve on, only read-only commands such as `get`, `describe`, `logs` and `top` skip it; reading Secrets always asks and the prompt warns that the output may contain passwords or tokens) |
 | Closing connected tabs (`close_session`, `close_sessions`) | Approval prompt (disconnected tabs close right away; closing several tabs takes one approval) |
 | Connecting more than 8 hosts at once (`connect_hosts`) | Approval prompt |
 | Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env`, and reading with the tab's sudo rights, always ask) |
@@ -463,7 +468,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 58 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 61 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -550,6 +555,14 @@ Claude has 58 tools. Anything you can do by hand in the app, Claude can do too. 
 |---|---|
 | `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible or AD — preview first, then add with one approval |
 
+**Kubernetes**
+
+| Tool | Purpose |
+|---|---|
+| `list_k8s_clusters` | Registered clusters (never credentials), and whether `kubectl` was found on this PC |
+| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead |
+| `open_k8s_session` | Open a cluster tab, a pod shell tab or a pod log tab ([16.6](#166-cluster-tab)) |
+
 ### 10.6 Running commands on several servers (SSH / WinRM)
 
 `run_command` runs a command on several servers at once: over SSH for Linux servers and over WinRM (PowerShell · cmd) for Windows servers. You can target a whole group, such as `group:Production`, and stopped servers are skipped automatically.
@@ -570,7 +583,7 @@ Claude has 58 tools. Anything you can do by hand in the app, Claude can do too. 
 
 | Kind | Runs without approval (examples) | Asks for approval (examples) |
 |---|---|---|
-| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, file redirection `>`, command substitution `$( )` or backticks |
+| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, file redirection `>`, command substitution `$( )` or backticks, reading Secrets (`kubectl get secret -o yaml`), `kubectl config view --raw` |
 | PowerShell | `Get-*`, `Select-/Where-/Sort-/Format-*`, `Test-*` | `Invoke-*`, method or .NET calls, unknown commands |
 | cmd · common | `ipconfig` `sc query` `reg query` `netstat` `tasklist` | Write options such as `ipconfig /release` |
 
@@ -731,6 +744,10 @@ See [chapter 11](#11-sign-in-screen-and-per-account-profiles). Settings are save
 
 These are not on the Settings page. Set them with **Change path** in each section of the Cloud page (the standard location is the default). They are applied as `AWS_CONFIG_FILE` for AWS, `GOOGLE_APPLICATION_CREDENTIALS` for GCP, `AZURE_CONFIG_DIR` for Azure and `OCI_CLI_CONFIG_FILE` for OCI, so the CLI started by the Sign in button uses the same path. Claude cannot change them.
 
+### 12.15 kubectl path
+
+Not on the Settings page either. The Kubernetes page shows where `kubectl` was found; if it is not found, copy the install command (`winget install Kubernetes.kubectl`) or pick `kubectl.exe` with **Set path...** ([16.1](#161-requirements)). Claude cannot change it.
+
 ---
 
 ## 13. Data files and security
@@ -743,6 +760,8 @@ These are not on the Settings page. Set them with **Change path** in each sectio
 | `%APPDATA%\Nubis\login.json` | Last sign-in record (encrypted) |
 | `%APPDATA%\Nubis\users\<account>\` | Per-account profiles (when sign-in is used) |
 | `hosts.json` · `vault.json` · `cloud_profiles.json` · `known_hosts.json` | Hosts, Vault, cloud profiles, host keys (**whole file encrypted**) |
+| `k8s_clusters.json` | Kubernetes clusters (**whole file encrypted**; each cluster's kubeconfig is encrypted once more inside) |
+| `k8s-run\` | Decrypted kubeconfigs, only while a cluster tab or `kubectl` is running (readable only by your Windows account, deleted when closed) |
 | `claude\` · `claude_audit.log` | Claude panel working folder and audit log |
 | `%LOCALAPPDATA%\Nubis\WebView2\` | Terminal view cache |
 
@@ -762,6 +781,7 @@ The **Known Hosts** sidebar page lists the host-key fingerprints of SSH servers 
 | Claude panel | Account-file reads, DPAPI decryption commands and settings-file edits are blocked; remote changes require approval and are audit-logged |
 | Import | Passwords and keys are never imported from any source |
 | Host keys | A changed key always triggers a warning |
+| Kubernetes | Each cluster's credentials are encrypted separately, and decrypted only into a temporary file while in use ([16.7](#167-security)) |
 
 **Limits** — the sign-in screen and per-account profiles are a door into the app and a separation inside the app's screens. Encryption works per Windows account, so it cannot stop another program running under the same Windows account from decrypting the files directly. If several people share one PC, give each of them their own Windows account.
 
@@ -798,7 +818,7 @@ The **Known Hosts** sidebar page lists the host-key fingerprints of SSH servers 
 | `Ctrl+Enter` | Edit the host |
 | `Esc` | Close |
 
-Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · Open/Close Claude panel · Sync all clouds · Cloud / Vault / Known Hosts / Settings page.
+Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · Open/Close Claude panel · Sync all clouds · Cloud / Kubernetes / Vault / Known Hosts / Settings page. Kubernetes clusters are listed too; `Enter` opens the cluster tab.
 
 **Host list**
 
@@ -861,3 +881,96 @@ Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · 
 | Sign-in screen says no OAuth app matches the Client ID | Check the Client ID for typos and that Enable Device Flow is ticked in the GitHub app |
 | A wrong sign-in setting locks you out | See [11.4](#114-signing-out-turning-sign-in-off-or-getting-locked-out) |
 | Certificate warning right after an RDP connection | In environments with self-signed certificates, turn off the certificate warning in Settings → RDP |
+
+---
+
+## 16. Kubernetes
+
+The **Kubernetes** page in the sidebar (between Cloud and Vault) keeps your Kubernetes clusters. Each cluster's credentials (kubeconfig) are stored separately: Nubis cuts the kubeconfig down to a standalone one that contains only that cluster, encrypts it with Windows DPAPI and saves it in `k8s_clusters.json` (the whole file is encrypted as well). One cluster's token never mixes with another's.
+
+### 16.1 Requirements
+
+| Item | Details |
+|---|---|
+| kubectl | Required. The page shows the path where `kubectl` was found. If it is not found, **Copy install command** copies `winget install Kubernetes.kubectl`, or pick `kubectl.exe` with **Set path...** |
+| EKS (AWS) | AWS CLI (`winget install Amazon.AWSCLI`) |
+| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) |
+| AKS (Azure) | `kubelogin` (`winget install Microsoft.Azure.Kubelogin`) for clusters that use Microsoft Entra (AAD) sign-in. Clusters with local accounts need nothing more |
+| OKE (OCI) | OCI CLI (`pip install oci-cli`) |
+| TKE (Tencent) | Nothing more |
+
+If a cluster needs a command that is not on this PC, its row shows a warning badge with install instructions.
+
+### 16.2 Importing a kubeconfig
+
+**Import kubeconfig** reads contexts from one of these:
+
+- `~/.kube/config` — or the first file in the `KUBECONFIG` environment variable when it is set
+- **File...** — a kubeconfig file you choose
+- **Paste** — kubeconfig YAML pasted into the box
+
+Pick the contexts to import (optionally with a group). Each selected context is saved separately with only that cluster's credentials. Certificates and tokens that the kubeconfig points to by file path are read and stored inline, so the cluster keeps working if those files move; a pasted kubeconfig that points to files must be imported from a file instead. The original file is never changed. Contexts you have already imported are marked **Exists**.
+
+### 16.3 Finding clusters in the cloud
+
+**Find in cloud** looks for clusters with the cloud profiles you added on the Cloud page ([8](#8-importing-cloud-servers)), using read-only lookup APIs.
+
+| Cloud | Clusters | Authentication |
+|---|---|---|
+| AWS | EKS | exec plugin `aws eks get-token`, with `AWS_PROFILE` set to the profile |
+| GCP | GKE | exec plugin `gke-gcloud-auth-plugin` |
+| Azure | AKS | Microsoft Entra (AAD) clusters: exec plugin `kubelogin` (Azure CLI sign-in). Local-account clusters: the kubeconfig Azure returns (certificates and token included) is stored encrypted |
+| OCI | OKE | exec plugin `oci ce cluster generate-token` with `--profile` (and `--auth security_token` for session profiles) |
+| Tencent | TKE | The kubeconfig Tencent Cloud returns (certificates and token included) is stored encrypted |
+
+If a cluster you imported yourself has the same API server address, no separate cloud entry is created for it.
+
+### 16.4 Sync rules
+
+Once a profile has clusters, they are updated together with that profile's server sync from then on (on demand, at startup or periodically — [12.4](#124-cloud-auto-sync)).
+
+| Item | Behavior |
+|---|---|
+| Partial failure | If some lookups fail, **nothing is removed in that sync** |
+| Permission denied | Clusters in regions denied by permissions are kept |
+| Removed clusters | A cluster is removed only after it is missing from **two syncs in a row** |
+| Your changes | A name or default namespace you changed is kept |
+
+### 16.5 The Kubernetes page
+
+Clusters are grouped as **Added manually** and one group per cloud profile (`[AWS] <profile>` and so on). Each row shows an authentication badge (`kubeconfig` · `aws` · `gcloud` · `azure` · `oci` · `exec`), the server version and, when something is missing, a warning badge.
+
+| Action | Behavior |
+|---|---|
+| Open (double-click · `Enter`) | Opens the cluster tab ([16.6](#166-cluster-tab)) |
+| Test connection | Shows the server version and checks `kubectl auth can-i list pods` |
+| More → Rename (`F2`) | Renames the cluster in Nubis |
+| More → Default namespace | The namespace the tab starts in (empty = the kubeconfig's value, or `default`) |
+| More → Group | Moves the cluster to a group |
+| More → Export kubeconfig... | Saves this cluster's kubeconfig to a file. The file is **not encrypted** (it holds tokens and client keys), and Nubis warns you before saving |
+| More → Delete (`Delete`) | Removes the cluster and its saved credentials from Nubis (after confirming). The cluster itself is not affected. A cluster found in the cloud may come back on the next sync |
+
+### 16.6 Cluster tab
+
+Opening a cluster opens a tab with two parts.
+
+- **Left: resource panel** — **Pods** · **Deploy** · **Svc** · **Nodes**, a namespace picker (including **All namespaces**), **Find by name**, auto refresh every 5 seconds (click to turn it off or on) and `F5` to refresh.
+- **Right: kubectl terminal** — a PowerShell whose `KUBECONFIG` is this cluster, so `kubectl`, `k9s` and `helm` all point at it.
+
+| Resource | Actions |
+|---|---|
+| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
+| Deployment | describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
+| Service · Node | describe · **View YAML** |
+
+describe and YAML run in the terminal on the right. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
+
+### 16.7 Security
+
+| Protection | Details |
+|---|---|
+| Storage | Each cluster's kubeconfig is encrypted separately with DPAPI, inside `k8s_clusters.json`, which is encrypted as a whole |
+| While in use | The decrypted kubeconfig is a temporary file under `k8s-run\` in the data folder, readable only by your Windows account, and exists only while a cluster tab is open or `kubectl` is running. It is deleted when they close; files left behind by a crash are cleaned up at the next start |
+| Running kubectl | Nubis starts `kubectl` directly, without a shell. Claude's `run_kubectl` refuses `--kubeconfig`, `--context`, `--cluster`, `--user`, `-s`/`--server`, `--token`, `--as` and similar options, so saved credentials cannot be sent to another server or swapped for another kubeconfig |
+| Claude panel | Reading `k8s_clusters.json` and `k8s-run` is blocked by the deny rules (a second safety net). `run_kubectl` needs approval and is audit-logged ([10.3](#103-approval-and-logging)) |
+| Export | An exported kubeconfig is a plain, unencrypted file — keep it somewhere safe |

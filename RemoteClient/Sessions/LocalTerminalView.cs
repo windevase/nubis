@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Windows.Controls;
 
@@ -12,6 +13,8 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     private readonly string _workingDir;
     private readonly string _exitHint;
     private readonly bool _killTreeOnClose;
+    private readonly IReadOnlyDictionary<string, string>? _extraEnv;
+    private readonly Action? _onClosed;
     private PseudoConsoleProcess? _pty;
     private bool _closed;
     private SessionStatus _status = SessionStatus.Connecting;
@@ -21,10 +24,15 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     public SessionStatus Status => _status;
 
     /// <param name="commandLine">실행할 명령줄 (재시작할 때마다 다시 계산)</param>
-    /// <param name="killTreeOnClose">닫을 때 하위 프로세스 트리까지 끝낸다 (Claude 패널만 true — PowerShell 탭에서 띄운 GUI 앱은 남긴다)</param>
-    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null, bool killTreeOnClose = false)
+    /// <param name="killTreeOnClose">닫을 때 하위 프로세스 트리까지 끝낸다 (Claude 패널·쿠버네티스 파드 탭 — PowerShell 탭에서 띄운 GUI 앱은 남긴다)</param>
+    /// <param name="extraEnv">자식 프로세스에 더할 환경변수 (쿠버네티스 탭의 KUBECONFIG)</param>
+    /// <param name="onClosed">탭을 닫은 뒤 한 번 (임시 kubeconfig 지우기 등)</param>
+    public LocalTerminalView(Func<string> commandLine, string workingDir, string? exitHint = null, bool killTreeOnClose = false,
+        IReadOnlyDictionary<string, string>? extraEnv = null, Action? onClosed = null)
     {
         _killTreeOnClose = killTreeOnClose;
+        _extraEnv = extraEnv;
+        _onClosed = onClosed;
         _commandLine = commandLine;
         _workingDir = workingDir;
         _exitHint = exitHint ?? L.T("프로세스가 종료되었습니다.");
@@ -45,7 +53,7 @@ public sealed class LocalTerminalView : UserControl, ISessionView
         if (_closed) return;
         _pty?.Dispose();
         // 화면이 못 따라갈 만큼 출력이 쏟아지면 읽기를 잠시 멈춘다 (XtermView 흐름 제어)
-        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose, OutputGate = _term.WaitForRoom };
+        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose, OutputGate = _term.WaitForRoom, ExtraEnvironment = _extraEnv };
         pty.Output += _term.Write;
         pty.Exited += code => Dispatcher.BeginInvoke(() =>
         {
@@ -105,8 +113,10 @@ public sealed class LocalTerminalView : UserControl, ISessionView
 
     public void CloseSession()
     {
+        if (_closed) return;
         _closed = true;
         _pty?.Dispose();
         _term.Close();
+        try { _onClosed?.Invoke(); } catch { }
     }
 }

@@ -34,6 +34,9 @@ Import servers from AWS, Tencent Cloud, Google Cloud, Azure and Oracle Cloud (OC
 
 <img src="docs/media/cloud.gif" alt="Cloud servers grouped by profile in the host list, and the Cloud page with AWS, Tencent, GCP, Azure and OCI" width="100%">
 
+**⎈ Kubernetes clusters, each with its own credentials**
+The Kubernetes page keeps every cluster's kubeconfig separately — cut down to that one cluster and encrypted with DPAPI, so one cluster's token never mixes with another's. Import contexts from `~/.kube/config`, a file or pasted YAML (the original file is not changed), or find EKS, GKE, AKS, OKE and TKE clusters with the cloud profiles you already added; they then update with every sync. Opening a cluster shows pods, deployments, services and nodes on the left (namespace filter, search, 5-second auto refresh) and a PowerShell on the right where `kubectl`, `k9s` and `helm` point at that cluster. Double-click a pod for a shell; right-click it for logs, previous-container logs, describe, YAML or delete, and restart a deployment with `rollout restart`. The decrypted kubeconfig exists only as a temporary file readable by your Windows account while a tab or `kubectl` is running. Needs `kubectl` on your PC (plus the cloud's CLI or auth plugin for cloud clusters).
+
 **🏢 On-prem servers in one go**
 `IMPORT` reads the server lists you already have — paste rows from Excel or CSV (Korean or English headers are recognized), `~/.ssh/config` (with `Include` and `ProxyJump`), mRemoteNG `confCons.xml` (folders become groups), Ansible inventories (INI or YAML) and Active Directory, including Microsoft Entra Domain Services (LDAPS first, your current Windows sign-in or an account you enter). Preview everything, pick what to add, choose a Vault account for SSH and for RDP, and existing hosts are detected so nothing is added twice. Passwords are never imported.
 
@@ -76,6 +79,7 @@ flowchart LR
 
 - **Claude never gets your passwords or keys.** Nubis signs in to servers itself; tool results and logs never contain a password.
 - **Anything that touches a server, an account or your data waits for your approval** and is written to `claude_audit.log`. The only exception is read-only commands, and only if you turn on auto-approval for them in Settings (they are still logged).
+- **`kubectl` follows the same rules.** Claude's `run_kubectl` asks for approval and is logged; read-only auto-approval covers only commands such as `get`, `describe`, `logs` and `top`, never reading Secrets. The cluster and credentials are fixed to the ones saved in Nubis, so options like `--kubeconfig`, `--server` or `--token` are refused.
 - **A safety net, not a sandbox.** The panel runs under your Windows account, so Nubis also passes Claude Code deny rules that block reading the account files, DPAPI decryption and editing its own settings. They catch mistakes and prompt injection; the real protection is the encryption and the approval prompt.
 - **A changed host key always triggers a warning**, for you and for Claude.
 
@@ -89,7 +93,7 @@ Everything else — every feature, every setting and how it behaves — is in th
 
 ## Built with
 
-WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) (a small patched build, see `third_party/SSH.NET`) · [xterm.js](https://xtermjs.org/) on WebView2 · the Windows built-in Remote Desktop engine (`mstscax`) · AWS SDK for .NET, Azure.Identity and Google.Apis.Auth for cloud sign-in · YamlDotNet and System.DirectoryServices.Protocols for Ansible and Active Directory import · [Claude Code](https://docs.claude.com/claude-code) through a built-in MCP server.
+WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) (a small patched build, see `third_party/SSH.NET`) · [xterm.js](https://xtermjs.org/) on WebView2 · the Windows built-in Remote Desktop engine (`mstscax`) · AWS SDK for .NET, Azure.Identity and Google.Apis.Auth for cloud sign-in · the `kubectl` installed on your PC for Kubernetes · YamlDotNet and System.DirectoryServices.Protocols for Ansible and Active Directory import · [Claude Code](https://docs.claude.com/claude-code) through a built-in MCP server.
 
 ```powershell
 .\build.ps1            # Debug build, then run
@@ -111,7 +115,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
 
-Nubis connects only to the places you configure: the servers you connect to, the cloud APIs of the profiles you add (using the credential profiles saved on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
+Nubis connects only to the places you configure: the servers you connect to, the Kubernetes clusters you add (through the `kubectl` on your PC), the cloud APIs of the profiles you add (using the credential profiles saved on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
 
 ## License
 

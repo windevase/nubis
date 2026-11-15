@@ -83,6 +83,9 @@ public partial class App : Application
 
         // vault.json 을 미리 읽는다 — 처음 쓸 때 읽으면 읽기 실패 경고가 시작 경고 창(메인 창 Loaded)에 실리지 않는다
         try { VaultStore.Preload(); } catch { }
+        try { K8sStore.Preload(); } catch { }
+        // 지난 실행이 비정상 종료해 남은 복호화 kubeconfig (다른 Nubis 가 쓰는 중인 파일은 열려 있어 남는다)
+        try { SecureTempFile.CleanupStale(SecureTempFile.K8sDir); } catch { }
 
         var main = new MainWindow();
         MainWindow = main;

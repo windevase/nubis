@@ -202,4 +202,68 @@ public sealed class AwsProvider : ICloudProvider
         }
         return false;
     }
+
+    // ---------------- EKS 클러스터 ----------------
+
+    public async Task<ClusterFetchResult> FetchClustersAsync(CloudProfile p, CancellationToken ct)
+    {
+        var chain = new CredentialProfileStoreChain();
+        if (!chain.TryGetAWSCredentials(p.Name, out var creds))
+            throw new InvalidOperationException(L.F("AWS 프로필 '{0}' 을 찾을 수 없습니다.", p.Name));
+        List<string> regions;
+        try { regions = await ListRegionsAsync(creds, ConfiguredRegion(chain, p.Name), ct); }
+        catch (Exception ex) when (IsSsoProfile(chain, p.Name, creds) && LooksLikeSsoTokenError(ex))
+        {
+            throw new InvalidOperationException(L.F("SSO 로그인이 필요합니다 (aws sso login --profile {0}) — {1}", p.Name, CloudProviders.FirstLine(ex.Message)));
+        }
+        if (regions.Count == 0)
+            throw new InvalidOperationException(L.T("사용 가능한 리전 목록이 비어 있습니다 (DescribeRegions) — 이번 동기화는 건너뜁니다."));
+
+        var denied = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        var (items, errors) = await CloudProviders.ParallelCollect(regions, 10, async region =>
+        {
+            using var eks = new Amazon.EKS.AmazonEKSClient(creds, RegionEndpoint.GetBySystemName(region));
+            var names = new List<string>();
+            string? token = null;
+            do
+            {
+                Amazon.EKS.Model.ListClustersResponse page;
+                try { page = await eks.ListClustersAsync(new Amazon.EKS.Model.ListClustersRequest { NextToken = token }, ct); }
+                catch (Amazon.Runtime.AmazonServiceException ex) when (token == null && IsAccessDenied(ex.ErrorCode))
+                {
+                    denied[region] = CloudProviders.FirstLine(ex.Message);
+                    return Enumerable.Empty<CloudCluster>();
+                }
+                names.AddRange(page.Clusters ?? new());
+                token = page.NextToken;
+            } while (!string.IsNullOrEmpty(token));
+            var result = new List<CloudCluster>();
+            foreach (var name in names)
+            {
+                var c = (await eks.DescribeClusterAsync(new Amazon.EKS.Model.DescribeClusterRequest { Name = name }, ct)).Cluster;
+                if (c == null || string.IsNullOrEmpty(c.Endpoint)) continue;   // 만드는 중이라 아직 주소가 없다
+                result.Add(EksCluster(c.Arn ?? $"{region}/{name}", name, region, c.Endpoint, c.CertificateAuthority?.Data ?? "",
+                    c.Version ?? "", c.Status?.Value ?? "", p.Name));
+            }
+            return (IEnumerable<CloudCluster>)result;
+        }, r => r, ct);
+
+        if (items.Count == 0 && denied.Count == regions.Count)
+            throw new InvalidOperationException(L.F("모든 리전에서 EKS 조회 권한이 없습니다 (eks:ListClusters) — {0}", denied.Values.First()));
+        var deniedRegions = denied.Keys.OrderBy(r => r, StringComparer.Ordinal).ToList();
+        foreach (var r in deniedRegions)
+            errors.Add(L.F("{0}: 권한 없음 (SCP·IAM 정책으로 거부 — 이 리전 클러스터는 유지) — {1}", r, denied[r]));
+        return new ClusterFetchResult(items, errors) { DeniedRegions = deniedRegions };
+    }
+
+    /// <summary>
+    /// EKS 클러스터 → 공통 형식. 인증은 aws eks get-token (AWS_PROFILE = 이 프로필 — SSO 프로필도 그대로) — kubeconfig 에 비밀값 없음
+    /// </summary>
+    internal static CloudCluster EksCluster(string arn, string name, string region, string endpoint, string caData, string version, string status, string profile)
+    {
+        var kubeconfig = Kubeconfig.BuildExec(arn, endpoint, caData, "aws",
+            new[] { "--region", region, "eks", "get-token", "--cluster-name", name, "--output", "json" },
+            new Dictionary<string, string> { ["AWS_PROFILE"] = profile });
+        return new CloudCluster("eks:" + arn, name, region, endpoint, version, CloudCluster.NormalizeState(status), K8sAuthKind.Aws, kubeconfig, arn);
+    }
 }

@@ -89,6 +89,17 @@ public class ReadOnlyBypassTests
     [InlineData("kubectl auth reconcile -f x.yaml")]
     [InlineData("kubectl cluster-info dump --output-directory=/tmp/x")]
     [InlineData("kubectl get --raw /api/v1/namespaces/x/services/y/proxy/admin")]
+    // config view --raw 는 클라이언트 키·토큰을 그대로 출력한다 (예전에는 config 판정이 먼저라 허용됐다)
+    [InlineData("kubectl config view --raw")]
+    [InlineData("kubectl config view --raw=true")]
+    [InlineData("kubectl -n x config view --raw")]
+    // Secret 값 조회
+    [InlineData("kubectl get secret db -o yaml")]
+    [InlineData("kubectl get secrets -A -o json")]
+    [InlineData("kubectl get secret/db -o jsonpath={.data.password}")]
+    [InlineData("kubectl get pods,secrets -o yaml")]
+    [InlineData("kubectl describe secret db")]
+    [InlineData("kubectl get secrets.v1 -o yaml")]
     [InlineData("kubectl get pods delete")]
     [InlineData("docker --config ps run evil")]
     [InlineData("docker --config /tmp/c ps")]

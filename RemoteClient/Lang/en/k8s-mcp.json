@@ -1,0 +1,7 @@
+{
+  "Claude 가 클러스터 '{0}' 에 kubectl 실행을 요청합니다": "Claude wants to run kubectl on cluster '{0}'",
+  "\n제한 시간: {0}초 (넘으면 중단)": "\nTime limit: {0} s (stopped if exceeded)",
+  "클러스터 '{0}' 에서 kubectl 실행 중: {1}": "Running kubectl on cluster '{0}': {1}",
+  "\n⚠ Secret 을 조회합니다. 출력에 비밀번호·토큰이 담겨 Claude 에게 전달될 수 있습니다.": "\n⚠ This reads Secrets. The output may contain passwords or tokens and will be sent to Claude.",
+  "승인하면 이 PC 의 kubectl 로 이 클러스터에 실행하고 결과를 Claude 에게 돌려줍니다.": "If you approve, it runs with this PC's kubectl against this cluster and returns the result to Claude."
+}

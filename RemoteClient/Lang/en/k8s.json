@@ -1,0 +1,20 @@
+{
+  "k8s_clusters.json 을 읽지 못했고 원본 사본도 만들지 못해, 덮어쓰지 않도록 저장하지 않았습니다. 파일을 복구하거나 다른 곳으로 옮긴 뒤 Nubis 를 다시 시작하세요.": "Could not read k8s_clusters.json or make a copy of the original, so nothing was saved to avoid overwriting it. Restore the file or move it elsewhere, then restart Nubis.",
+  "kubectl 인자가 없습니다.": "No kubectl arguments were given.",
+  "kubectl 인자가 너무 많습니다.": "Too many kubectl arguments.",
+  "kubectl 인자에 줄바꿈·NUL 문자를 넣을 수 없습니다.": "kubectl arguments cannot contain line breaks or NUL characters.",
+  "{0} 은(는) 쓸 수 없습니다 — 클러스터와 인증은 Nubis 에 등록한 값으로 고정됩니다.": "{0} is not allowed. The cluster and credentials are fixed to what is registered in Nubis.",
+  "-s 는 쓸 수 없습니다 — 클러스터와 인증은 Nubis 에 등록한 값으로 고정됩니다.": "-s is not allowed. The cluster and credentials are fixed to what is registered in Nubis.",
+  "따옴표가 닫히지 않았습니다.": "A quote is not closed.",
+  "kubectl 을 찾지 못했습니다. 설치하거나(winget install Kubernetes.kubectl) Kubernetes 페이지에서 경로를 지정하세요.": "kubectl was not found. Install it (winget install Kubernetes.kubectl) or set its path on the Kubernetes page.",
+  "kubeconfig 내용이 비어 있습니다.": "The kubeconfig is empty.",
+  "kubeconfig 가 너무 큽니다 (1MB 이하).": "The kubeconfig is too large (1 MB at most).",
+  "kubeconfig 를 읽지 못했습니다: {0}": "Could not read the kubeconfig: {0}",
+  "kubeconfig 형식이 아닙니다.": "This is not a kubeconfig.",
+  "context '{0}' 이(가) 없습니다.": "Context '{0}' was not found.",
+  "context '{0}' 의 내용이 없습니다.": "Context '{0}' has no content.",
+  "cluster '{0}' 이(가) 없습니다.": "Cluster '{0}' was not found.",
+  "붙여 넣은 kubeconfig 가 파일 '{0}' 을(를) 가리킵니다. 파일로 가져오거나 *-data 값으로 바꿔 주세요.": "The pasted kubeconfig points to the file '{0}'. Import it from a file instead, or replace it with a *-data value.",
+  "인증 파일이 너무 큽니다: {0}": "The credential file is too large: {0}",
+  "kubeconfig 가 가리키는 파일을 읽지 못했습니다: {0} ({1})": "Could not read a file the kubeconfig points to: {0} ({1})"
+}

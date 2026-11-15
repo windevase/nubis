@@ -14,18 +14,22 @@ public partial class MainWindow
     /// <summary>닫는 탭을 "닫은 탭 다시 열기" 기록에 남긴다. 목록에 저장된 호스트와 로컬 PowerShell 만 (빠른 접속은 계정을 남기지 않으려고 제외)</summary>
     private void RememberClosedTab(SessionTab tab)
     {
-        if (tab.Protocol == Protocol.Local) _closedTabs.Push(new ClosedTabHistory.Entry(null, null));
+        if (tab.K8sClusterId is { } cid) { if (!tab.K8sPod) _closedTabs.Push(new ClosedTabHistory.Entry(null, null, cid)); }
+        else if (tab.Protocol == Protocol.Local) _closedTabs.Push(new ClosedTabHistory.Entry(null, null));
         else if (tab.Host != null && _hosts.Contains(tab.Host)) _closedTabs.Push(new ClosedTabHistory.Entry(tab.Host.Id, TabUsePublic(tab)));
     }
 
     private bool HostExists(Guid id) => _hosts.Any(h => h.Id == id);
 
-    private bool CanReopenClosedTab => _closedTabs.HasAny(HostExists);
+    private static bool ClusterExists(Guid id) => K8sStore.Get(id) != null;
+
+    private bool CanReopenClosedTab => _closedTabs.HasAny(HostExists, ClusterExists);
 
     /// <summary>마지막으로 닫은 탭을 같은 호스트·같은 주소(공인/사설)로 다시 연다 (Ctrl+Shift+R). 그 사이 지운 호스트는 건너뛴다</summary>
     private void ReopenClosedTab()
     {
-        if (_closedTabs.Pop(HostExists) is not { } e) return;
+        if (_closedTabs.Pop(HostExists, ClusterExists) is not { } e) return;
+        if (e.K8sClusterId is { } cid) { if (K8sStore.Get(cid) is { } c) OpenK8sTab(c); return; }
         if (e.HostId is not { } id) { OpenLocalTerminal(); return; }
         if (_hosts.FirstOrDefault(h => h.Id == id) is { } host) Connect(host, e.UsePublic);
     }
@@ -62,7 +66,8 @@ internal sealed class ClosedTabHistory
 {
     /// <param name="HostId">null = 로컬 PowerShell</param>
     /// <param name="UsePublic">탭을 열 때 고른 공인/사설 IP (null = 호스트 설정대로)</param>
-    internal readonly record struct Entry(Guid? HostId, bool? UsePublic);
+    /// <param name="K8sClusterId">쿠버네티스 클러스터 탭 (HostId 는 null)</param>
+    internal readonly record struct Entry(Guid? HostId, bool? UsePublic, Guid? K8sClusterId = null);
 
     public const int Max = 10;
     private readonly List<Entry> _items = new();
@@ -79,16 +84,20 @@ internal sealed class ClosedTabHistory
     }
 
     /// <summary>다시 열 수 있는 마지막 항목을 꺼낸다. 그 사이 지운 호스트의 항목은 버리고 그 앞 것으로</summary>
-    public Entry? Pop(Func<Guid, bool> hostExists)
+    public Entry? Pop(Func<Guid, bool> hostExists, Func<Guid, bool>? clusterExists = null)
     {
         while (_items.Count > 0)
         {
             var e = _items[^1];
             _items.RemoveAt(_items.Count - 1);
-            if (e.HostId is not { } id || hostExists(id)) return e;
+            if (Valid(e, hostExists, clusterExists)) return e;
         }
         return null;
     }
 
-    public bool HasAny(Func<Guid, bool> hostExists) => _items.Any(e => e.HostId is not { } id || hostExists(id));
+    public bool HasAny(Func<Guid, bool> hostExists, Func<Guid, bool>? clusterExists = null) => _items.Any(e => Valid(e, hostExists, clusterExists));
+
+    private static bool Valid(Entry e, Func<Guid, bool> hostExists, Func<Guid, bool>? clusterExists) =>
+        e.K8sClusterId is { } cid ? clusterExists?.Invoke(cid) == true
+        : e.HostId is not { } id || hostExists(id);
 }

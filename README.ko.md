@@ -34,6 +34,9 @@ SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽�
 
 <img src="docs/media/cloud.gif" alt="프로필 그룹으로 정리된 클라우드 서버와 AWS · Tencent · GCP · Azure · OCI Cloud 페이지" width="100%">
 
+**⎈ 쿠버네티스 클러스터, 인증은 클러스터마다 따로**
+Kubernetes 페이지는 클러스터마다 kubeconfig 를 그 클러스터 하나만 담도록 잘라 DPAPI 로 암호화해 따로 저장하므로, 다른 클러스터의 토큰이 섞이지 않습니다. `~/.kube/config`·파일·붙여 넣은 YAML 에서 context 를 골라 가져오거나(원본 파일은 바꾸지 않음), 이미 추가한 클라우드 프로필로 EKS · GKE · AKS · OKE · TKE 클러스터를 찾으면 이후 동기화 때 함께 갱신됩니다. 클러스터를 열면 왼쪽에 파드·디플로이먼트·서비스·노드 목록(네임스페이스 선택, 이름 검색, 5초 자동 새로고침), 오른쪽에 `kubectl`·`k9s`·`helm` 이 그 클러스터를 가리키는 PowerShell 이 열립니다. 파드는 더블클릭하면 셸, 우클릭하면 로그·이전 컨테이너 로그·describe·YAML·삭제이고, 디플로이먼트는 `rollout restart` 로 다시 시작합니다. 복호화한 kubeconfig 는 탭이나 `kubectl` 이 실행되는 동안에만 현재 Windows 계정만 읽을 수 있는 임시 파일로 둡니다. PC 에 `kubectl` 이 있어야 하고, 클라우드 클러스터는 해당 클라우드의 CLI 나 인증 플러그인도 필요합니다.
+
 **🏢 온프레미스 서버도 한 번에**
 `IMPORT` 로 이미 가진 서버 목록을 그대로 가져옵니다 — 엑셀·CSV 붙여넣기(한글·영문 머리글 자동 인식), `~/.ssh/config`(`Include`·`ProxyJump` 포함), mRemoteNG `confCons.xml`(폴더가 그룹으로), Ansible 인벤토리(INI·YAML), 그리고 Microsoft Entra Domain Services 를 포함한 Active Directory(LDAPS 우선, 현재 Windows 로그인 또는 입력한 계정). 미리보기에서 등록할 서버를 고르고 SSH · RDP 용 Vault 계정을 정하면 되고, 이미 있는 호스트는 알아서 걸러져 두 번 등록되지 않습니다. 비밀번호는 어떤 출처에서도 가져오지 않습니다.
 
@@ -76,6 +79,7 @@ flowchart LR
 
 - **Claude 는 비밀번호와 키를 받지 않습니다.** 서버 로그인은 Nubis 가 직접 하고, 도구 결과와 로그에는 비밀번호가 들어가지 않습니다.
 - **서버·계정·데이터에 영향을 주는 동작은 모두 승인 창을 거치고** `claude_audit.log` 에 남습니다. 예외는 읽기 전용 명령뿐이며, Settings 에서 자동 승인을 켰을 때만 해당합니다 (이때도 기록은 남습니다).
+- **`kubectl` 도 같은 규칙을 따릅니다.** Claude 의 `run_kubectl` 은 승인 창을 거치고 기록에 남으며, 읽기 전용 자동 승인은 `get`·`describe`·`logs`·`top` 같은 명령만 해당하고 Secret 조회는 빠집니다. 클러스터와 인증은 Nubis 에 저장된 값으로 고정되어 `--kubeconfig`·`--server`·`--token` 같은 옵션은 거부합니다.
 - **샌드박스가 아니라 안전장치입니다.** 패널은 사용자와 같은 Windows 계정으로 실행되므로, Nubis 는 계정 파일 읽기·DPAPI 복호화·자기 설정 수정을 막는 Claude Code 거부 규칙도 함께 넘깁니다. 실수와 프롬프트 주입을 막는 용도이고, 실제 보호는 암호화와 승인 창입니다.
 - **저장된 호스트키와 다르면 항상 경고합니다** (사용자 접속이든 Claude 의 명령이든).
 
@@ -89,7 +93,7 @@ flowchart LR
 
 ## 만든 재료
 
-WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) (조금 고친 빌드, `third_party/SSH.NET` 참고) · WebView2 위의 [xterm.js](https://xtermjs.org/) · Windows 내장 원격 데스크톱 엔진(`mstscax`) · AWS SDK for .NET·Azure.Identity·Google.Apis.Auth(클라우드 인증) · YamlDotNet·System.DirectoryServices.Protocols(Ansible·Active Directory 가져오기) · 내장 MCP 서버로 연결한 [Claude Code](https://docs.claude.com/claude-code).
+WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) (조금 고친 빌드, `third_party/SSH.NET` 참고) · WebView2 위의 [xterm.js](https://xtermjs.org/) · Windows 내장 원격 데스크톱 엔진(`mstscax`) · AWS SDK for .NET·Azure.Identity·Google.Apis.Auth(클라우드 인증) · PC 에 설치된 `kubectl`(쿠버네티스) · YamlDotNet·System.DirectoryServices.Protocols(Ansible·Active Directory 가져오기) · 내장 MCP 서버로 연결한 [Claude Code](https://docs.claude.com/claude-code).
 
 ```powershell
 .\build.ps1            # Debug 빌드 후 실행
@@ -111,7 +115,7 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다.
 
-Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
+Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 쿠버네티스 클러스터 (이 PC 의 `kubectl` 로), 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
 
 ## 라이선스
 

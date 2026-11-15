@@ -26,7 +26,7 @@ public static class ClaudeGuard
     public const string FileName = "nubis-permissions.json";
 
     /// <summary>계정·암호가 저장되는 파일 (백업·임시 파일 포함하도록 뒤에 * 를 붙여 쓴다)</summary>
-    private static readonly string[] SecretFiles = { "hosts.json", "cloud_profiles.json", "known_hosts.json", VaultStore.FileName, LoginState.FileName };
+    private static readonly string[] SecretFiles = { "hosts.json", "cloud_profiles.json", "known_hosts.json", VaultStore.FileName, LoginState.FileName, K8sStore.FileName };
 
     /// <summary>
     /// Windows 경로를 Claude Code 권한 규칙의 절대 경로 형식으로 바꾼다. C:\Users\a → //c/Users/a
@@ -122,7 +122,12 @@ public static class ClaudeGuard
             rules.Add($"Edit({b}/claude/.mcp.json)");
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
             rules.Add($"Edit({b}/settings.json*)");
+            // 쿠버네티스 탭·kubectl 실행 동안 복호화해 둔 kubeconfig (토큰·클라이언트 키)
+            rules.Add($"Read({b}/k8s-run/**)");
+            rules.Add($"Edit({b}/k8s-run/**)");
         }
+        rules.Add("Bash(*k8s-run*)");
+        rules.Add("PowerShell(*k8s-run*)");
         // 사용자 전역 Claude Code 설정도 고치지 못하게 한다 — 작업 폴더의 .claude\ 를 막아도 ~/.claude/settings*.json 에 hook·allow 규칙을,
         // ~/.claude.json 에 프로젝트별 allowedTools · mcpServers 를 써 넣으면 같은 우회가 된다 (Edit 도구만 해당, claude 자체 저장은 영향 없음)
         foreach (var f in GlobalClaudeSettings) rules.Add($"Edit({f})");
@@ -137,7 +142,7 @@ public static class ClaudeGuard
             rules.Add($"PowerShell({pat})");
         }
         // 저장된 암호 복호화(DPAPI) 시도 — 키워드가 그대로 들어간 명령만 막는다 (2차 안전장치, 우회 가능)
-        foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "AutoApproveReadOnly", "OwnerKey", "AllowedAccounts" })
+        foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "ProtectedKubeconfig", "AutoApproveReadOnly", "OwnerKey", "AllowedAccounts" })
         {
             rules.Add($"Bash(*{kw}*)");
             rules.Add($"PowerShell(*{kw}*)");

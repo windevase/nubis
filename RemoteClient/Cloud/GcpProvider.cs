@@ -164,4 +164,62 @@ public sealed class GcpProvider : ICloudProvider
     }
 
     private static string Last(string? url) => (url ?? "").TrimEnd('/').Split('/').Last();
+
+    // ---------------- GKE 클러스터 ----------------
+
+    /// <summary>Kubernetes Engine(container) API 가 꺼져 있다는 오류인지 — 클러스터를 쓰지 않는 프로젝트라 빈 결과로 본다</summary>
+    internal static bool IsContainerApiDisabled(string message) =>
+        (message.Contains("has not been used", StringComparison.OrdinalIgnoreCase) || message.Contains("disabled", StringComparison.OrdinalIgnoreCase)) &&
+        (message.Contains("container.googleapis.com", StringComparison.OrdinalIgnoreCase) || message.Contains("Kubernetes Engine API", StringComparison.OrdinalIgnoreCase));
+
+    public async Task<ClusterFetchResult> FetchClustersAsync(CloudProfile p, CancellationToken ct)
+    {
+        string token;
+        string? quota;
+        try { (token, quota) = await TokenAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException &&
+                                   (ex is InvalidOperationException || ex is Google.Apis.Auth.OAuth2.Responses.TokenResponseException))
+        {
+            throw new InvalidOperationException(L.F("GCP 로그인이 필요합니다 ({0}) — {1}", LoginCommand(p), CloudProviders.FirstLine(ex.Message)));
+        }
+        JsonElement r;
+        try
+        {
+            r = await CloudProviders.GetJsonAsync(
+                $"https://container.googleapis.com/v1/projects/{Uri.EscapeDataString(p.Name)}/locations/-/clusters", token, ct, quota);
+        }
+        catch (HttpRequestException ex) when (IsContainerApiDisabled(ex.Message))
+        {
+            return ClusterFetchResult.Empty;   // GKE 를 쓰지 않는 프로젝트
+        }
+        return ParseGkeClusters(r, p.Name);
+    }
+
+    /// <summary>
+    /// projects.locations.clusters.list 응답 → 클러스터 (화면 무관, 테스트 대상). 인증은 gke-gcloud-auth-plugin (gcloud 로그인 계정).
+    /// 응답하지 못한 영역(missingZones)이 있으면 부분 결과로 본다 (지우지 않게)
+    /// </summary>
+    internal static ClusterFetchResult ParseGkeClusters(JsonElement r, string project)
+    {
+        var items = new List<CloudCluster>();
+        foreach (var c in r.Arr("clusters"))
+        {
+            var name = c.Str("name");
+            var location = c.Str("location");
+            if (name.Length == 0) continue;
+            // 공용 엔드포인트가 꺼진 사설 클러스터는 사설 엔드포인트로 (같은 VPC·VPN 에서만 닿는다)
+            var endpoint = c.Str("endpoint");
+            if (endpoint.Length == 0) endpoint = c.Obj("privateClusterConfig").Str("privateEndpoint");
+            if (endpoint.Length == 0) continue;
+            var ctx = $"gke_{project}_{location}_{name}";
+            var kubeconfig = Kubeconfig.BuildExec(ctx, "https://" + endpoint, c.Obj("masterAuth").Str("clusterCaCertificate"),
+                "gke-gcloud-auth-plugin", Array.Empty<string>());
+            var id = c.Str("selfLink");
+            if (id.Length == 0) id = $"projects/{project}/locations/{location}/clusters/{name}";
+            items.Add(new CloudCluster("gke:" + id, name, location, "https://" + endpoint, c.Str("currentMasterVersion"),
+                CloudCluster.NormalizeState(c.Str("status")), K8sAuthKind.Gcp, kubeconfig, ctx));
+        }
+        var errors = r.Arr("missingZones").Select(z => $"{z.GetString()}: unreachable").ToList();
+        return new ClusterFetchResult(items, errors);
+    }
 }

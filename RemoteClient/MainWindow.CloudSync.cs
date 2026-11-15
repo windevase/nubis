@@ -175,9 +175,11 @@ public partial class MainWindow
                     status.Add(L.F("주의: 제거된 서버를 점프 호스트로 쓰던 호스트 {0}개 — 호스트 편집에서 점프 호스트를 다시 지정하세요: {1}",
                         dangling.Count, NameList(dangling.Select(h => h.DisplayName))));
             }
-            p.StatusText = string.Join("  ·  ", status);
             SaveHosts();
             SaveProfiles();
+            // 클러스터도 동기화하는 프로필 (Kubernetes 페이지에서 클러스터를 찾은 프로필) — 실패해도 VM 결과는 그대로
+            if (p.SyncClusters && await SyncProfileClustersAsync(p, cts.Token) is { } k8s) status.Add(k8s);
+            p.StatusText = string.Join("  ·  ", status);
         }
         catch (Exception ex)
         {

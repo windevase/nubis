@@ -350,6 +350,8 @@
                                          GroupName="nav" IsChecked="True" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavCloud" Style="{StaticResource NavItem}" Tag="&#xE753;" Content="Cloud"
                                          GroupName="nav" Checked="OnNavChanged"/>
+                            <RadioButton x:Name="NavK8s" Style="{StaticResource NavItem}" Tag="&#xE7B8;" Content="Kubernetes"
+                                         GroupName="nav" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavVault" Style="{StaticResource NavItem}" Tag="&#xE8D7;" Content="Vault"
                                          GroupName="nav" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavKnown" Style="{StaticResource NavItem}" Tag="&#xE72E;" Content="Known Hosts"
@@ -733,6 +735,165 @@
                                                             ToolTip="{l:Tr '수정'}" AutomationProperties.Name="{l:Tr '수정'}"/>
                                                     <Button Style="{StaticResource VaultRowDanger}" Content="&#xE74D;" Click="OnVaultDelete"
                                                             ToolTip="{l:Tr '삭제'}" AutomationProperties.Name="{l:Tr '삭제'}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+                                        <DataTemplate.Triggers>
+                                            <Trigger SourceName="row" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="row" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
+                                                <Setter TargetName="actions" Property="Opacity" Value="1"/>
+                                            </Trigger>
+                                            <Trigger SourceName="row" Property="IsKeyboardFocusWithin" Value="True">
+                                                <Setter TargetName="actions" Property="Opacity" Value="1"/>
+                                            </Trigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <!-- Kubernetes 페이지 (MainWindow.Kubernetes.cs) — 행 모양은 Vault 페이지와 같다 -->
+                <Grid x:Name="K8sPage" Grid.Column="1" Visibility="Collapsed" Margin="28,24,28,0">
+                    <Grid.Resources>
+                        <Style x:Key="VaultRowAction" TargetType="Button" BasedOn="{StaticResource IconButton}">
+                            <Setter Property="FontSize" Value="13"/>
+                            <Setter Property="Width" Value="30"/>
+                            <Setter Property="Height" Value="30"/>
+                            <Setter Property="Margin" Value="2,0,0,0"/>
+                        </Style>
+                    </Grid.Resources>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Margin="0,0,0,14">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Kubernetes" Style="{StaticResource TextTitle}"/>
+                            <TextBlock Text="{l:Tr '클러스터마다 인증(kubeconfig)을 따로 암호화해 저장합니다. 클러스터를 열면 왼쪽에 파드·디플로이먼트·서비스·노드 목록, 오른쪽에 그 클러스터를 가리키는 kubectl 터미널이 열립니다. 파드는 더블클릭으로 셸, 우클릭으로 로그를 엽니다.'}"
+                                       Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="860"
+                                       HorizontalAlignment="Left" LineHeight="19"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                            <Button x:Name="K8sCloudButton" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="OnK8sCloudFind" AutomationProperties.Name="{l:Tr '클라우드에서 찾기'}"
+                                    ToolTip="{l:Tr '등록한 클라우드 프로필로 EKS · GKE · AKS · OKE · TKE 클러스터를 찾습니다'}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE753;" FontFamily="{StaticResource IconFont}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="{l:Tr '클라우드에서 찾기'}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="K8sImportButton" Style="{StaticResource PrimaryButton}" Click="OnK8sImport" AutomationProperties.Name="{l:Tr 'kubeconfig 가져오기'}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock Text="{l:Tr 'kubeconfig 가져오기'}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- kubectl 상태: 찾은 경로 / 없으면 설치 안내 -->
+                    <Border x:Name="K8sKubectlBar" Grid.Row="1" CornerRadius="{StaticResource RadiusLg}" Padding="12,8" Margin="0,0,0,14"
+                            Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="K8sKubectlIcon" Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="13"
+                                       Foreground="{StaticResource Success}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                            <TextBlock x:Name="K8sKubectlText" Grid.Column="1" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="12,0,0,0">
+                                <Button x:Name="K8sCopyInstall" Style="{StaticResource SubtleButton}" Content="{l:Tr '설치 명령 복사'}" Margin="0,0,6,0"
+                                        Click="OnK8sCopyInstall" ToolTip="winget install Kubernetes.kubectl"/>
+                                <Button Style="{StaticResource SubtleButton}" Content="{l:Tr '경로 지정...'}" Click="OnK8sPickKubectl"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="0,0,0,24">
+                            <Border x:Name="K8sEmpty" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                    CornerRadius="{StaticResource RadiusLg}" Padding="24,32">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock Text="&#xE7B8;" FontFamily="{StaticResource IconFont}" FontSize="28" Foreground="{StaticResource TextTertiary}"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{l:Tr '아직 등록한 클러스터가 없습니다.'}" Foreground="{StaticResource TextSecondary}" Margin="0,10,0,0"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{l:Tr '~/.kube/config 에서 가져오거나, 클라우드 프로필로 EKS · GKE · AKS 클러스터를 찾아 보세요.'}"
+                                               Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <ItemsControl x:Name="K8sList" Focusable="False">
+                                <ItemsControl.GroupStyle>
+                                    <GroupStyle>
+                                        <GroupStyle.HeaderTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Name}" Style="{StaticResource TextBodyStrong}" Foreground="{StaticResource TextSecondary}"
+                                                           FontSize="12" Margin="2,10,0,8"/>
+                                            </DataTemplate>
+                                        </GroupStyle.HeaderTemplate>
+                                    </GroupStyle>
+                                </ItemsControl.GroupStyle>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="row" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                                CornerRadius="{StaticResource RadiusLg}" Padding="14,12" Margin="0,0,0,8"
+                                                MouseLeftButtonDown="OnK8sRowMouseDown" Focusable="True" KeyDown="OnK8sRowKeyDown"
+                                                AutomationProperties.Name="{Binding Name}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Grid Width="36" Height="36" Margin="0,0,14,0" VerticalAlignment="Center">
+                                                    <Border CornerRadius="{StaticResource RadiusMd}" Background="{StaticResource ControlFill}"/>
+                                                    <TextBlock Text="&#xE7B8;" FontFamily="{StaticResource IconFont}" FontSize="15"
+                                                               Foreground="{StaticResource AccentText}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    <Ellipse Width="9" Height="9" Fill="{Binding StateBrush}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                             Margin="0,0,-2,-2" Stroke="{StaticResource Layer3Bg}" StrokeThickness="2"/>
+                                                </Grid>
+                                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                    <Grid HorizontalAlignment="Left">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Name}" Style="{StaticResource TextBodyStrong}" FontSize="14" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding Name}"/>
+                                                        <Border Grid.Column="1" Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="8,0,0,0"
+                                                                VerticalAlignment="Center">
+                                                            <TextBlock Text="{Binding AuthBadge}" FontSize="11" Foreground="{StaticResource TextSecondary}"/>
+                                                        </Border>
+                                                        <Border Grid.Column="2" Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="6,0,0,0"
+                                                                VerticalAlignment="Center" Visibility="{Binding VersionVisibility}">
+                                                            <TextBlock Text="{Binding Version}" FontSize="11" Foreground="{StaticResource TextSecondary}"/>
+                                                        </Border>
+                                                        <Border Grid.Column="3" Background="{StaticResource WarningSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="6,0,0,0"
+                                                                VerticalAlignment="Center" Visibility="{Binding WarningVisibility}" ToolTip="{Binding WarningTip}">
+                                                            <TextBlock Text="{Binding Warning}" FontSize="11" Foreground="{StaticResource Warning}"/>
+                                                        </Border>
+                                                    </Grid>
+                                                    <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/>
+                                                </StackPanel>
+                                                <StackPanel x:Name="actions" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Opacity="0">
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE768;" Click="OnK8sOpen"
+                                                            ToolTip="{l:Tr '열기 (더블클릭 · Enter)'}" AutomationProperties.Name="{l:Tr '열기'}"/>
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE9D9;" Click="OnK8sTest"
+                                                            ToolTip="{l:Tr '연결 테스트'}" AutomationProperties.Name="{l:Tr '연결 테스트'}"/>
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE712;" Click="OnK8sMore"
+                                                            ToolTip="{l:Tr '더 보기'}" AutomationProperties.Name="{l:Tr '더 보기'}"/>
                                                 </StackPanel>
                                             </Grid>
                                         </Border>

@@ -436,6 +436,8 @@ public sealed class AppSettings
     public bool SftpFollowTerminal { get; set; } = true;
     /// <summary>SFTP 파일 편집에 쓸 프로그램 (비우면 Windows 기본 프로그램). Claude 는 바꿀 수 없다</summary>
     public string SftpEditor { get; set; } = "";
+    /// <summary>kubectl.exe 경로 ("" = PATH·흔한 설치 위치에서 찾기). Claude 의 update_settings 대상이 아니다 (실행 파일 경로)</summary>
+    public string KubectlPath { get; set; } = "";
     /// <summary>시작하기 안내를 이미 보여줬는지 (계정별 프로필마다 처음 한 번)</summary>
     public bool OnboardingShown { get; set; }
     /// <summary>앱 시작 화면 로그인 (GitHub · Google · Microsoft). Claude 는 바꿀 수 없다</summary>
