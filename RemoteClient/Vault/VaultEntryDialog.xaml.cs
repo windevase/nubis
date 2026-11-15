@@ -66,12 +66,25 @@ public partial class VaultEntryDialog : Window
         try
         {
             if (new FileInfo(dlg.FileName).Length > 64 * 1024) { ShowError(L.T("개인키 파일로 보기에는 너무 큽니다 (64KB 초과).")); return; }
-            KeyBox.Text = File.ReadAllText(dlg.FileName);
+            var text = File.ReadAllText(dlg.FileName);
+            // 파일에서 읽은 개인키는 화면에 펼쳐 보이지 않는다 (화면 공유·녹화·어깨 너머로 새지 않게). 칸에 직접 붙여 넣으면 그 값이 우선
+            KeyBox.Text = "";
+            _importedKey = text;
+            KeyBox.Tag = L.F("파일에서 가져옴: {0} (내용은 표시하지 않음)", Path.GetFileName(dlg.FileName));
             ClearKeyBox.IsChecked = false;
             if (NameBox.Text.Trim().Length == 0) NameBox.Text = Path.GetFileNameWithoutExtension(dlg.FileName);
             ErrorText.Visibility = Visibility.Collapsed;
         }
         catch (Exception ex) { ShowError(ex.Message); }
+    }
+
+    /// <summary>"파일에서 가져오기" 로 읽은 개인키 (KeyBox 에는 보이지 않음)</summary>
+    private string? _importedKey;
+
+    /// <summary>키 칸에 직접 입력·붙여 넣으면 파일에서 가져온 키는 버린다</summary>
+    private void OnKeyTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (KeyBox.Text.Length > 0 && _importedKey != null) _importedKey = null;
     }
 
     private void ShowError(string text)
@@ -84,10 +97,18 @@ public partial class VaultEntryDialog : Window
     {
         var name = NameBox.Text.Trim();
         if (name.Length == 0) { NameBox.Focus(); return; }
+        // 같은 이름의 계정이 둘이면 고르는 창·호스트 카드에서 구분할 수 없다 (예전부터 같은 이름이던 계정은 이름을 바꿀 때만 검사)
+        if ((_isNew || !string.Equals(name, _entry.Name.Trim(), StringComparison.CurrentCultureIgnoreCase)) && VaultStore.NameTaken(name, _entry.Id))
+        {
+            NameBox.Focus();
+            ShowError(L.F("같은 이름의 Vault 계정 '{0}' 이(가) 이미 있습니다. 다른 이름을 쓰세요.", name));
+            return;
+        }
 
         // 저장 후 상태 계산 (입력 > 지우기 > 기존 값)
         var newPassword = PasswordBox.Password;
         var keyText = KeyBox.Text.Trim();
+        if (keyText.Length == 0 && _importedKey != null) keyText = _importedKey.Trim();
         var newPass = PassphraseBox.Password;
         var clearPassword = ClearPasswordBox.IsChecked == true && newPassword.Length == 0;
         var clearKey = ClearKeyBox.IsChecked == true && keyText.Length == 0;
@@ -98,9 +119,10 @@ public partial class VaultEntryDialog : Window
         string? publicKey = _entry.PublicKey;
         if (willHaveKey && (keyText.Length > 0 || newPass.Length > 0))
         {
-            // 키를 바꾸지 않고 키 암호만 바꾸는 경우도 기존 키로 검사
+            // 키를 바꾸지 않고 키 암호만 바꾸는 경우도 기존 키로 검사.
+            // 새 키를 넣었으면 예전 키의 암호를 이어 쓰지 않는다 (새 키에는 맞지 않거나, 암호 없는 키에 남아 "키 암호 저장" 으로 보임)
             var material = keyText.Length > 0 ? keyText + "\n" : _entry.Key;
-            var pass = newPass.Length > 0 ? newPass : _entry.Passphrase;
+            var pass = newPass.Length > 0 || keyText.Length > 0 ? newPass : _entry.Passphrase;
             try { publicKey = VaultStore.ReadPublicKey(material, pass); }
             catch (Exception ex)
             {
@@ -113,8 +135,8 @@ public partial class VaultEntryDialog : Window
 
         if (newPassword.Length > 0) _entry.Password = newPassword;
         else if (clearPassword) _entry.ProtectedPassword = null;
-        if (keyText.Length > 0) _entry.Key = keyText + "\n";
-        if (newPass.Length > 0) _entry.Passphrase = newPass;
+        if (keyText.Length > 0) { _entry.Key = keyText + "\n"; _entry.Passphrase = newPass; }   // 새 키: 키 암호도 새로 (비우면 지움)
+        else if (newPass.Length > 0) _entry.Passphrase = newPass;
         if (clearKey) { _entry.ProtectedKey = null; _entry.ProtectedPassphrase = null; publicKey = null; }
         _entry.PublicKey = willHaveKey ? publicKey : null;
 
@@ -123,6 +145,8 @@ public partial class VaultEntryDialog : Window
         _entry.Note = NoteBox.Text.Trim();
         PasswordBox.Clear();
         PassphraseBox.Clear();
+        KeyBox.Clear();
+        _importedKey = null;
         DialogResult = true;
     }
 

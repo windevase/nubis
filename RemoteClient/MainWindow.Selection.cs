@@ -44,19 +44,21 @@ public partial class MainWindow
         return hosts.OrderBy(h => index.TryGetValue(h, out var i) ? i : int.MaxValue).ToList();
     }
 
-    /// <summary>카드 클릭. 처리했으면 true (더블 클릭 연결 등 기본 동작 생략)</summary>
-    private bool HandleCardSelectClick(HostEntry h)
+    // 범위의 시작 카드가 화면에서 몇 번째였는지 (ScreenOrder 순번) — 즐겨찾기·최근 접속과 원래 그룹 중 클릭한 쪽
+    private int _selectAnchorIndex = -1;
+
+    /// <summary>카드 클릭. screenIndex = 클릭한 카드의 ScreenOrder 순번 (모르면 -1). 처리했으면 true (더블 클릭 연결 등 기본 동작 생략)</summary>
+    private bool HandleCardSelectClick(HostEntry h, int screenIndex = -1)
     {
         var mods = Keyboard.Modifiers;
         if (mods.HasFlag(ModifierKeys.Shift) && _selectAnchor != null)
         {
-            var order = VisibleHosts();
-            int a = order.IndexOf(_selectAnchor), b = order.IndexOf(h);
-            if (a < 0 || b < 0) { SetSelected(h, true); }
+            var order = ScreenOrder();
+            if (SelectionRange(order, _selectAnchor, _selectAnchorIndex, h, screenIndex) is not { } range) { SetSelected(h, true); }
             else
             {
                 if (!mods.HasFlag(ModifierKeys.Control)) { foreach (var x in _selected) x.IsSelected = false; _selected.Clear(); }
-                for (var i = Math.Min(a, b); i <= Math.Max(a, b); i++) SetSelected(order[i], true);
+                for (var i = range.From; i <= range.To; i++) SetSelected(order[i], true);
             }
             UpdateSelectionBar();
             return true;
@@ -64,14 +66,40 @@ public partial class MainWindow
         if (mods.HasFlag(ModifierKeys.Control))
         {
             SetSelected(h, !h.IsSelected);
-            _selectAnchor = h;
+            (_selectAnchor, _selectAnchorIndex) = (h, screenIndex);
             UpdateSelectionBar();
             return true;
         }
         // 그냥 클릭: 선택 해제 후 이 카드를 범위의 시작점으로
-        _selectAnchor = h;
+        (_selectAnchor, _selectAnchorIndex) = (h, screenIndex);
         if (_selected.Count > 0) ClearSelection();
         return false;
+    }
+
+    /// <summary>
+    /// Shift+클릭 범위 (order 의 순번, 양 끝 포함). 같은 호스트가 즐겨찾기·최근 접속과 원래 그룹에 두 번 있을 수 있어
+    /// 클릭한 위치(힌트)를 쓰고, 힌트가 맞지 않으면 끝 카드는 첫 위치, 시작 카드는 끝 카드에 가장 가까운 위치로 고른다.
+    /// 둘 중 하나라도 화면에 없으면 null
+    /// </summary>
+    internal static (int From, int To)? SelectionRange(IReadOnlyList<HostEntry> order, HostEntry anchor, int anchorHint, HostEntry target, int targetHint)
+    {
+        static bool At(IReadOnlyList<HostEntry> o, int i, HostEntry h) => i >= 0 && i < o.Count && ReferenceEquals(o[i], h);
+        var t = targetHint;
+        if (!At(order, t, target))
+        {
+            t = -1;
+            for (var i = 0; i < order.Count && t < 0; i++) if (ReferenceEquals(order[i], target)) t = i;
+        }
+        if (t < 0) return null;
+        var a = anchorHint;
+        if (!At(order, a, anchor))
+        {
+            a = -1;
+            for (var i = 0; i < order.Count; i++)
+                if (ReferenceEquals(order[i], anchor) && (a < 0 || Math.Abs(i - t) < Math.Abs(a - t))) a = i;
+        }
+        if (a < 0) return null;
+        return (Math.Min(a, t), Math.Max(a, t));
     }
 
     private void SelectAllVisible()
@@ -91,7 +119,7 @@ public partial class MainWindow
         var n = _selected.Count;
         SelectionBar.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         HostToolbar.Visibility = n > 0 ? Visibility.Hidden : Visibility.Visible;
-        SelectionText.Text = L.F("{0}개 선택됨", n);
+        SelectionText.Text = L.F("{0}개 선택됨", n) + (_flashText == null ? "" : "  ·  " + _flashText);
     }
 
     // ----- 선택 막대 버튼 -----
@@ -182,10 +210,12 @@ public partial class MainWindow
     private void ApplyToSelected(BulkEdit edit, IReadOnlyList<HostEntry>? hosts = null)
     {
         hosts ??= SelectedHosts();
-        if (edit.Apply(hosts) == 0) return;
+        var changed = edit.Apply(hosts);
+        if (changed == 0) { FlashHostStatus(L.T("바뀐 호스트가 없습니다 (이미 같은 값)")); return; }
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
+        FlashHostStatus(L.F("호스트 {0}개를 바꿨습니다", changed));
     }
 
     private void DeleteSelected()
@@ -204,13 +234,18 @@ public partial class MainWindow
                 string.Join("\n", hosts.Take(15).Select(h => h.DisplayName)) + (hosts.Count > 15 ? "\n..." : "")) != MessageBoxResult.Yes) return;
         ClearSelection();
         RemoveHosts(hosts);
+        FlashHostStatus(L.F("호스트 {0}개를 삭제했습니다", hosts.Count));
     }
 
-    /// <summary>홈 화면 단축키: Ctrl+A 전체 선택, Esc 선택 해제, Delete 선택 삭제 (입력 칸에 포커스가 없을 때)</summary>
+    /// <summary>
+    /// 홈 화면 단축키: Ctrl+N 새 호스트 (검색창에서도), Ctrl+A 전체 선택, Esc 선택 해제, Delete 선택 삭제 (입력 칸에 포커스가 없을 때)
+    /// </summary>
     private bool HandleSelectionKey(KeyEventArgs e)
     {
         if (HomeView.Visibility != Visibility.Visible || HostsPage.Visibility != Visibility.Visible ||
-            EditorLayer.Visibility == Visibility.Visible || Keyboard.FocusedElement is TextBox or PasswordBox) return false;
+            EditorLayer.Visibility == Visibility.Visible) return false;
+        if (e.Key == Key.N && Keyboard.Modifiers == ModifierKeys.Control) { OpenEditor(null); return true; }
+        if (Keyboard.FocusedElement is TextBox or PasswordBox) return false;
         var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         if (ctrl && e.Key == Key.A) { SelectAllVisible(); return true; }
         if (_selected.Count == 0) return false;

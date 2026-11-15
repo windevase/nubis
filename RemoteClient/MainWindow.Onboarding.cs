@@ -21,6 +21,8 @@ public partial class MainWindow
         if (SettingsStore.Current.OnboardingShown) return;
         if (Environment.GetCommandLineArgs() is { Length: > 1 } args && Array.Exists(args, a => a.Equals("--connect", StringComparison.OrdinalIgnoreCase))) return;
         SettingsStore.Update(s => s.OnboardingShown = true);
+        // 이미 호스트·클라우드 프로필이 있는 사용자(업데이트로 이 설정이 처음 생긴 경우 등)에게는 띄우지 않는다 — Settings 에서 다시 열 수 있음
+        if (_hosts.Count > 0 || _profiles.Count > 0) return;
         ShowOnboarding();
     }
 
@@ -55,7 +57,7 @@ public partial class MainWindow
         _ => L.T("Nubis 의 Claude 패널로 무엇을 할 수 있는지 get_setup_status 로 내 상태를 보고 예시와 함께 짧게 소개해줘. 위험한 작업은 어떻게 승인되는지도 알려줘."),
     };
 
-    /// <summary>Claude 패널을 열고 질문을 넘긴다 (처음 띄우면 첫 질문으로, 이미 떠 있으면 입력창에 입력)</summary>
+    /// <summary>Claude 패널을 열고 질문을 넘긴다 (처음 띄우면 첫 질문으로, 이미 떠 있으면 입력창에 입력만)</summary>
     private void AskClaude(string prompt)
     {
         if (_claudeView == null)
@@ -65,8 +67,9 @@ public partial class MainWindow
             return;
         }
         ToggleClaude(true);
-        // CLI 가 입력을 받을 준비가 된 상태 — 질문을 입력하고 보낸다
-        Dispatcher.BeginInvoke(() => _claudeView?.SendText(prompt + "\r"), DispatcherPriority.Input);
+        // 이미 떠 있는 패널은 사용자가 입력하던 글이나 진행 중인 응답이 있을 수 있다 —
+        // Enter 까지 보내면 그 글에 이어 붙어 바로 전송되므로, 질문만 입력해 두고 보내기는 사용자가 한다
+        Dispatcher.BeginInvoke(() => _claudeView?.SendText(prompt), DispatcherPriority.Input);
     }
 
     /// <summary>cmd.exe / 명령줄에 그대로 넣어도 안전한 첫 질문 (따옴표·셸 특수 문자 제거)</summary>
@@ -85,7 +88,7 @@ public partial class MainWindow
     internal bool OpenAppPage(string page)
     {
         SelectHome();
-        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Dialog.RestoreIfMinimized(this);   // 최대화였으면 최대화로
         Activate();
         FrameworkElement? scrollTo = null;
         switch (page.Trim().ToLowerInvariant())

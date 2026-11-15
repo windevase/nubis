@@ -25,8 +25,11 @@ public partial class MainWindow
     {
         var ct = McpRequest.Token;
         if (ct.IsCancellationRequested) ThrowCancelled(tool, targets, command, false);
+        // 게이트를 기다리는 요청 수 — 열려 있는 승인 창에 "N건 더 있음" 으로 보여 준다
+        SetApprovalWaiting(+1);
         try { await _approvalGate.WaitAsync(ct); }
-        catch (OperationCanceledException) { ThrowCancelled(tool, targets, command, false); }
+        catch (OperationCanceledException) { SetApprovalWaiting(-1); ThrowCancelled(tool, targets, command, false); }
+        SetApprovalWaiting(-1);
         try { return ShowApproval(tool, title, description, targets, command, ct); }
         finally { _approvalGate.Release(); }
     }
@@ -34,20 +37,41 @@ public partial class MainWindow
     /// <summary>승인 창을 한 번에 하나만 띄우기 위한 게이트 (UI 스레드에서만 사용)</summary>
     private readonly SemaphoreSlim _approvalGate = new(1, 1);
 
+    // 게이트를 기다리는 승인 요청 수 · 지금 열려 있는 승인 창 (UI 스레드에서만 사용)
+    private int _approvalWaiting;
+    private ApprovalDialog? _openApproval;
+
+    private void SetApprovalWaiting(int delta)
+    {
+        _approvalWaiting = Math.Max(0, _approvalWaiting + delta);
+        try { _openApproval?.SetWaiting(_approvalWaiting); } catch (InvalidOperationException) { }
+    }
+
     private bool ShowApproval(string tool, string title, string description, IReadOnlyList<string> targets, string command, CancellationToken ct)
     {
         if (ct.IsCancellationRequested) ThrowCancelled(tool, targets, command, false);
 
-        // Ask 는 창을 만들자마자 Owner 를 지정하므로, 그 전에 열려 있던 승인 창과 비교해 이번 창을 찾는다.
-        // Send 우선순위라 ShowDialog 의 메시지 루프가 돌자마자(다른 요청의 승인 창이 열리기 전에) 실행된다
-        var before = OwnedWindows.OfType<ApprovalDialog>().ToHashSet();
+        // Ask 가 창을 만들면(표시 전) opened 콜백으로 이번 창을 받아 둔다 — 취소 때 이 창만 거부로 닫는다
         ApprovalDialog? mine = null;
-        Dispatcher.InvokeAsync(() => mine = OwnedWindows.OfType<ApprovalDialog>().FirstOrDefault(w => !before.Contains(w)), DispatcherPriority.Send);
         using var reg = ct.CanBeCanceled
             ? ct.Register(() => Dispatcher.InvokeAsync(() => { try { mine?.Close(); } catch (InvalidOperationException) { } }))
             : default;
 
-        var ok = ApprovalDialog.Ask(this, title, description, targets, command);
+        bool ok;
+        try
+        {
+            ok = ApprovalDialog.Ask(this, title, description, targets, command, tool, _approvalWaiting, d =>
+            {
+                mine = d;
+                _openApproval = d;
+                // 창을 만드는 사이에 취소됐으면 (Register 콜백이 mine 이 null 일 때 돌았을 수 있음) 뜨자마자 닫는다
+                if (ct.IsCancellationRequested) d.Loaded += (_, _) => { try { d.Close(); } catch (InvalidOperationException) { } };
+            });
+        }
+        finally
+        {
+            if (_openApproval == mine) _openApproval = null;
+        }
         if (ct.IsCancellationRequested) ThrowCancelled(tool, targets, command, ok);
         return ok;
     }

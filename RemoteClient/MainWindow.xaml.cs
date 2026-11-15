@@ -62,6 +62,8 @@ public partial class MainWindow : Window
         FooterText.ToolTip = L.F("데이터 폴더: {0}", AppPaths.DataDir);
 
         StateChanged += (_, _) => ApplyWindowState();
+        // 저장된 최대화 상태로 시작하면 StateChanged 가 오지 않을 수 있다 — 여백·최대화 버튼 모양을 지금 맞춘다
+        ApplyWindowState();
         Closing += OnWindowClosing;
         PreviewKeyDown += OnWindowKeyDown;
 
@@ -76,7 +78,7 @@ public partial class MainWindow : Window
             {
                 string[] warnings;
                 lock (SafeFile.LoadWarnings) warnings = SafeFile.LoadWarnings.ToArray();
-                Dialog.Show(this, string.Join("\n\n", warnings), L.T("설정 파일을 읽지 못했습니다"),
+                Dialog.Show(this, string.Join("\n\n", warnings), L.T("데이터 파일을 읽지 못했습니다"),
                     MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             ConnectFromArgs(Environment.GetCommandLineArgs());
@@ -107,17 +109,13 @@ public partial class MainWindow : Window
     internal void HandleForwardedArgs(string[] args)
     {
         // 최소화돼 있으면 이전 상태(최대화 포함)로 되돌린다
-        if (WindowState == WindowState.Minimized)
-            ShowWindow(new System.Windows.Interop.WindowInteropHelper(this).Handle, 9 /* SW_RESTORE */);
+        Dialog.RestoreIfMinimized(this);
         Activate();
         // 다른 창 뒤에 있으면 앞으로 (Activate 만으로는 작업 표시줄만 깜빡일 수 있다)
         Topmost = true;
         Topmost = false;
         if (args.Length > 1) ConnectFromArgs(args);
     }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     // =================== 사이드바 ===================
 
@@ -134,14 +132,22 @@ public partial class MainWindow : Window
         SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
         VaultPage.Visibility = vault ? Visibility.Visible : Visibility.Collapsed;
         if (known) RefreshKnownHosts();
-        if (settings) RefreshSettingsPage();
+        if (settings) RefreshSettingsPage(reloadLogin: true);
         if (vault) RefreshVault();
     }
 
     // =================== 창 ===================
 
+    /// <summary>최소화하기 직전이 최대화였는지 — 최소화한 채 닫아도 다음 실행 때 최대화로 연다</summary>
+    private bool _maximizedBeforeMinimize;
+
     private void ApplyWindowState()
     {
+        if (WindowState != WindowState.Minimized) _maximizedBeforeMinimize = WindowState == WindowState.Maximized;
+        // 아이콘만 있는 버튼 — 툴팁과 화면 읽기 프로그램용 이름
+        var tip = WindowState == WindowState.Maximized ? L.T("이전 크기로") : L.T("최대화");
+        MaxButton.ToolTip = tip;
+        System.Windows.Automation.AutomationProperties.SetName(MaxButton, tip);
         if (WindowState == WindowState.Maximized)
         {
             // WindowChrome 최대화 시 화면 밖으로 넘치는 테두리만큼 안쪽 여백
@@ -165,8 +171,9 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
-        var live = _tabs.Count(t => t.Status != SessionStatus.Disconnected);
-        if (live > 0 && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
+        // 로컬 PowerShell 은 세지 않고, 탭 닫기 확인을 끈 설정(ConfirmCloseTab)도 따른다
+        var live = LiveRemoteSessionCount(_tabs.Select(t => (t.Protocol, t.Status)));
+        if (live > 0 && SettingsStore.Current.ConfirmCloseTab && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             e.Cancel = true;
@@ -184,24 +191,53 @@ public partial class MainWindow : Window
     private void RestoreWindowBounds(AppSettings st)
     {
         if (st.WindowBounds is not { Length: 4 } b || b[2] < MinWidth || b[3] < MinHeight) return;
-        var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
-            SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
         var r = new Rect(b[0], b[1], b[2], b[3]);
-        // 제목 표시줄이 화면 안에 있어야 끌어 옮길 수 있다
-        if (!screen.IntersectsWith(new Rect(r.X + 40, r.Y, Math.Max(1, r.Width - 80), 40))) return;
+        // 제목 표시줄이 실제 모니터 작업 영역 안에 있어야 끌어 옮길 수 있다
+        // (가상 화면 사각형만 보면 크기가 다른 모니터 사이의 빈 공간에 창이 열릴 수 있다)
+        if (!TitleBarOnSomeMonitor(new Rect(r.X + 40, r.Y, Math.Max(1, r.Width - 80), 40))) return;
         WindowStartupLocation = WindowStartupLocation.Manual;
         (Left, Top, Width, Height) = (r.X, r.Y, r.Width, r.Height);
         if (st.WindowMaximized) WindowState = WindowState.Maximized;
     }
 
+    /// <summary>제목 표시줄(DIP)이 어느 모니터의 작업 영역과 충분히(가로 100 · 세로 20 DIP 이상) 겹치는지</summary>
+    private static bool TitleBarOnSomeMonitor(Rect titleDip)
+    {
+        try
+        {
+            // WinForms Screen 은 물리 픽셀 — 시스템 DPI 배율(가상 화면 픽셀 ÷ DIP)로 DIP 로 바꿔 비교
+            var vs = System.Windows.Forms.SystemInformation.VirtualScreen;
+            var scale = SystemParameters.VirtualScreenWidth > 0 ? vs.Width / SystemParameters.VirtualScreenWidth : 1.0;
+            if (scale <= 0 || double.IsNaN(scale)) scale = 1.0;
+            foreach (var sc in System.Windows.Forms.Screen.AllScreens)
+            {
+                var wa = sc.WorkingArea;
+                var area = new Rect(wa.X / scale, wa.Y / scale, wa.Width / scale, wa.Height / scale);
+                var hit = Rect.Intersect(area, titleDip);
+                if (!hit.IsEmpty && hit.Width >= Math.Min(100, titleDip.Width) && hit.Height >= 20) return true;
+            }
+            return false;
+        }
+        catch
+        {
+            // 모니터 정보를 못 읽으면 예전처럼 가상 화면 기준
+            var screen = new Rect(SystemParameters.VirtualScreenLeft, SystemParameters.VirtualScreenTop,
+                SystemParameters.VirtualScreenWidth, SystemParameters.VirtualScreenHeight);
+            return screen.IntersectsWith(titleDip);
+        }
+    }
+
     private void SaveWindowState()
     {
+        CommitSettingsInputs();
         var r = WindowState == WindowState.Normal ? new Rect(Left, Top, ActualWidth, ActualHeight) : RestoreBounds;
         var claude = ClaudeColumn.ActualWidth > 0 ? ClaudeColumn.ActualWidth : _claudeWidth;
+        // 최소화한 채 닫으면 WindowState 는 Minimized — 최소화 직전 상태(최대화 여부)를 저장
+        var maximized = WindowState == WindowState.Maximized || (WindowState == WindowState.Minimized && _maximizedBeforeMinimize);
         SettingsStore.UpdateState(s =>
         {
             if (!r.IsEmpty && r.Width > 0) s.WindowBounds = new[] { r.X, r.Y, r.Width, r.Height };
-            s.WindowMaximized = WindowState == WindowState.Maximized;
+            s.WindowMaximized = maximized;
             s.ClaudePanelWidth = Math.Round(claude);
         });
     }

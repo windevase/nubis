@@ -44,7 +44,7 @@ public sealed class McpServer : IDisposable
 {
     public const string ServerName = "nubis";
 
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly Dictionary<string, McpTool> _tools;
     private readonly string _instructions;
     // 처리 중인 요청 id(JSON 원문) → 취소 토큰. notifications/cancelled 가 오면 취소한다
@@ -57,15 +57,40 @@ public sealed class McpServer : IDisposable
     public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
     public string Url => $"http://127.0.0.1:{Port}/mcp";
 
+    /// <summary>지원하는 MCP 프로토콜 버전 (최신이 앞). initialize 의 요청 버전이 여기 없으면 첫 번째(최신)로 답한다</summary>
+    public static readonly string[] SupportedProtocolVersions = { "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05" };
+
     public McpServer(IEnumerable<McpTool> tools, string instructions)
     {
         _tools = tools.ToDictionary(t => t.Name);
         _instructions = instructions;
-        Port = FreePort();
-        _listener.Prefixes.Add($"http://127.0.0.1:{Port}/");
-        _listener.Start();
+        // 빈 포트를 고른 뒤 실제로 열기까지 사이에 다른 프로그램이 그 포트를 잡을 수 있다 (TOCTOU) — 몇 번 다시 고른다
+        for (var attempt = 1; ; attempt++)
+        {
+            var port = FreePort();
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
+            try
+            {
+                listener.Start();
+                _listener = listener;
+                Port = port;
+                break;
+            }
+            catch (HttpListenerException) when (attempt < 5)
+            {
+                try { listener.Close(); } catch { }
+            }
+        }
         _ = AcceptLoop();
     }
+
+    /// <summary>initialize 의 protocolVersion 협상: 지원하는 버전이면 그대로, 아니면(없음·문자열 아님 포함) 지원하는 최신 버전</summary>
+    public static string NegotiateProtocolVersion(JsonElement p) =>
+        p.ValueKind == JsonValueKind.Object && p.TryGetProperty("protocolVersion", out var v) && v.ValueKind == JsonValueKind.String &&
+        Array.IndexOf(SupportedProtocolVersions, v.GetString()) >= 0
+            ? v.GetString()!
+            : SupportedProtocolVersions[0];
 
     private static int FreePort()
     {
@@ -88,6 +113,12 @@ public sealed class McpServer : IDisposable
         };
         File.WriteAllText(path, JsonSerializer.Serialize(cfg, new JsonSerializerOptions { WriteIndented = true }));
         return path;
+    }
+
+    /// <summary>앱 종료 때 토큰이 든 클라이언트 설정 파일을 지운다 (서버가 닫힌 뒤에는 쓸모없는 비밀 값)</summary>
+    public static void DeleteClientConfig(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     private async Task AcceptLoop()
@@ -119,8 +150,22 @@ public sealed class McpServer : IDisposable
 
             string body;
             using (var r = new StreamReader(ctx.Request.InputStream, Encoding.UTF8)) body = await r.ReadToEndAsync();
-            using var doc = JsonDocument.Parse(body);
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(body); }
+            catch (JsonException)
+            {
+                // JSON-RPC: 파싱 실패는 HTTP 500 이 아니라 -32700 오류 응답 (id 는 알 수 없으므로 null)
+                await WriteJson(res, ErrorReply(null, -32700, "Parse error"));
+                return;
+            }
+            using var _doc = doc;
             var req = doc.RootElement;
+            if (req.ValueKind != JsonValueKind.Object)
+            {
+                // 배치(배열)·기타 값은 지원하지 않는다 → -32600 Invalid Request
+                await WriteJson(res, ErrorReply(null, -32600, "Invalid Request"));
+                return;
+            }
 
             var method = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() ?? "" : "";
             var p = req.TryGetProperty("params", out var pEl) ? pEl : default;
@@ -151,17 +196,20 @@ public sealed class McpServer : IDisposable
             }
             catch (MissingMethodException ex)
             {
-                reply = new { jsonrpc = "2.0", id, error = new { code = -32601, message = ex.Message } };
+                reply = ErrorReply(id, -32601, ex.Message);
+            }
+            catch (Exception ex)
+            {
+                // 도구 오류는 Dispatch 안에서 도구 결과(isError)로 바뀐다. 여기까지 온 것은 요청 처리 자체의 오류 → -32603
+                Log($"MCP 요청 처리 오류 ({method}): {ex}");
+                reply = ErrorReply(id, -32603, "Internal error");
             }
             finally
             {
                 _inflight.TryRemove(new KeyValuePair<string, CancellationTokenSource>(key, cts));
             }
 
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(reply);
-            res.ContentType = "application/json";
-            res.ContentLength64 = bytes.Length;
-            await res.OutputStream.WriteAsync(bytes);
+            await WriteJson(res, reply);
         }
         catch (Exception ex)
         {
@@ -171,6 +219,17 @@ public sealed class McpServer : IDisposable
         {
             try { res.Close(); } catch { }
         }
+    }
+
+    private static object ErrorReply(JsonElement? id, int code, string message) =>
+        new { jsonrpc = "2.0", id, error = new { code, message } };
+
+    private static async Task WriteJson(HttpListenerResponse res, object reply)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(reply);
+        res.ContentType = "application/json";
+        res.ContentLength64 = bytes.Length;
+        await res.OutputStream.WriteAsync(bytes);
     }
 
     /// <summary>Authorization 헤더가 "Bearer {Token}" 과 같은지 — 비교 시간으로 토큰을 알아내지 못하게 고정 시간 비교</summary>
@@ -221,10 +280,9 @@ public sealed class McpServer : IDisposable
         switch (method)
         {
             case "initialize":
-                var version = p.ValueKind == JsonValueKind.Object && p.TryGetProperty("protocolVersion", out var v) ? v.GetString() : "2025-06-18";
                 return new
                 {
-                    protocolVersion = version,
+                    protocolVersion = NegotiateProtocolVersion(p),
                     capabilities = new { tools = new { listChanged = false } },
                     serverInfo = new { name = ServerName, version = typeof(McpServer).Assembly.GetName().Version?.ToString(3) ?? "0.0.0" },
                     instructions = _instructions,

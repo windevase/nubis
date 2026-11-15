@@ -42,12 +42,23 @@ public static class CloudStore
 public static class CloudSync
 {
     /// <summary>
+    /// 조회 결과(CloudFetchResult)를 그대로 반영. 실제 조회 실패가 있으면 아무것도 지우지 않고,
+    /// 권한(SCP·IAM)으로 거부된 리전만 있으면 그 리전(과 리전을 모르는) 호스트는 남기고 나머지 리전에서만 사라진 서버를 지운다.
+    /// removedHosts 를 주면 지운 호스트를 담는다 (점프 호스트로 쓰이던 호스트가 지워졌는지 화면에서 알릴 때).
+    /// (Apply 오버로드로 두면 호출부의 target-typed new() 가 모호해지므로 이름을 따로 둔다)
+    /// </summary>
+    public static (int added, int updated, int removed) ApplyResult(CloudProfile p, CloudFetchResult result, List<HostEntry> hosts,
+        ICollection<HostEntry>? removedHosts = null) =>
+        Apply(p, result.Items, hosts, removeMissing: !result.HasUnexpectedErrors, removedHosts: removedHosts,
+            protectedRegions: result.DeniedRegions);
+
+    /// <summary>
     /// 조회 결과를 호스트 목록에 반영한다. 이름·주소·상태 등 클라우드 정보는 갱신하고,
-    /// 사용자가 바꾼 프로토콜·포트·계정은 유지한다. 클라우드에서 사라진 인스턴스는 제거한다.
+    /// 사용자가 바꾼 프로토콜·포트·계정은 유지한다. 클라우드에서 사라진 인스턴스는 제거한다 (removeMissing 일 때, protectedRegions 의 호스트 제외).
     /// 조회 결과의 중복 InstanceId 는 첫 번째만 반영하고, 같은 인스턴스를 가리키는 기존 호스트가 여럿이면 첫 번째만 남긴다(삭제 허용 시).
     /// </summary>
     public static (int added, int updated, int removed) Apply(CloudProfile p, List<CloudInstance> instances, List<HostEntry> hosts,
-        bool removeMissing = true)
+        bool removeMissing = true, ICollection<HostEntry>? removedHosts = null, IReadOnlyCollection<string>? protectedRegions = null)
     {
         var groups = hosts.Where(h => h.CloudProfileId == p.Id && h.CloudInstanceId != null)
             .GroupBy(h => h.CloudInstanceId!).ToList();
@@ -125,10 +136,29 @@ public static class CloudSync
         }
 
         // 일부 리전/영역 조회가 실패한 경우(removeMissing=false)엔 "안 보인 서버" 를 지우지 않는다 — 일시 장애로 호스트·저장 계정이 사라지는 것 방지
+        // 권한 거부 리전(protectedRegions)의 호스트와 리전을 모르는 호스트는 이번에 보지 못한 것이므로 남긴다
+        var denied = protectedRegions is { Count: > 0 }
+            ? new HashSet<string>(protectedRegions, StringComparer.OrdinalIgnoreCase)
+            : null;
+        bool IsProtected(HostEntry h) => denied != null && (string.IsNullOrEmpty(h.CloudRegion) || denied.Contains(h.CloudRegion));
         var removed = removeMissing
-            ? hosts.RemoveAll(h => h.CloudProfileId == p.Id &&
-                (h.CloudInstanceId == null || !seen.Contains(h.CloudInstanceId) || duplicates.Contains(h)))
+            ? hosts.RemoveAll(h =>
+            {
+                if (h.CloudProfileId != p.Id || IsProtected(h)) return false;
+                if (h.CloudInstanceId != null && seen.Contains(h.CloudInstanceId) && !duplicates.Contains(h)) return false;
+                removedHosts?.Add(h);
+                return true;
+            })
             : 0;
+
+        // 숨긴 인스턴스 목록 정리: 빠짐없이 조회된 경우에만, 클라우드에서 없어진(종료된) 인스턴스 ID 를 뺀다 (목록이 계속 커지지 않게).
+        // 인스턴스 ID 는 다시 쓰이지 않으므로 지워도 숨긴 서버가 다시 나타나지 않는다
+        if (removeMissing && denied == null && p.HiddenInstances.Count > 0)
+        {
+            var alive = new HashSet<string>(instances.Select(i => i.InstanceId));
+            p.HiddenInstances.RemoveAll(id => !alive.Contains(id));
+        }
+
         p.LastSync = DateTime.Now;
         return (added, updated, removed);
     }

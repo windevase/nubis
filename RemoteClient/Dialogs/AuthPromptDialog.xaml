@@ -13,9 +13,13 @@
         <StackPanel Margin="24,22,24,22">
             <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap"/>
             <TextBlock x:Name="TargetText" Foreground="{StaticResource SubText}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
-            <TextBlock x:Name="InstructionText" Foreground="{StaticResource SubText}" Margin="0,10,0,0" TextWrapping="Wrap"
-                       MaxHeight="160"/>
+            <!-- 서버 안내문(배너 포함)이 길면 잘리지 않게 스크롤 -->
+            <ScrollViewer x:Name="InstructionScroll" Margin="0,10,0,0" MaxHeight="200"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                <TextBlock x:Name="InstructionText" Foreground="{StaticResource SubText}" TextWrapping="Wrap"/>
+            </ScrollViewer>
             <StackPanel x:Name="FieldsPanel"/>
+            <TextBlock x:Name="HintText" Foreground="#E5B567" Margin="0,10,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
 
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
                 <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>

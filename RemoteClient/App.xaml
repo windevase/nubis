@@ -31,6 +31,31 @@
         <SolidColorBrush x:Key="AccentHover" Color="{StaticResource AccentHoverColor}"/>
         <SolidColorBrush x:Key="RdpBrush" Color="{StaticResource RdpColor}"/>
         <SolidColorBrush x:Key="Danger" Color="{StaticResource DangerColor}"/>
+        <!-- 대화상자 배경 · 마우스를 올린 입력란 테두리 · 대화상자 본문 글자 (각 창에 색을 직접 쓰지 않게) -->
+        <SolidColorBrush x:Key="DialogBg" Color="#1B1E2C"/>
+        <SolidColorBrush x:Key="InputHoverLine" Color="#3A4060"/>
+        <SolidColorBrush x:Key="DialogText" Color="#C9CDDB"/>
+
+        <!-- ===== 키보드 포커스 표시 (Tab 으로 이동할 때만 보임 — 마우스 클릭에는 나타나지 않는다) ===== -->
+        <Style x:Key="FocusRing">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border CornerRadius="8" BorderBrush="{StaticResource Accent}" BorderThickness="2" Margin="-2"
+                                SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="FocusRingSquare">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border BorderBrush="{StaticResource Accent}" BorderThickness="2" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI, Malgun Gothic</FontFamily>
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
@@ -65,7 +90,7 @@
                                 <Setter TargetName="ph" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="#3A4060"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource InputHoverLine}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
@@ -96,7 +121,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="BorderBrush" Value="#3A4060"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource InputHoverLine}"/>
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
@@ -116,7 +141,7 @@
             <Setter Property="Padding" Value="14,8"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="Template">
@@ -178,7 +203,7 @@
             <Setter Property="Tag" Value="#1E2232"/>
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
             <Setter Property="FontSize" Value="10"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRingSquare}"/>
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -202,7 +227,7 @@
             <Setter Property="Foreground" Value="{StaticResource SubText}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Margin" Value="10,1"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -236,7 +261,7 @@
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
@@ -248,6 +273,9 @@
                                 <Setter TargetName="bd" Property="Background" Value="{StaticResource CardHoverBg}"/>
                                 <Setter Property="Foreground" Value="{StaticResource Text}"/>
                             </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -258,23 +286,35 @@
         <Style TargetType="CheckBox">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <StackPanel Orientation="Horizontal" Background="Transparent">
-                            <Border x:Name="box" Width="16" Height="16" CornerRadius="4" BorderThickness="1"
-                                    BorderBrush="#3A4060" Background="{StaticResource InputBg}" VerticalAlignment="Center">
+                        <!-- Grid(Auto, *) — StackPanel 이면 폭 제한이 없어 긴 설명이 줄바꿈되지 않는다.
+                             상자는 첫 줄에 맞춰 위쪽 정렬, 전체는 컨트롤 안에서 세로 가운데 -->
+                        <Grid Background="Transparent" VerticalAlignment="Center">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Border x:Name="box" Width="16" Height="16" CornerRadius="4" BorderThickness="1" Margin="0,1,0,0"
+                                    BorderBrush="{StaticResource InputHoverLine}" Background="{StaticResource InputBg}" VerticalAlignment="Top">
                                 <TextBlock x:Name="chk" Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="10"
                                            Foreground="#06231C" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                             </Border>
-                            <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
+                            <ContentPresenter Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Top"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="box" Property="Background" Value="{StaticResource Accent}"/>
                                 <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Accent}"/>
                                 <Setter TargetName="chk" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -340,7 +380,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ContextMenu">
-                        <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="4">
+                        <Border Background="{StaticResource DialogBg}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8" Padding="4">
                             <ScrollViewer MaxHeight="480" VerticalScrollBarVisibility="Auto">
                                 <StackPanel IsItemsHost="True"/>
                             </ScrollViewer>

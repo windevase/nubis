@@ -64,12 +64,20 @@ public partial class MainWindow
             };
             if (h.IsCloud && p != h.Protocol) throw new McpToolException("클라우드 동기화 호스트의 프로토콜은 바꿀 수 없습니다 (OS 에서 정해짐).");
             Note("프로토콜", h.ProtocolText, p == Protocol.Ssh ? "SSH" : "RDP");
-            if (isNew || p != h.Protocol) { var oldDefault = HostEntry.PreferredPort(h.Protocol); h.Protocol = p; if (!Has(a, "port") && (isNew || h.Port == oldDefault)) h.Port = HostEntry.PreferredPort(p); }
+            if (isNew || p != h.Protocol)
+            {
+                var oldDefault = HostEntry.PreferredPort(h.Protocol);
+                var oldPort = h.Port;
+                h.Protocol = p;
+                if (!Has(a, "port") && (isNew || h.Port == oldDefault)) h.Port = HostEntry.PreferredPort(p);
+                // 프로토콜을 바꾸며 기본 포트로 따라 바뀐 포트도 승인 창·결과에 보인다 (조용히 바뀌지 않게)
+                if (!isNew && h.Port != oldPort) Note("포트", oldPort, h.Port);
+            }
         }
         if (Has(a, "address"))
         {
             var addr = Arg(a, "address").Trim();
-            if (addr.Length == 0 || addr.Any(char.IsWhiteSpace)) throw new McpToolException("address 가 올바르지 않습니다.");
+            if (addr.Length == 0 || addr.Any(char.IsWhiteSpace) || McpHelpers.HasInvisibleChars(addr)) throw new McpToolException("address 가 올바르지 않습니다.");
             if (h.IsCloud) throw new McpToolException("클라우드 동기화 호스트의 주소는 동기화로만 바뀝니다.");
             Note("주소", h.Address, addr);
             h.Address = addr;
@@ -81,16 +89,24 @@ public partial class MainWindow
             Note("포트", h.Port, port);
             h.Port = port;
         }
-        if (Has(a, "label")) { var v = Arg(a, "label").Trim(); Note("이름", h.Label, v); h.Label = v; }
+        // 이름·그룹·사용자명에 보이지 않는 제어·양방향 문자(U+202E 등)를 넣으면 목록·승인 창에서 다른 서버처럼 보이게 꾸밀 수 있다 → 거부
+        string Visible(string field)
+        {
+            var v = Arg(a, field).Trim();
+            if (McpHelpers.HasInvisibleChars(v)) throw new McpToolException($"{field} 에 보이지 않는 제어 문자·양방향 문자가 있습니다: {McpHelpers.VisibleControlChars(v)}");
+            return v;
+        }
+        if (Has(a, "label")) { var v = Visible("label"); Note("이름", h.Label, v); h.Label = v; }
         if (Has(a, "group"))
         {
             if (h.IsCloud) throw new McpToolException("클라우드 호스트의 그룹은 클라우드 프로필입니다 (group 을 바꿀 수 없음).");
-            var v = Arg(a, "group").Trim(); Note("그룹", h.Group, v); h.Group = v;
+            var v = Visible("group"); Note("그룹", h.Group, v); h.Group = v;
         }
-        if (Has(a, "username")) { var v = Arg(a, "username").Trim(); Note("사용자명", h.Username, v); h.Username = v; }
+        if (Has(a, "username")) { var v = Visible("username"); Note("사용자명", h.Username, v); h.Username = v; }
         if (Has(a, "public_ip"))
         {
             var v = Arg(a, "public_ip").Trim();
+            if (v.Any(char.IsWhiteSpace) || McpHelpers.HasInvisibleChars(v)) throw new McpToolException("public_ip 가 올바르지 않습니다.");
             if (h.IsCloud) throw new McpToolException("클라우드 호스트의 공인 IP 는 동기화로만 바뀝니다.");
             Note("공인 IP", h.PublicIp, v.Length > 0 ? v : null);
             h.PublicIp = v.Length > 0 ? v : null;
@@ -156,8 +172,8 @@ public partial class MainWindow
         var text = string.Join("\n", changes);
         var risky = changes.Any(c => c.StartsWith("주소") || c.StartsWith("공인") || c.StartsWith("Vault") || c.StartsWith("포트"));
         if (!await AskApprovalAsync("update_host", L.T("Claude 가 호스트 설정 변경을 요청합니다"),
-                L.F("'{0}' 의 설정을 바꿉니다.", h.DisplayName) + (risky ? L.T("\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요.") : ""),
-                new[] { h.DisplayName }, text))
+                L.F("'{0}' 의 설정을 바꿉니다.", McpHelpers.VisibleControlChars(h.DisplayName)) + (risky ? L.T("\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요.") : ""),
+                new[] { McpHelpers.VisibleControlChars(h.DisplayName) }, text))
         {
             AuditLog.Write("update_host", new[] { h.DisplayName }, text, "거부");
             throw new McpToolException("사용자가 변경을 거부했습니다.");
@@ -180,7 +196,7 @@ public partial class MainWindow
         var specs = ListArg(a, "hosts");
         if (specs.Count == 0) throw new McpToolException("hosts 가 필요합니다.");
         var targets = specs.Select(ResolveOneHost).DistinctBy(h => h.Id).ToList();
-        var labels = targets.Select(h => $"{h.DisplayName}  ({h.ProtocolText} {h.Address}:{h.Port}{(h.IsCloud ? ", 클라우드 — 다음 동기화에서도 숨김" : "")})").ToList();
+        var labels = targets.Select(h => $"{McpHelpers.VisibleControlChars(h.DisplayName)}  ({h.ProtocolText} {h.Address}:{h.Port}{(h.IsCloud ? ", 클라우드 — 다음 동기화에서도 숨김" : "")})").ToList();
         if (!await AskApprovalAsync("delete_host", L.F("Claude 가 호스트 {0}개 삭제를 요청합니다", targets.Count),
                 L.T("Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다."), labels, "delete_host"))
         {
@@ -228,10 +244,12 @@ public partial class MainWindow
         await Task.WhenAll(targets.Select(async p =>
         {
             await gate.WaitAsync();
+            // 이미 동기화 중인 프로필은 그 동기화가 끝날 때까지 기다린다 (SyncProfileAsync 가 진행 중인 작업을 돌려줌)
             try { await await OnUi(() => SyncProfileAsync(p)); } finally { gate.Release(); }
         }));
+        // 변경 요약(LastResult)과 경고·실패(StatusText: 실패한 리전 · 제거된 호스트 · 점프 호스트 의존성)를 함께 보고
         var result = await OnUi(() => string.Join("\n", targets.Select(p =>
-            Line(p) + $" · {(p.StatusText.Length > 0 ? p.StatusText : p.LastResult)}")));
+            Line(p) + string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s)))));
         AuditLog.Write("cloud_sync", targets.Select(p => $"[{p.ProviderText}] {p.GroupName}"), "sync", "조회·반영");
         return "동기화 결과:\n" + result;
     }

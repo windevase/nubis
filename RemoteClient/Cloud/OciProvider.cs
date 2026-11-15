@@ -106,7 +106,7 @@ public sealed class OciProvider : ICloudProvider
         // 3. 리전 × 컴파트먼트 인스턴스
         var scopes = regions.SelectMany(r => compartments.Select(c => new Scope(r, c.id, c.name))).ToList();
         var (items, scopeErrors) = await CloudProviders.ParallelCollect(scopes, 8,
-            s => FetchScopeAsync(ctx, s, ct), s => $"{s.Region} · {s.CompartmentName}");
+            s => FetchScopeAsync(ctx, s, ct), s => $"{s.Region} · {s.CompartmentName}", ct);
         ct.ThrowIfCancellationRequested();
         errors.AddRange(scopeErrors);
 
@@ -143,10 +143,25 @@ public sealed class OciProvider : ICloudProvider
         var tasks = instances.Select(async inst =>
         {
             var (priv, pub) = await PrimaryIpsAsync(ctx, iaas, attachments.GetValueOrDefault(inst.Str("id")), ct);
-            var os = await ImageOsAsync(ctx, s.Region, iaas, ImageIdOf(inst), ct);
+            var imageId = ImageIdOf(inst);
+            // 부트 볼륨에서 만든 인스턴스는 이미지 ID 가 없다 — 부트 볼륨의 원본 이미지로 OS 를 찾는다 (Windows 를 SSH 로 등록하지 않게)
+            if (imageId.Length == 0 && BootVolumeIdOf(inst) is { Length: > 0 } bv)
+                imageId = await BootVolumeImageIdAsync(ctx, iaas, bv, ct);
+            var os = await ImageOsAsync(ctx, s.Region, iaas, imageId, ct);
             return MapInstance(inst, s.Region, priv, pub, os);
         });
         return await Task.WhenAll(tasks);
+    }
+
+    /// <summary>부트 볼륨의 원본 이미지 ID. 없거나 볼 권한이 없으면 ""</summary>
+    private static async Task<string> BootVolumeImageIdAsync(Ctx ctx, string iaas, string bootVolumeId, CancellationToken ct)
+    {
+        try
+        {
+            var (vol, _) = await GetAsync(ctx, $"{iaas}/bootVolumes/{Uri.EscapeDataString(bootVolumeId)}", ct);
+            return vol.Str("imageId");
+        }
+        catch (OciApiException ex) when (ex.Status is 404 or 403 or 401) { return ""; }
     }
 
     /// <summary>주 VNIC 의 사설/공인 IP. 주 VNIC 를 못 찾으면 처음 읽은 VNIC, 없으면 빈 값 (동기화가 기존 호스트를 유지)</summary>
@@ -337,16 +352,24 @@ public sealed class OciProvider : ICloudProvider
     internal static bool NeedsRefresh(DateTimeOffset? expiresUtc, DateTimeOffset now) =>
         expiresUtc is { } exp && exp - now < RefreshMargin;
 
-    /// <summary>테넌시 OCID 의 realm(ocid1.tenancy.oc1..) 에 맞는 도메인. 모르면 상용(oraclecloud.com)</summary>
+    /// <summary>
+    /// 테넌시 OCID 의 realm(ocid1.tenancy.oc1..) 에 맞는 도메인. OCI SDK 의 realm 표와 같은 규칙:
+    /// oc1 = oraclecloud.com, oc2·oc3 = oraclegovcloud.com, oc4 = oraclegovcloud.uk, oc19(EU 소버린) = oraclecloud.eu,
+    /// 그 밖의 ocN(oc8 · oc9 · oc10 · oc14 ...) = oraclecloudN.com. 형식을 모르면 상용(oraclecloud.com)
+    /// </summary>
     internal static string RealmDomain(string? tenancyOcid)
     {
         var parts = (tenancyOcid ?? "").Split('.');
         var realm = parts.Length > 2 ? parts[2].ToLowerInvariant() : "";
         return realm switch
         {
+            "oc1" => "oraclecloud.com",
             "oc2" or "oc3" => "oraclegovcloud.com",
             "oc4" => "oraclegovcloud.uk",
-            "oc8" => "oraclecloud8.com",
+            "oc19" => "oraclecloud.eu",
+            _ when realm.Length > 2 && realm.StartsWith("oc", StringComparison.Ordinal) &&
+                   int.TryParse(realm.AsSpan(2), System.Globalization.NumberStyles.None,
+                       System.Globalization.CultureInfo.InvariantCulture, out var n) && n >= 5 => $"oraclecloud{n}.com",
             _ => "oraclecloud.com",
         };
     }
@@ -398,6 +421,13 @@ public sealed class OciProvider : ICloudProvider
     {
         var id = inst.Obj("sourceDetails").Str("imageId");
         return id.Length > 0 ? id : inst.Str("imageId");
+    }
+
+    /// <summary>부트 볼륨에서 만든 인스턴스의 부트 볼륨 ID (sourceDetails.sourceType = bootVolume). 아니면 ""</summary>
+    internal static string BootVolumeIdOf(JsonElement inst)
+    {
+        var src = inst.Obj("sourceDetails");
+        return src.Str("sourceType").Equals("bootVolume", StringComparison.OrdinalIgnoreCase) ? src.Str("bootVolumeId") : "";
     }
 
     /// <summary>이미지 응답 → "운영체제 버전" (예: "Oracle Linux 8", "Windows Server 2022 Standard")</summary>

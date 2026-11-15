@@ -65,9 +65,28 @@ public sealed class GcpProvider : ICloudProvider
         return list.OrderBy(c => c.Name).ToList();
     }
 
+    /// <summary>
+    /// Compute Engine API 가 꺼져 있다는 오류인지. 실제 메시지는
+    /// "Compute Engine API has not been used in project N before or it is disabled. Enable it by visiting ...compute.googleapis.com..." 형태.
+    /// "disabled" 한 단어만 보면 결제 계정·프로젝트 비활성 등 다른 오류까지 이 안내로 바뀌므로 API 이름도 함께 본다
+    /// </summary>
+    internal static bool IsComputeApiDisabled(string message) =>
+        message.Contains("has not been used", StringComparison.OrdinalIgnoreCase) ||
+        (message.Contains("disabled", StringComparison.OrdinalIgnoreCase) &&
+         (message.Contains("compute.googleapis.com", StringComparison.OrdinalIgnoreCase) ||
+          message.Contains("Compute Engine API", StringComparison.OrdinalIgnoreCase)));
+
     public async Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct)
     {
-        var (token, quota) = await TokenAsync(ct);
+        string token;
+        string? quota;
+        try { (token, quota) = await TokenAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException &&
+                                   (ex is InvalidOperationException || ex is Google.Apis.Auth.OAuth2.Responses.TokenResponseException))
+        {
+            // ADC 파일이 없거나(InvalidOperationException) 토큰 갱신이 거부됨(재인증 필요 등)
+            throw new InvalidOperationException(L.F("GCP 로그인이 필요합니다 ({0}) — {1}", LoginCommand(p), CloudProviders.FirstLine(ex.Message)));
+        }
         var result = new List<CloudInstance>();
         var errors = new List<string>();
         string? page = null;
@@ -77,7 +96,7 @@ public sealed class GcpProvider : ICloudProvider
                       "?returnPartialSuccess=true" + (page != null ? "&pageToken=" + Uri.EscapeDataString(page) : "");
             JsonElement r;
             try { r = await CloudProviders.GetJsonAsync(url, token, ct, quota); }
-            catch (HttpRequestException ex) when (ex.Message.Contains("has not been used") || ex.Message.Contains("disabled"))
+            catch (HttpRequestException ex) when (IsComputeApiDisabled(ex.Message))
             {
                 throw new InvalidOperationException(L.T("이 프로젝트는 Compute Engine API 를 사용하지 않습니다."));
             }

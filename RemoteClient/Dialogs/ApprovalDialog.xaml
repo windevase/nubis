@@ -18,6 +18,14 @@
                 </Border>
                 <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
             </StackPanel>
+            <!-- 요청한 MCP 도구 이름 · 뒤에 기다리는 승인 요청 수 -->
+            <StackPanel Orientation="Horizontal" Margin="36,6,0,0">
+                <Border x:Name="ToolBadge" Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                        CornerRadius="4" Padding="6,1" Visibility="Collapsed">
+                    <TextBlock x:Name="ToolText" FontFamily="Cascadia Mono, Consolas" FontSize="11" Foreground="{StaticResource SubText}"/>
+                </Border>
+                <TextBlock x:Name="QueueText" Foreground="#F5B740" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+            </StackPanel>
             <TextBlock x:Name="DescText" Foreground="{StaticResource SubText}" Margin="0,8,0,0" TextWrapping="Wrap"/>
 
             <TextBlock x:Name="TargetsLabel" Style="{StaticResource FieldLabel}"/>

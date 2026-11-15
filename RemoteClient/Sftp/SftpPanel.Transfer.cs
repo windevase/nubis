@@ -77,14 +77,16 @@ public partial class SftpPanel
             // 전송 계획: (로컬 파일, 원격 경로, 크기) + 만들 폴더
             var (files, dirs) = await Task.Run(() => PlanUpload(localPaths, target, ct), ct);
 
-            // 이미 있는 파일 (폴더 안의 파일까지): 덮어쓰기 / 건너뛰기 / 취소
+            // 이미 있는 파일 (폴더 안의 파일까지): 덮어쓰기 / 건너뛰기 / 취소.
+            // 파일이 많으면 파일마다 묻지 않고 대상 폴더 목록을 한 번씩 읽어 판단한다 (수천 개면 왕복만 수 분 걸렸다)
+            var names = files.Count >= RemoteNameCache.BatchThreshold ? new RemoteNameCache(p => ListNames(c, p)) : null;
             var existing = await Task.Run(() =>
             {
                 var set = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var f in files)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (c.Exists(f.Remote)) set.Add(f.Remote);
+                    if (names?.Exists(f.Remote) ?? c.Exists(f.Remote)) set.Add(f.Remote);
                 }
                 return set;
             }, ct);
@@ -103,13 +105,31 @@ public partial class SftpPanel
             TransferText.Text = L.F("업로드 준비 ({0}개, {1})", files.Count, HumanSize(total));
             TransferProgress.IsIndeterminate = total == 0;
             TransferProgress.Value = 0;
-            await Task.Run(() => { foreach (var d in dirs) if (!c.Exists(d)) c.CreateDirectory(d); }, ct);
-            foreach (var (local, remote, size) in files)
+            await Task.Run(() =>
             {
-                TransferText.Text = L.F("업로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
+                foreach (var d in dirs)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (names?.Exists(d) ?? c.Exists(d)) continue;
+                    c.CreateDirectory(d);
+                    names?.Created(d);
+                }
+            }, ct);
+            var meter = new TransferMeter(total);
+            for (var n = 0; n < files.Count; n++)
+            {
+                var (local, remote, size) = files[n];
+                var label = L.F("업로드 {0}  [{1}/{2}]", Path.GetFileName(local), n + 1, files.Count);
+                TransferText.Text = $"{label}  ({meter.Detail(done)})";
                 var baseDone = done;
-                var progress = new Progress<Renci.SshNet.UploadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesUploaded, total));
-                await UploadOneAsync(c, local, remote, progress, ct);
+                var progress = new Progress<Renci.SshNet.UploadFileProgressReport>(r =>
+                {
+                    var now = baseDone + (long)r.TotalBytesUploaded;
+                    SetProgress(now, total);
+                    if (meter.Due()) TransferText.Text = $"{label}  ({meter.Detail(now)})";
+                });
+                // 목록으로 없다고 확인한 파일은 업로드 전에 다시 묻지 않는다 (새 폴더에 올리는 수천 개 파일)
+                await UploadOneAsync(c, () => File.OpenRead(local), remote, progress, ct, knownMissing: names?.Exists(remote) == false);
                 done += size;
                 SetProgress(done, total);
             }
@@ -128,7 +148,10 @@ public partial class SftpPanel
         foreach (var p in localPaths)
         {
             ct.ThrowIfCancellationRequested();
-            var name = Path.GetFileName(p.TrimEnd('\\'));
+            var name = Path.GetFileName(p.TrimEnd('\\', '/'));
+            // 드라이브 루트(C:\)는 이름이 비어 대상 폴더에 드라이브 전체가 풀려 올라간다 — 받지 않는다
+            if (string.IsNullOrEmpty(name))
+                throw new InvalidOperationException(L.F("드라이브 전체는 업로드할 수 없습니다: {0}", p));
             if (Directory.Exists(p))
             {
                 var root = Combine(target, name);
@@ -154,7 +177,8 @@ public partial class SftpPanel
     private async void OnDownloadClick(object sender, RoutedEventArgs e)
     {
         var items = Selected();
-        if (items.Count == 0 || _busy) return;
+        if (items.Count == 0) return;
+        if (_busy) { ShowBusyHint(); return; }
         var downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
         var dlg = new Microsoft.Win32.OpenFolderDialog { Title = L.T("다운로드할 폴더 선택"), InitialDirectory = downloads };
         if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
@@ -170,7 +194,9 @@ public partial class SftpPanel
 
     private async void OnOpenCopy(object sender, RoutedEventArgs e)
     {
-        if (FileList.SelectedItem is SftpItem { IsDir: false } item) await OpenFileAsync(item);
+        if (FileList.SelectedItem is not SftpItem { IsDir: false } item) return;
+        if (item.IsSpecial) { ShowStatus(L.F("장치·FIFO·소켓 같은 특수 파일은 열 수 없습니다: {0}", item.Name)); return; }
+        await OpenFileAsync(item);
     }
 
     /// <summary>임시 폴더로 받아 기본 프로그램으로 열기 (로그·설정 파일 확인용)</summary>
@@ -205,7 +231,11 @@ public partial class SftpPanel
         try
         {
             if (openWhenDone && files.Count == 1)
+            {
+                // "읽기 전용 사본" — 편집기에서 고쳐 저장해도 서버에 올라가지 않으므로 저장부터 막아 착각하지 않게
+                try { File.SetAttributes(files[0], File.GetAttributes(files[0]) | FileAttributes.ReadOnly); } catch { }
                 OpenDownloaded(files[0]);
+            }
             else if (SettingsStore.Current.SftpOpenFolderAfterDownload)
                 Process.Start(new ProcessStartInfo("explorer.exe", $"\"{localDir}\"") { UseShellExecute = true });
         }
@@ -242,11 +272,19 @@ public partial class SftpPanel
             var total = files.Sum(f => f.Size);
             long done = 0;
             foreach (var d in dirs) Directory.CreateDirectory(d);
-            foreach (var (remote, local, size) in files)
+            var meter = new TransferMeter(total);
+            for (var n = 0; n < files.Count; n++)
             {
-                TransferText.Text = L.F("다운로드 {0}  ({1} / {2})", Path.GetFileName(local), HumanSize(done), HumanSize(total));
+                var (remote, local, size) = files[n];
+                var label = L.F("다운로드 {0}  [{1}/{2}]", Path.GetFileName(local), n + 1, files.Count);
+                TransferText.Text = $"{label}  ({meter.Detail(done)})";
                 var baseDone = done;
-                var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress(baseDone + (long)r.TotalBytesDownloaded, total));
+                var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r =>
+                {
+                    var now = baseDone + (long)r.TotalBytesDownloaded;
+                    SetProgress(now, total);
+                    if (meter.Due()) TransferText.Text = $"{label}  ({meter.Detail(now)})";
+                });
                 // 받는 중에는 .part 로 쓰고 다 받은 뒤 이름을 바꾼다 (취소·실패 때 반쯤 받은 파일이 남지 않게).
                 // .part 이름은 겹치지 않게 — 같은 폴더의 "x.part" 파일을 "x" 받는 중에 덮어쓰지 않게
                 var part = $"{local}.{Guid.NewGuid().ToString("N")[..8]}.part";
@@ -255,6 +293,8 @@ public partial class SftpPanel
                     await using (var fs = File.Create(part))
                         await c.DownloadFileAsync(remote, fs, progress, ct);
                     File.Move(part, local, overwrite: true);
+                    // 다른 서버에서 받은 파일 — "인터넷에서 받음" 표시로 실행 파일은 SmartScreen, 문서는 보호된 보기가 적용되게 (탐색기로 끌어낸 파일 포함)
+                    MarkFromInternet(local);
                 }
                 catch
                 {
@@ -293,19 +333,20 @@ public partial class SftpPanel
     /// - 내 소유가 아닌 파일 (그룹 쓰기 권한으로 고치는 www-data 파일 등 — 바꿔치기하면 소유자가 바뀌고 하드링크·ACL 이 끊김)
     /// - 이름 바꾸기 실패 — 원본을 먼저 지우지 않는다
     /// </summary>
-    private static Task UploadOneAsync(SftpClient c, string local, string remote, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct) =>
-        UploadOneAsync(c, () => File.OpenRead(local), remote, progress, ct);
-
     /// <param name="open">올릴 내용 (부를 때마다 처음부터 읽는 새 스트림 — 교체 실패 때 다시 올린다)</param>
-    private static async Task UploadOneAsync(SftpClient c, Func<Stream> open, string remote, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct)
+    /// <param name="knownMissing">방금 폴더 목록으로 없다고 확인함 — 다시 묻지 않는다</param>
+    private static async Task UploadOneAsync(SftpClient c, Func<Stream> open, string remote, IProgress<Renci.SshNet.UploadFileProgressReport> progress, CancellationToken ct,
+        bool knownMissing = false)
     {
-        var old = await Task.Run(() => c.Exists(remote) ? c.GetAttributes(remote) : null, ct);
+        var old = knownMissing ? null : await Task.Run(() => TryGetAttributes(c, remote), ct);
         if (old == null)
         {
             try { await UploadToAsync(c, open, remote, progress, ct); }
             catch { await Task.Run(() => { try { c.DeleteFile(remote); } catch { } }); throw; }
             return;
         }
+        // GetAttributes 는 경로를 REALPATH 로 풀어 링크 대상의 속성을 돌려주므로, 여기서 링크로 보이는 것은 대상이 없는(끊긴) 링크뿐이다.
+        // 살아 있는 링크는 아래 바꿔치기에서 RenameFile 도 경로를 풀어 대상 파일을 교체하므로 링크는 그대로 남는다
         if (old.IsSymbolicLink) { await UploadToAsync(c, open, remote, progress, ct); return; }
 
         // 임시 이름은 예측할 수 없게, 이미 있으면 실패하게(심어 둔 링크를 따라가지 않음), 내용을 쓰기 전에 0600 으로

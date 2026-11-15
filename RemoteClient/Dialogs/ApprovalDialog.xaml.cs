@@ -39,10 +39,54 @@ public partial class ApprovalDialog : Window
         Loaded += (_, _) => timer.Start();
     }
 
-    public static bool Ask(Window owner, string title, string description, IReadOnlyList<string> targets, string command)
+    /// <summary>뒤에 기다리는 다른 승인 요청 수 표시 (0 이면 숨김). 창이 열려 있는 동안 바뀌면 다시 부른다</summary>
+    public void SetWaiting(int count)
+    {
+        QueueText.Text = count > 0 ? L.F("승인 대기 {0}건 더 있음", count) : "";
+        QueueText.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct FLASHWINFO
+    {
+        public uint cbSize;
+        public IntPtr hwnd;
+        public uint dwFlags;
+        public uint uCount;
+        public uint dwTimeout;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool FlashWindowEx(ref FLASHWINFO info);
+
+    /// <summary>작업 표시줄 버튼을 사용자가 창으로 돌아올 때까지 깜박인다 (FLASHW_ALL | FLASHW_TIMERNOFG)</summary>
+    private static void Flash(Window w)
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(w).Handle;
+            if (hwnd == IntPtr.Zero) return;
+            var info = new FLASHWINFO { hwnd = hwnd, dwFlags = 3 | 12, uCount = uint.MaxValue, dwTimeout = 0 };
+            info.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(info);
+            FlashWindowEx(ref info);
+        }
+        catch { }
+    }
+
+    /// <param name="tool">요청한 MCP 도구 이름 (배지로 표시, 생략 가능)</param>
+    /// <param name="waiting">이 창 뒤에 기다리는 승인 요청 수</param>
+    /// <param name="opened">창을 만든 직후(표시 전) 호출 — 호출한 쪽이 이 창을 기억해 대기 수를 갱신하거나 취소 때 닫는다</param>
+    public static bool Ask(Window owner, string title, string description, IReadOnlyList<string> targets, string command,
+        string? tool = null, int waiting = 0, Action<ApprovalDialog>? opened = null)
     {
         var dlg = new ApprovalDialog { Owner = owner };
         dlg.TitleText.Text = title;
+        if (!string.IsNullOrEmpty(tool))
+        {
+            dlg.ToolText.Text = tool;
+            dlg.ToolBadge.Visibility = Visibility.Visible;
+        }
+        dlg.SetWaiting(waiting);
         dlg.DescText.Text = description;
         dlg.TargetsLabel.Text = L.F("대상 {0}개", targets.Count);
         dlg.TargetsText.Text = string.Join("\n", targets);
@@ -62,7 +106,15 @@ public partial class ApprovalDialog : Window
             dlg.WarnText.Visibility = Visibility.Visible;
         }
         if (owner.WindowState == WindowState.Minimized) owner.WindowState = WindowState.Normal;
-        owner.Activate();
+        if (owner.IsActive || owner.OwnedWindows.Cast<Window>().Any(w => w.IsActive))
+            owner.Activate();
+        else
+        {
+            // 사용자가 다른 프로그램에서 입력 중이면 키 입력을 빼앗지 않는다 — 창은 위에 띄우되 활성화하지 않고 작업 표시줄을 깜박인다
+            dlg.ShowActivated = false;
+            Flash(owner);
+        }
+        opened?.Invoke(dlg);
         return dlg.ShowDialog() == true;
     }
 

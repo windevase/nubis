@@ -48,21 +48,21 @@ public partial class MainWindow
         RefreshVault();
     }
 
-    private void SaveVault(VaultEntry entry)
+    /// <summary>저장하면 true. 실패하면 알리고 false (VaultStore 가 메모리 목록도 되돌린다)</summary>
+    private bool SaveVault(VaultEntry entry)
     {
-        try { VaultStore.Upsert(entry); }
-        catch (Exception ex) { Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault"); }
+        try { VaultStore.Upsert(entry); return true; }
+        catch (Exception ex) { Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault", MessageBoxButton.OK, MessageBoxImage.Error); return false; }
     }
 
     private void OnVaultEdit(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
-        // 대화상자에서 취소해도 원본이 바뀌지 않게 사본을 고친 뒤 반영
-        var copy = VaultStore.Get(entry.Id);
+        // 저장된 개체가 아니라 사본을 고친 뒤 Upsert 로 바꿔 넣는다 — 창이 열린 동안 접속(다른 스레드)이 반쯤 바뀐 값을 읽지 않고,
+        // 취소·저장 실패 때 원본이 그대로 남는다
+        var copy = VaultStore.Get(entry.Id)?.Clone();
         if (copy == null) { RefreshVault(); return; }
-        var backup = (copy.Name, copy.Username, copy.Note, copy.ProtectedPassword, copy.ProtectedKey, copy.ProtectedPassphrase, copy.PublicKey);
-        if (VaultEntryDialog.Edit(this, copy)) { SaveVault(copy); RefreshHosts(); }   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
-        else (copy.Name, copy.Username, copy.Note, copy.ProtectedPassword, copy.ProtectedKey, copy.ProtectedPassphrase, copy.PublicKey) = backup;
+        if (VaultEntryDialog.Edit(this, copy) && SaveVault(copy)) RefreshHosts();   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
         RefreshVault();
     }
 
@@ -80,6 +80,14 @@ public partial class MainWindow
                         string.Join("\n", all.Take(10).Select(h => "  " + h.DisplayName)) + (all.Count > 10 ? "\n  ..." : "")
                       : "");
         if (Dialog.Show(this, msg, L.T("Vault 삭제"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        // 먼저 지우고, 성공했을 때만 참조를 정리한다 (지우기에 실패했는데 호스트·기본 계정 연결만 끊기지 않게)
+        try { VaultStore.Remove(entry.Id); }
+        catch (Exception ex)
+        {
+            Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault", MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshVault();
+            return;
+        }
         foreach (var h in users) h.VaultId = null;
         // 지워진 계정을 가리키는 기본 계정 참조도 정리 (남아 있으면 지운 ID 를 계속 들고 있다)
         var profilesChanged = false;
@@ -94,8 +102,6 @@ public partial class MainWindow
             if (s.DefaultSshVaultId == entry.Id) s.DefaultSshVaultId = null;
             if (s.DefaultRdpVaultId == entry.Id) s.DefaultRdpVaultId = null;
         });
-        try { VaultStore.Remove(entry.Id); }
-        catch (Exception ex) { Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault"); }
         if (users.Count > 0) SaveHosts();
         RefreshHosts();
         RefreshVault();

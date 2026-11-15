@@ -54,7 +54,9 @@ public sealed class TencentProvider : ICloudProvider
     {
         var file = Path.Combine(TccliDir, p.Name + ".credential");
         if (!File.Exists(file)) throw new InvalidOperationException(L.F("{0} 이 없습니다 (tccli configure --profile {1}).", file, p.Name));
-        var cred = JsonDocument.Parse(await File.ReadAllTextAsync(file, ct)).RootElement;
+        JsonElement cred;
+        try { cred = JsonDocument.Parse(await File.ReadAllTextAsync(file, ct)).RootElement; }
+        catch (JsonException) { throw new InvalidOperationException(L.F("{0} 을 읽을 수 없습니다 (JSON 형식 확인).", file)); }
         var id = cred.Str("secretId");
         var key = cred.Str("secretKey");
         var token = cred.Str("token");
@@ -102,7 +104,7 @@ public sealed class TencentProvider : ICloudProvider
             if (inconsistent || rawCount != lastTotal)
                 throw new InvalidOperationException(L.F("조회 중 인스턴스 목록이 바뀌었습니다 (받은 {0}개 / 전체 {1}개) — 다시 동기화하세요.", rawCount, lastTotal));
             return (IEnumerable<CloudInstance>)result;
-        }, r => r);
+        }, r => r, ct);
 
         if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
         return new CloudFetchResult(items, errors);
@@ -151,11 +153,25 @@ public sealed class TencentProvider : ICloudProvider
 
         using var resp = await CloudProviders.Http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
-        var root = JsonDocument.Parse(body).RootElement.Obj("Response");
+        JsonElement root;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var r = doc.RootElement.Obj("Response");
+            root = r.ValueKind == JsonValueKind.Undefined ? default : r.Clone();
+        }
+        catch (JsonException)
+        {
+            // 게이트웨이 오류 페이지(HTML) 등 — JSON 파서 메시지 대신 HTTP 상태를 보여 준다
+            throw new InvalidOperationException($"HTTP {(int)resp.StatusCode}: {CloudProviders.FirstLine(body.Length > 200 ? body[..200] : body)}");
+        }
         var err = root.Obj("Error");
         if (err.ValueKind == JsonValueKind.Object)
             throw new InvalidOperationException($"{err.Str("Code")}: {err.Str("Message")}");
-        return root.Clone();
+        // 성공 상태인데 Response 가 없으면 빈 결과로 오인하지 않게 실패로 (리전 0개 · 서버 0개로 보여 삭제되는 것 방지)
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException($"HTTP {(int)resp.StatusCode}: unexpected response (no Response object)");
+        return root;
     }
 
     private static string Sha256Hex(string s) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(s))).ToLowerInvariant();

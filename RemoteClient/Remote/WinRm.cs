@@ -59,6 +59,13 @@ public static class WinRm
         foreach (var https in new[] { true, false })
         {
             var where = $"{addr}:{(https ? HttpsPort : HttpPort)}";
+            // 이 주소의 HTTPS 인증서를 이미 고정(저장)했으면 HTTP(5985)로 내려가지 않는다 —
+            // 중간자가 5986 만 막아 HTTP+NTLM 으로 유도해 NTLM 교환을 가로채는 것(다운그레이드) 방지
+            if (!https && HttpsPinned(addr))
+            {
+                errors.Add($"{where} 건너뜀 (이 주소는 HTTPS 인증서가 저장돼 있어 HTTP 로 내려가지 않음)");
+                continue;
+            }
             Transport? t = null;
             var shellCreated = false;
             try
@@ -78,6 +85,9 @@ public static class WinRm
                 // - 사용자 취소
                 var msg = ct.IsCancellationRequested ? "취소되었습니다." : Describe(ex);
                 var note = errors.Count > 0 ? $" [앞선 시도 실패: {string.Join(" / ", errors)}]" : "";
+                // 시간 초과·출력 한도로 멈췄으면 그때까지 받은 출력은 stdout 으로 (오류 메시지에 섞지 않는다)
+                if (ex is WinRmStoppedException stopped && !ct.IsCancellationRequested)
+                    return new ExecResult(h, false, null, stopped.Stdout, Trim(($"{where}: {msg}{note}\n" + stopped.Stderr).Trim()), sw.ElapsedMilliseconds);
                 return new ExecResult(h, false, null, "", $"{where}: {msg}{note}", sw.ElapsedMilliseconds);
             }
             catch (Exception ex)
@@ -100,6 +110,9 @@ public static class WinRm
     internal static bool StopRetrying(Exception ex, bool shellCreated, CancellationToken ct) =>
         shellCreated || ct.IsCancellationRequested || ex is WinRmFatalException;   // Cert·Auth·Fault 는 모두 WinRmFatalException
 
+    /// <summary>이 주소의 WinRM HTTPS 인증서 지문이 저장돼 있다 (거부 표시 포함)</summary>
+    private static bool HttpsPinned(string addr) => KnownHostStore.Get($"winrm:{addr}:{HttpsPort}") != null;
+
     /// <summary>URL 에 넣을 호스트: IPv6 리터럴은 [ ] 로 감싼다 (영역 ID "%12" 는 .NET Uri 가 그대로 받아들임)</summary>
     internal static string UrlHost(string host) =>
         !host.Contains(':') || host.StartsWith('[') ? host : "[" + host + "]";
@@ -113,6 +126,17 @@ public static class WinRm
     }
 
     private static string CloudProviders_FirstLine(string s) => (s ?? "").Split('\n')[0].Trim();
+
+    /// <summary>
+    /// HTTP 5985 에서 암호화되지 않은 응답. 서명·암호화가 없어 중간자가 꾸며 넣은 결과일 수 있으므로 WinRM 응답으로 받아들이지 않는다:
+    /// 성공(2xx)인데 평문이면 중단(WinRmFatalException), 오류 페이지는 XML 로 해석되지 않게 앞에 설명을 붙여 '해석할 수 없는 응답' 으로 처리
+    /// </summary>
+    internal static string UnencryptedBody(byte[] raw, HttpStatusCode code)
+    {
+        if ((int)code is >= 200 and < 300)
+            throw new WinRmFatalException("HTTP 5985 응답이 암호화되어 있지 않아 받아들이지 않았습니다 (중간자 가능성).");
+        return "암호화되지 않은 응답: " + Encoding.UTF8.GetString(raw);
+    }
 
     internal static NetworkCredential ToCredential(string user, string password)
     {
@@ -155,14 +179,20 @@ public static class WinRm
                             ?? throw new WinRmFatalException("명령 실행 응답에 CommandId 가 없습니다.");
 
             // 3) 출력 수신 (Done 이 올 때까지)
-            var stdout = new List<byte>();
-            var stderr = new List<byte>();
+            // 앞·뒷부분만 메모리에 남긴다 (큰 출력도 메모리 일정)
+            var stdout = new OutputCollector();
+            var stderr = new OutputCollector();
             int? exitCode = null;
             var deadline = DateTime.UtcNow.AddSeconds(timeoutSec);
+            string Out() => stdout.Text(MaxOutput);
+            string Err() => CleanClixml(stderr.Text(MaxOutput));
             while (exitCode == null)
             {
+                // 멈추면 아래 finally 의 셸 삭제가 실행 중인 명령을 끝낸다
                 if (DateTime.UtcNow > deadline)
-                    throw new WinRmFatalException($"{timeoutSec}초 안에 끝나지 않아 중단했습니다.\n{Encoding.UTF8.GetString(stdout.ToArray())}");
+                    throw new WinRmStoppedException($"{timeoutSec}초 안에 끝나지 않아 중단했습니다 (원격 셸 삭제).", Out(), Err());
+                if (stdout.Total + stderr.Total > SshExec.HardCapBytes)
+                    throw new WinRmStoppedException($"출력이 {SshExec.HardCapBytes / 1024 / 1024}MB 를 넘어 중단했습니다 (원격 셸 삭제). 출력을 줄이는 명령으로 다시 실행하세요.", Out(), Err());
                 XDocument recv;
                 try
                 {
@@ -175,14 +205,14 @@ public static class WinRm
                 {
                     if (string.IsNullOrEmpty(s.Value)) continue;
                     var bytes = Convert.FromBase64String(s.Value);
-                    ((string?)s.Attribute("Name") == "stderr" ? stderr : stdout).AddRange(bytes);
+                    ((string?)s.Attribute("Name") == "stderr" ? stderr : stdout).Add(bytes);
                 }
                 var state = recv.Descendants(Rsp + "CommandState").FirstOrDefault();
                 if (state != null && (string?)state.Attribute("State") == DoneState)
                     exitCode = int.TryParse(state.Element(Rsp + "ExitCode")?.Value, out var c) ? c : -1;   // 종료 코드 없음 = 알 수 없음(실패 취급)
             }
 
-            return (exitCode.Value, Encoding.UTF8.GetString(stdout.ToArray()), CleanClixml(Encoding.UTF8.GetString(stderr.ToArray())));
+            return (exitCode.Value, Out(), Err());
         }
         finally
         {
@@ -436,15 +466,14 @@ public static class WinRm
             using var resp = await PostRawAsync(content, null, ct);
             var raw = await resp.Content.ReadAsByteArrayAsync(ct);
             if (resp.StatusCode == HttpStatusCode.Unauthorized) return (resp.StatusCode, "");
-            return (resp.StatusCode, Decrypt(raw));
+            return (resp.StatusCode, Decrypt(raw, resp.StatusCode));
         }
 
-        private string Decrypt(byte[] raw)
+        private string Decrypt(byte[] raw, HttpStatusCode code)
         {
-            // 암호화되지 않은 응답(오류 페이지 등)은 그대로
             var marker = Encoding.ASCII.GetBytes("application/octet-stream\r\n");
             var idx = IndexOf(raw, marker);
-            if (idx < 0) return Encoding.UTF8.GetString(raw);
+            if (idx < 0) return UnencryptedBody(raw, code);
             var start = idx + marker.Length;
             var end = IndexOf(raw, Encoding.ASCII.GetBytes($"--{Boundary}--"), start);
             if (end < 0) end = raw.Length;
@@ -484,6 +513,13 @@ public sealed class WinRmAuthException(string message) : WinRmFatalException(mes
 
 /// <summary>HTTPS 인증서 지문이 저장된 것과 다름 — 중간자에게 NTLM 을 넘기지 않도록 5985·다른 주소로 재시도하지 않음</summary>
 public sealed class WinRmCertException(string message) : WinRmFatalException(message);
+
+/// <summary>셸 생성 뒤 시간 초과·출력 한도로 멈춤 — 그때까지 받은 출력을 함께 담는다</summary>
+public sealed class WinRmStoppedException(string message, string stdout, string stderr) : WinRmFatalException(message)
+{
+    public string Stdout { get; } = stdout;
+    public string Stderr { get; } = stderr;
+}
 
 public sealed class WinRmFaultException : WinRmFatalException
 {

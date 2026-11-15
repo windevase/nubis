@@ -261,13 +261,30 @@ public partial class MainWindow
         foreach (var h in _hosts.Where(x => x.Protocol == Protocol.Ssh && !ReferenceEquals(x, _editing))
                                 .OrderBy(x => x.Group, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
         {
-            var item = new MenuItem { Header = $"{h.DisplayName}  ({h.Address})" + (h.Group.Length > 0 ? $"  · {h.Group}" : ""), IsChecked = h.Id == _edJumpId };
+            // 점프 서버는 한 단계만 지원 (AttachJump) — 자기도 점프 서버를 거치는 호스트는 점프 서버로 쓰면 그 점프 없이 직접 붙어
+            // 연결되지 않으므로 고르지 못하게 한다 (이미 지정돼 있으면 그대로 보여 준다)
+            var nested = h.JumpHostId != null && h.Id != _edJumpId;
+            var item = new MenuItem
+            {
+                Header = MenuText($"{h.DisplayName}  ({h.Address})" + (h.Group.Length > 0 ? $"  · {h.Group}" : "")),
+                IsChecked = h.Id == _edJumpId,
+                IsEnabled = !nested,
+            };
+            if (nested)
+            {
+                item.ToolTip = L.T("이 호스트도 점프 서버를 거쳐 접속합니다. 점프 서버는 한 단계만 지원합니다.");
+                ToolTipService.SetShowOnDisabled(item, true);
+            }
             var id = h.Id;
             item.Click += (_, _) => { _edJumpId = id; UpdateJumpUi(); };
             menu.Items.Add(item);
         }
+        if (menu.Items.Count == 2) menu.Items.Add(new MenuItem { Header = L.T("점프 서버로 쓸 SSH 호스트가 없습니다"), IsEnabled = false });
         menu.IsOpen = true;
     }
+
+    /// <summary>메뉴 항목 글자 그대로 (MenuItem 은 '_' 를 단축키 표시로 먹어 web_01 이 web01 로 보였다)</summary>
+    internal static string MenuText(string s) => s.Replace("_", "__");
 
     // 저장할 때 기억한 인증 답을 지울지 (지우기 버튼)
     private bool _edClearAnswers;
@@ -415,7 +432,7 @@ public partial class MainWindow
         if (names.Count == 0) menu.Items.Add(new MenuItem { Header = L.T("아직 만든 그룹이 없습니다"), IsEnabled = false });
         foreach (var n in names)
         {
-            var item = new MenuItem { Header = n };
+            var item = new MenuItem { Header = MenuText(n) };
             item.Click += (_, _) => EdGroup.Text = n;
             menu.Items.Add(item);
         }

@@ -381,6 +381,19 @@ internal static class McpImport
         return null;
     }
 
+    /// <summary>
+    /// Include(ssh_config) · group_vars(ansible) 처럼 파서가 따라 읽는 파일 검사. BlockedPathReason 에 더해 네트워크 경로(UNC)도 막는다 —
+    /// Claude 가 넘긴 text 의 "Include \\서버\공유\x" 로 이 PC 가 외부 SMB 서버에 Windows 자격 증명(NTLM)으로 접속하지 않게.
+    /// path 인자와 달리 사용자가 경로를 직접 보지 못하는 곳이라 더 엄격하게 본다. 문제 없으면 null
+    /// </summary>
+    public static string? BlockedFollowPathReason(string path, string dataDir, string? rootDir, string sshDir, bool allowSshDir)
+    {
+        var t = path.Trim();
+        if (t.StartsWith(@"\\", StringComparison.Ordinal) || t.StartsWith("//", StringComparison.Ordinal))
+            return "네트워크 경로는 따라 읽지 않습니다.";
+        return BlockedPathReason(t, dataDir, rootDir, sshDir, allowSshDir);
+    }
+
     /// <summary>개인키 내용이 들어 있으면 true (파일 이름과 무관하게 내용으로 한 번 더 막는다)</summary>
     public static bool LooksLikePrivateKey(string text) =>
         text.Contains("PRIVATE KEY-----", StringComparison.Ordinal) || text.Contains("PuTTY-User-Key-File", StringComparison.Ordinal);

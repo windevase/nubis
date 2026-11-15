@@ -24,7 +24,11 @@ public partial class MainWindow
 
     private List<ThemeItem>? _themeItems;
 
-    private void RefreshSettingsPage()
+    /// <param name="reloadLogin">
+    /// 로그인 입력란도 저장된 값으로 다시 채울지. 페이지를 열 때만 true — Claude 가 다른 설정을 바꿔 다시 그릴 때
+    /// 사용자가 입력하던 Client ID 등을 지우지 않게 한다
+    /// </param>
+    private void RefreshSettingsPage(bool reloadLogin = false)
     {
         var s = SettingsStore.Current;
 
@@ -42,11 +46,12 @@ public partial class MainWindow
         AutoReadOnlyBox.IsChecked = s.AutoApproveReadOnly;
         SftpAutoOpenBox.IsChecked = s.SftpAutoOpen;
         SftpFollowBox.IsChecked = s.SftpFollowTerminal;
-        SftpEditorBox.Text = s.SftpEditor;
-        LoadLoginSettings();
+        // 입력 중인 칸(키보드 포커스)은 덮어쓰지 않는다
+        SetUnlessEditing(SftpEditorBox, s.SftpEditor);
+        if (reloadLogin) LoadLoginSettings();
         (SettingsStore.Global.Language == L.English ? LangEnglish : LangKorean).IsChecked = true;
-        DefSshPortBox.Text = HostEntry.PreferredPort(Protocol.Ssh).ToString();
-        DefRdpPortBox.Text = HostEntry.PreferredPort(Protocol.Rdp).ToString();
+        SetUnlessEditing(DefSshPortBox, HostEntry.PreferredPort(Protocol.Ssh).ToString());
+        SetUnlessEditing(DefRdpPortBox, HostEntry.PreferredPort(Protocol.Rdp).ToString());
         FontSizeText.Text = $"{s.FontSize}px";
         RefreshPreferences();
 
@@ -79,15 +84,74 @@ public partial class MainWindow
                 });
             }
         }
+        // 목록에 없는 글꼴(다른 글꼴... · Claude 가 바꾼 값)이면 모두 해제 — 예전 선택이 그대로 남아 보이지 않게
         foreach (var rb in FontPanel.Children.OfType<Border>().Select(b => (RadioButton)b.Child))
-            if ((string)rb.Tag == s.FontFamily && rb.IsChecked != true) rb.IsChecked = true;
+        {
+            var on = string.Equals((string)rb.Tag, s.FontFamily, StringComparison.OrdinalIgnoreCase);
+            if (rb.IsChecked != on) rb.IsChecked = on;
+        }
     }
 
-    private void OnThemeClick(object sender, MouseButtonEventArgs e)
+    private static void SetUnlessEditing(TextBox box, string value)
+    {
+        if (!box.IsKeyboardFocusWithin) box.Text = value;
+    }
+
+    /// <summary>
+    /// 포커스를 잃을 때 저장하는 입력란을 지금 저장 (창을 닫을 때 — 포커스가 그 칸에 있으면 LostFocus 가 오지 않을 수 있다).
+    /// 값이 그대로면 아무것도 하지 않는다
+    /// </summary>
+    private void CommitSettingsInputs()
+    {
+        if (SettingsPage.Visibility != Visibility.Visible) return;
+        try
+        {
+            OnSftpEditorChanged(SftpEditorBox, new RoutedEventArgs());
+            OnCloudSyncIntervalChanged(CloudSyncIntervalBox, new RoutedEventArgs());
+            OnDefaultPortChanged(DefSshPortBox, new RoutedEventArgs());
+        }
+        catch { }
+    }
+
+    /// <summary>설정 입력란에서 Enter = 바로 저장 (포커스를 옮기지 않아도)</summary>
+    private void OnSettingsBoxKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || sender is not TextBox box) return;
+        e.Handled = true;
+        if (box == DefSshPortBox || box == DefRdpPortBox) OnDefaultPortChanged(box, e);
+        else if (box == SftpEditorBox) OnSftpEditorChanged(box, e);
+        else if (box == CloudSyncIntervalBox) OnCloudSyncIntervalChanged(box, e);
+        box.SelectAll();
+    }
+
+    private void OnThemeClick(object sender, MouseButtonEventArgs e) => SelectTheme(sender);
+
+    /// <summary>테마 카드는 Tab 으로 옮겨 와 Enter · Space 로 고를 수 있다</summary>
+    private void OnThemeKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.Space)) return;
+        e.Handled = true;
+        SelectTheme(sender);
+    }
+
+    private void SelectTheme(object sender)
     {
         if ((sender as FrameworkElement)?.DataContext is not ThemeItem item || _themeItems == null) return;
         foreach (var it in _themeItems) it.IsSelected = it == item;
         SettingsStore.Update(s => s.TerminalTheme = item.Theme.Id);
+    }
+
+    /// <summary>Settings 위쪽 바로가기: Tag 에 적힌 이름의 제목이 맨 위에 오게 스크롤</summary>
+    private void OnSettingsJump(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.Tag is not string name || FindName(name) is not FrameworkElement target) return;
+        if (SettingsPage.Content is not Visual content) return;
+        try
+        {
+            var y = target.TransformToAncestor(content).Transform(new Point(0, 0)).Y;
+            SettingsPage.ScrollToVerticalOffset(Math.Max(0, y - 8));
+        }
+        catch (InvalidOperationException) { target.BringIntoView(); }
     }
 
     private void OnAutoContrastClick(object sender, RoutedEventArgs e) =>
@@ -111,30 +175,52 @@ public partial class MainWindow
         var rdp = int.TryParse(DefRdpPortBox.Text.Trim(), out var b) && b is >= 1 and <= 65535 ? b : HostEntry.DefaultPort(Protocol.Rdp);
         DefSshPortBox.Text = ssh.ToString();
         DefRdpPortBox.Text = rdp.ToString();
-        ApplyDefaultPorts(ssh, rdp);
+        var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
+        if (oldSsh == ssh && oldRdp == rdp) return;
+
+        // 클라우드 호스트 포트도 함께 바뀌는 경우 조용히 바꾸지 않고 몇 개인지 알리고 고르게 한다
+        var moveHosts = true;
+        var affected = CloudHostsOnDefaultPorts(oldSsh, oldRdp, ssh != oldSsh, rdp != oldRdp).Count();
+        if (affected > 0)
+        {
+            var pick = Dialog.Choose(this,
+                L.F("포트를 따로 지정하지 않은 클라우드 프로필의 호스트 {0}개가 이전 기본 포트를 쓰고 있습니다. 이 호스트들의 포트도 새 기본 포트로 바꿀까요?", affected),
+                L.T("기본 포트"), L.T("함께 바꾸기"), L.T("기본 포트만 바꾸기"));
+            if (pick < 0)
+            {
+                // 닫기(Esc) = 취소: 입력란을 지금 값으로 되돌린다
+                DefSshPortBox.Text = oldSsh.ToString();
+                DefRdpPortBox.Text = oldRdp.ToString();
+                return;
+            }
+            moveHosts = pick == 0;
+        }
+        ApplyDefaultPorts(ssh, rdp, moveHosts);
     }
 
+    /// <summary>포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중 이전 기본 포트를 쓰는 것 (바꿀 프로토콜만)</summary>
+    private IEnumerable<HostEntry> CloudHostsOnDefaultPorts(int oldSsh, int oldRdp, bool ssh, bool rdp) =>
+        from p in _profiles
+        from h in _hosts
+        where h.CloudProfileId == p.Id &&
+              ((ssh && p.SshPort == null && h.Protocol == Protocol.Ssh && h.Port == oldSsh) ||
+               (rdp && p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp))
+        select h;
+
     /// <summary>
-    /// 기본 포트 변경. 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중 이전 기본 포트를 쓰던 것도 함께 바꾼다.
+    /// 기본 포트 변경. moveHosts 면 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중 이전 기본 포트를 쓰던 것도 함께 바꾼다.
     /// 바뀐 호스트 수를 돌려준다.
     /// </summary>
-    private int ApplyDefaultPorts(int ssh, int rdp)
+    private int ApplyDefaultPorts(int ssh, int rdp, bool moveHosts = true)
     {
         var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
         if (oldSsh == ssh && oldRdp == rdp) return 0;
+        // 바꿀 호스트는 기본 포트를 바꾸기 전에 고른다 (사용자가 호스트별로 바꾼 포트는 유지)
+        var targets = moveHosts ? CloudHostsOnDefaultPorts(oldSsh, oldRdp, ssh != oldSsh, rdp != oldRdp).ToList() : new List<HostEntry>();
         SettingsStore.Update(x => { x.DefaultSshPort = ssh; x.DefaultRdpPort = rdp; });
-
-        // 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중, 이전 기본 포트를 쓰던 것도 함께 변경
-        // (사용자가 호스트별로 바꾼 포트는 유지)
-        var changed = 0;
-        foreach (var p in _profiles)
-            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
-            {
-                if (p.SshPort == null && h.Protocol == Protocol.Ssh && h.Port == oldSsh) { h.Port = ssh; changed++; }
-                if (p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp) { h.Port = rdp; changed++; }
-            }
-        if (changed > 0) { SaveHosts(); RefreshHosts(); }
-        return changed;
+        foreach (var h in targets) h.Port = h.Protocol == Protocol.Ssh ? ssh : rdp;
+        if (targets.Count > 0) { SaveHosts(); RefreshHosts(); }
+        return targets.Count;
     }
 
     // ----- 언어 -----
@@ -183,7 +269,12 @@ public partial class MainWindow
             : L.T("현재: 사용 안 함");
         if (CurrentProfileKey is { } key)
             LoginStatusText.Text += "\n" + (key == c.OwnerKey ? L.F("프로필: {0} (소유자)", key) : L.F("프로필: {0} — 로그인 설정은 소유자 계정만 바꿀 수 있습니다", key));
-        LoginSaveButton.IsEnabled = CanEditLogin;
+        // 소유자가 아니면 저장 버튼만이 아니라 입력란·방식 선택도 막는다 (고쳐도 저장되지 않는 칸을 열어 두지 않게)
+        var editable = CanEditLogin;
+        LoginSaveButton.IsEnabled = editable;
+        LoginFields.IsEnabled = editable;
+        LoginFields.Opacity = editable ? 1 : 0.6;
+        foreach (var rb in new[] { LoginNone, LoginGitHub, LoginGoogle, LoginMicrosoft }) rb.IsEnabled = editable;
         UpdateLoginUi();
     }
 

@@ -43,6 +43,8 @@ public sealed class DeviceFlow
         using var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(form) };
         req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var res = await Http.SendAsync(req, ct);
+        // 서버 장애(5xx)는 연결 실패와 같이 본다 — 오프라인 허용 안내가 나오게 (설정 오류로 오인하지 않게)
+        if ((int)res.StatusCode >= 500) throw new HttpRequestException(L.F("로그인 서버 오류 (HTTP {0})", (int)res.StatusCode));
         var body = await res.Content.ReadAsStringAsync(ct);
         try { return JsonDocument.Parse(body).RootElement.Clone(); }
         catch (JsonException) { throw new LoginException(L.F("로그인 서버 응답을 읽을 수 없습니다 (HTTP {0}). Client ID 를 확인하세요.", (int)res.StatusCode)); }
@@ -141,18 +143,35 @@ public sealed class DeviceFlow
                 var email = Str(u, "email") ?? throw new LoginException(L.T("Google 계정 이메일을 읽지 못했습니다."));
                 if (u.TryGetProperty("email_verified", out var ev) && ev.ValueKind == JsonValueKind.False)
                     throw new LoginException(L.T("이메일이 확인되지 않은 Google 계정입니다."));
-                return new LoginIdentity(LoginProviderKind.Google, email, Str(u, "name") ?? email, Str(u, "sub") ?? "");
+                return new LoginIdentity(LoginProviderKind.Google, email, Str(u, "name") ?? email, Str(u, "sub") ?? "",
+                    GoogleDomainVerified(email, Str(u, "hd")));
             }
             case LoginProviderKind.Microsoft:
             {
                 // id_token 은 TLS 로 토큰 엔드포인트에서 직접 받은 것이라 내용만 읽는다
                 var claims = JwtPayload(Str(token, "id_token") ?? throw new LoginException(L.T("Microsoft 로그인 정보(id_token)를 받지 못했습니다.")));
-                var account = Str(claims, "preferred_username") ?? Str(claims, "email") ?? throw new LoginException(L.T("Microsoft 계정 이름을 읽지 못했습니다."));
-                return new LoginIdentity(LoginProviderKind.Microsoft, account, Str(claims, "name") ?? account, Str(claims, "oid") ?? "");
+                // email 클레임은 사용자가 바꿀 수 있고 확인되지 않은 값일 수 있어 허용 판단에 쓰지 않는다 (preferred_username 만)
+                var account = Str(claims, "preferred_username") ?? throw new LoginException(L.T("Microsoft 계정 이름을 읽지 못했습니다."));
+                return new LoginIdentity(LoginProviderKind.Microsoft, account, Str(claims, "name") ?? account, Str(claims, "oid") ?? "",
+                    MicrosoftDomainVerified(Str(claims, "tid")));
             }
         }
         throw new LoginException(L.T("로그인 제공자가 설정되지 않았습니다."));
     }
+
+    /// <summary>
+    /// Google: 이메일 도메인을 그 조직(Workspace)이 관리하는지 — hd 클레임이 이메일 도메인과 같을 때만.
+    /// 회사 이메일로 만든 개인 Google 계정(hd 없음)은 "@회사.com" 허용 규칙에 걸리지 않게 한다.
+    /// </summary>
+    public static bool GoogleDomainVerified(string email, string? hd) =>
+        !string.IsNullOrWhiteSpace(hd) && email.EndsWith("@" + hd.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Microsoft 개인 계정(MSA) 테넌트 — 아무 이메일로나 만들 수 있어 도메인 허용 규칙에 쓰지 않는다</summary>
+    public const string MicrosoftConsumerTenant = "9188040d-6c67-4c5b-b112-36a304b66dad";
+
+    /// <summary>Microsoft: 회사·학교(Entra) 계정이면 true. 개인 계정 테넌트이거나 tid 가 없으면 false</summary>
+    public static bool MicrosoftDomainVerified(string? tid) =>
+        !string.IsNullOrWhiteSpace(tid) && !string.Equals(tid.Trim(), MicrosoftConsumerTenant, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>GitHub Organization 활성 멤버인지 (read:org 권한)</summary>
     public async Task<bool> IsGitHubOrgMemberAsync(string accessToken, CancellationToken ct)
@@ -179,6 +198,7 @@ public sealed class DeviceFlow
         using var req = new HttpRequestMessage(HttpMethod.Get, url);
         Prepare(req, accessToken);
         using var res = await Http.SendAsync(req, ct);
+        if ((int)res.StatusCode >= 500) throw new HttpRequestException(L.F("로그인 서버 오류 (HTTP {0})", (int)res.StatusCode));
         if (!res.IsSuccessStatusCode) throw new LoginException(L.F("계정 정보를 읽지 못했습니다 (HTTP {0}).", (int)res.StatusCode));
         return JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct)).RootElement.Clone();
     }
@@ -196,8 +216,9 @@ public sealed class DeviceFlow
     /// <summary>OAuth 오류 코드를 한국어 안내로</summary>
     public static string Describe(string error, string? description) => error switch
     {
-        "access_denied" => L.T("로그인이 거부되었습니다."),
-        "expired_token" => L.T("로그인 코드가 만료되었습니다. 다시 시도하세요."),
+        "access_denied" or "authorization_declined" => L.T("로그인이 거부되었습니다."),   // authorization_declined = Microsoft
+        "expired_token" or "code_expired" => L.T("로그인 코드가 만료되었습니다. 다시 시도하세요."),
+        "bad_verification_code" or "invalid_grant" => L.T("로그인 코드가 올바르지 않거나 이미 쓰였습니다. 다시 시도하세요."),
         "incorrect_client_credentials" or "invalid_client" or "unauthorized_client" =>
             L.T("Client ID(또는 Secret)가 올바르지 않거나 이 앱에서 Device Flow 가 켜져 있지 않습니다."),
         "device_flow_disabled" => L.T("GitHub OAuth 앱 설정에서 'Enable Device Flow' 를 켜세요."),

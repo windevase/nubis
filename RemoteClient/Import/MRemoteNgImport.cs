@@ -106,9 +106,9 @@ public static class MRemoteNgImport
     }
 
     /// <summary>상위 폴더에서 물려받을 값 (상속 해석용). 최상위는 값이 없다</summary>
-    private sealed record Context(string? Group, string? Username, string? Port, string? Protocol, bool IsRoot)
+    private sealed record Context(string? Group, string? Username, string? Port, string? Protocol, string? Domain, bool IsRoot)
     {
-        public static readonly Context Root = new(null, null, null, null, true);
+        public static readonly Context Root = new(null, null, null, null, null, true);
     }
 
     private sealed class WalkState
@@ -127,6 +127,7 @@ public static class MRemoteNgImport
             var username = Resolve(node, "Username", ctx.Username, ctx.IsRoot);
             var port = Resolve(node, "Port", ctx.Port, ctx.IsRoot);
             var protocol = Resolve(node, "Protocol", ctx.Protocol, ctx.IsRoot);
+            var domain = Resolve(node, "Domain", ctx.Domain, ctx.IsRoot);
             var name = (Attr(node, "Name") ?? "").Trim();
             var hostname = (Attr(node, "Hostname") ?? "").Trim();
 
@@ -134,7 +135,7 @@ public static class MRemoteNgImport
             {
                 var group = string.IsNullOrEmpty(name) ? ctx.Group
                     : string.IsNullOrEmpty(ctx.Group) ? name : ctx.Group + " / " + name;
-                Walk(node, new Context(group, username, port, protocol, false), state, hosts);
+                Walk(node, new Context(group, username, port, protocol, domain, false), state, hosts);
                 continue;
             }
 
@@ -147,6 +148,12 @@ public static class MRemoteNgImport
             }
             if (hostname.Length == 0) { state.NoAddress++; continue; }
 
+            // RDP 의 Domain 칸은 "DOMAIN\user" 로 합친다 (사용자명에 이미 도메인 · UPN 이 있으면 그대로)
+            var user = string.IsNullOrWhiteSpace(username) ? null : username.Trim();
+            if (user != null && mapped == Nubis.Protocol.Rdp && !string.IsNullOrWhiteSpace(domain)
+                && !user.Contains('\\') && !user.Contains('@'))
+                user = domain.Trim() + "\\" + user;
+
             hosts.Add(new ImportedHost
             {
                 Name = name.Length > 0 ? name : hostname,
@@ -154,7 +161,7 @@ public static class MRemoteNgImport
                 Port = ParsePort(port) ?? DefaultPort(mapped),
                 Protocol = mapped,
                 Group = string.IsNullOrEmpty(ctx.Group) ? null : ctx.Group,
-                Username = string.IsNullOrWhiteSpace(username) ? null : username.Trim(),
+                Username = user,
                 Note = string.IsNullOrWhiteSpace(Attr(node, "Descr")) ? null : Attr(node, "Descr")!.Trim(),
             });
             // 연결 아래에 Node 가 더 있는 이상한 파일도 놓치지 않는다 (그룹은 그대로)

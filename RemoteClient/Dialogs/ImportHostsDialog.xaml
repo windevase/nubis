@@ -103,7 +103,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="FilePathBox" Tag="{l:Tr '파일 경로'}"/>
+                    <TextBox x:Name="FilePathBox" Tag="{l:Tr '파일 경로'}" KeyDown="OnFilePathKeyDown"/>
                     <Button Grid.Column="1" Content="{l:Tr '찾아보기'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0" MinWidth="88" Click="OnBrowseFile"/>
                     <Button Grid.Column="2" Content="{l:Tr '불러오기'}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinWidth="96" Click="OnLoadFile"/>
                     <TextBlock x:Name="FileHint" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource Hint}" Margin="2,8,0,0"/>
@@ -120,7 +120,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="AnsiblePathBox" Tag="{l:Tr '인벤토리 파일 경로 (INI · YAML)'}"/>
+                    <TextBox x:Name="AnsiblePathBox" Tag="{l:Tr '인벤토리 파일 경로 (INI · YAML)'}" KeyDown="OnAnsiblePathKeyDown"/>
                     <Button Grid.Column="1" Content="{l:Tr '찾아보기'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0" MinWidth="88" Click="OnBrowseAnsible"/>
                     <Button Grid.Column="2" Content="{l:Tr '불러오기'}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinWidth="96" Click="OnLoadAnsible"/>
                     <TextBox x:Name="AnsibleTextBox" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource MultiLineBox}" Height="72" Margin="0,8,0,0"
@@ -128,7 +128,7 @@
                 </Grid>
 
                 <!-- Active Directory -->
-                <Grid x:Name="AdPanel" Style="{StaticResource SourcePanel}">
+                <Grid x:Name="AdPanel" Style="{StaticResource SourcePanel}" KeyDown="OnAdKeyDown">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="*"/>
@@ -193,11 +193,20 @@
                 <!-- 미리보기 -->
                 <DockPanel>
                     <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="{l:Tr '모두 선택'}" Style="{StaticResource GhostButton}" Padding="12,0" Height="30" Click="OnSelectAll"/>
+                            <Button Content="{l:Tr '모두 선택'}" Style="{StaticResource GhostButton}" Padding="12,0" Height="30" Click="OnSelectAll"
+                                    ToolTip="{l:Tr '지금 보이는 줄(필터 · 검색 결과)만 선택합니다'}"/>
                             <Button Content="{l:Tr '선택 해제'}" Style="{StaticResource GhostButton}" Padding="12,0" Height="30" Margin="6,0,0,0" Click="OnSelectNone"/>
                         </StackPanel>
-                        <Border HorizontalAlignment="Right" Background="{StaticResource InputBg}" CornerRadius="8" Padding="2"
+                        <!-- 검색: 이름 · 주소 · 그룹 · 사용자 · 메모 (그룹 이름으로 찾고 '모두 선택' = 그룹별 선택) -->
+                        <TextBox x:Name="SearchBox" Grid.Column="1" Height="30" Margin="10,0,10,0" MinWidth="120"
+                                 Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"/>
+                        <Border Grid.Column="2" HorizontalAlignment="Right" Background="{StaticResource InputBg}" CornerRadius="8" Padding="2"
                                 BorderBrush="{StaticResource Line}" BorderThickness="1">
                             <StackPanel Orientation="Horizontal">
                                 <RadioButton x:Name="FilterAll" Style="{StaticResource Segment}" GroupName="filter" IsChecked="True" MinWidth="64"
@@ -216,8 +225,10 @@
                     <Border x:Name="WarningsBox" DockPanel.Dock="Bottom" Margin="0,8,0,0" Background="{StaticResource CardBg}" CornerRadius="8"
                             Padding="12,8" Visibility="Collapsed">
                         <DockPanel>
-                            <TextBlock x:Name="WarningsTitle" DockPanel.Dock="Top" FontSize="12" FontWeight="SemiBold" Foreground="#E5B94D"/>
-                            <ScrollViewer MaxHeight="74" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                            <TextBlock x:Name="WarningsTitle" DockPanel.Dock="Top" FontSize="12" FontWeight="SemiBold" Foreground="#E5B94D"
+                                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnToggleWarnings"
+                                       ToolTip="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}"/>
+                            <ScrollViewer x:Name="WarningsScroll" MaxHeight="74" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
                                 <ItemsControl x:Name="WarningsList">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>

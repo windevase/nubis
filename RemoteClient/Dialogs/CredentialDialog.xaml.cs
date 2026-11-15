@@ -11,10 +11,12 @@ public partial class CredentialDialog : Window
         TargetText.Text = target;
         UserBox.Text = user ?? "";
         SaveBox.Visibility = canSave ? Visibility.Visible : Visibility.Collapsed;
-        Loaded += (_, _) =>
+        // 연결 스레드의 요청으로 뜨는 창 — 다른 창이 앞에 있어도 입력이 바로 이 창으로 가게 활성화한 뒤 포커스
+        ContentRendered += (_, _) =>
         {
-            if (string.IsNullOrWhiteSpace(UserBox.Text)) UserBox.Focus();
-            else PassBox.Focus();
+            Activate();
+            if (string.IsNullOrWhiteSpace(UserBox.Text)) Keyboard.Focus(UserBox);
+            else Keyboard.Focus(PassBox);
         };
     }
 

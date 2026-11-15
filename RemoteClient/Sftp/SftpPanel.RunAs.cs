@@ -94,10 +94,9 @@ public partial class SftpPanel
             _runAsFailed.Add(user);
             _runAs = null;
             UpdateRunAsBadge();
-            // 전송·편집 열기 중이면(BeginTransfer 가 연결보다 먼저) ShowStatus 가 무시되므로 전송 결과 문구에 붙인다 (EndTransfer)
+            // 전송·편집 열기 중이면(BeginTransfer 가 연결보다 먼저) 전송 결과 문구에 붙여 보인다 (keepIfBusy → EndTransfer)
             var notice = L.F("SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}", user, auth.User, ex.Message);
-            if (_busy) _pendingNotice = notice;
-            else ShowStatus(notice);
+            ShowStatus(notice, keepIfBusy: true);
             return null;
         }
     }

@@ -17,8 +17,11 @@ public partial class OnboardingWindow : Window
     /// <summary>(항목, Claude 에게 물을지). 그냥 닫으면 null</summary>
     public (OnboardingTopic Topic, bool AskClaude)? Result { get; private set; }
 
+    private readonly bool _claudeInstalled;
+
     private OnboardingWindow(bool claudeInstalled)
     {
+        _claudeInstalled = claudeInstalled;
         InitializeComponent();
         AddCard(OnboardingTopic.Hosts, "", L.T("서버 직접 추가"),
             L.T("SSH / RDP 서버를 주소·포트·계정으로 등록합니다. 검색창에 user@host 를 입력해 바로 접속할 수도 있습니다."), L.T("새 호스트"));
@@ -52,6 +55,13 @@ public partial class OnboardingWindow : Window
         doBtn.Click += (_, _) => { Result = (topic, false); DialogResult = true; };
         var askBtn = new Button { Style = (Style)res["PrimaryButton"], Content = askLabel ?? L.T("Claude 에게 묻기"), Padding = new Thickness(12, 5, 12, 5), FontSize = 12 };
         askBtn.Click += (_, _) => { Result = (topic, true); DialogResult = true; };
+        // CLI 가 없으면 "Claude 에게 묻기" 는 쓸 수 없다 — 눌러도 빈 패널만 열리므로 막고 이유를 보여 준다
+        if (!_claudeInstalled)
+        {
+            askBtn.IsEnabled = false;
+            askBtn.ToolTip = L.T("Claude Code CLI 를 설치하면 쓸 수 있습니다.");
+            ToolTipService.SetShowOnDisabled(askBtn, true);
+        }
 
         var head = new StackPanel { Orientation = Orientation.Horizontal };
         head.Children.Add(new TextBlock { Text = glyph, FontFamily = (FontFamily)res["IconFont"], FontSize = 16, Foreground = (Brush)res["Accent"], VerticalAlignment = VerticalAlignment.Center });

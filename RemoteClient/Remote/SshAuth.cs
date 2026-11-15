@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Renci.SshNet;
 using Renci.SshNet.Common;
+using Renci.SshNet.Security;
 
 namespace Nubis;
 
@@ -66,6 +67,12 @@ public sealed class AuthPrompter(Func<AuthPromptRequest, string[]?> ask, Action<
     public bool LastAnsweredWithSavedPassword { get; internal set; }
 
     /// <summary>
+    /// 사용자가 입력 창에서 서버의 질문(OTP·인증 코드 등)에 직접 답했음 — 이 뒤의 인증 실패는 비밀번호보다 입력한 값(OTP 만료·오타)일 가능성이 크다.
+    /// KbdAuth.FailureHint 의 answeredPrompt 로 넘겨 "비밀번호가 틀렸다" 로만 안내하지 않게 한다.
+    /// </summary>
+    public bool AnsweredByUser { get; internal set; }
+
+    /// <summary>
     /// 사용자가 인증 입력 창(OTP·비밀번호 변경)을 취소했음 — 인증 실패가 아니므로 계정을 다시 묻지 않는다.
     /// SSH.NET 이 예외 종류를 바꿔 전달하더라도 알 수 있게 예외(AuthPromptCancelledException)와 별도로 둔다.
     /// </summary>
@@ -114,6 +121,13 @@ public sealed class AuthPromptCancelledException(string message) : SshAuthentica
 /// </summary>
 public sealed class SshKeyLoadException(string message, Exception inner) : InvalidOperationException(message, inner);
 
+/// <summary>
+/// ssh-agent 가 서명하지 못함 (하드웨어 키(FIDO) 터치 대기 초과·확인 거부·에이전트 응답 없음).
+/// 에이전트의 TimeoutException 이 그대로 나가면 네트워크 실패로 분류돼 공인 IP 재시도·자동 재연결로 터치 요청이 반복된다 —
+/// 인증 실패(SshAuthenticationException)로 바꿔 다시 시도하지 않게 한다.
+/// </summary>
+public sealed class SshAgentSignException(string message, Exception inner) : SshAuthenticationException(message, inner);
+
 /// <summary>연결 실패 분류 (UI·SSH.NET 연결과 무관, 테스트 대상)</summary>
 public static class SshFailure
 {
@@ -160,14 +174,21 @@ public static class SshAuth
         // password 를 먼저 하면, 2단계 인증(PAM 의 OTP·Push 등)을 keyboard-interactive 로만 받는 서버에서 password 방식이
         // 다음 질문에 답하지 못해 실패하고, 그 실패 때문에 이어지는 keyboard-interactive 까지 거부된다 (OpenSSH 는 되는데 Nubis 만 실패).
         var methods = new List<AuthenticationMethod>();
-        if (LoadKey(host, password) is { } key) methods.Add(new PrivateKeyAuthenticationMethod(user, key));
+        if (LoadKey(host, password) is { } key)
+        {
+            // 지정한 키: SHA-2 서명 먼저, ssh-rsa(SHA-1)는 옛 서버용으로 맨 뒤 (SSH.NET 기본 순서는 ssh-rsa 가 처음)
+            methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(PickAlgorithms(key.HostKeyAlgorithms, allowSha1Rsa: true))));
+        }
         else
         {
-            // 키를 지정하지 않았으면 OpenSSH 처럼 ssh-agent 의 키 → ~/.ssh 기본 키 순으로
-            var sources = new List<IPrivateKeySource>();
-            if (SshAgent.KeySource() is { } agent) sources.Add(agent);
-            sources.AddRange(LoadDefaultKeys());
-            if (sources.Count > 0) methods.Add(new PrivateKeyAuthenticationMethod(user, sources.ToArray()));
+            // 키를 지정하지 않았으면 OpenSSH 처럼 ssh-agent 의 키 → ~/.ssh 기본 키 순으로.
+            // 같은 키(에이전트에 올린 id_rsa 등)를 두 번 내밀지 않고 ssh-rsa(SHA-1)는 빼서(OpenSSH 8.8+ 기본) 공개키 시도 횟수를 줄인다 —
+            // 서버의 MaxAuthTries(기본 6)를 공개키 시도로 다 써 버리면 비밀번호·OTP 까지 가지 못하고 끊긴다
+            var algs = new List<HostAlgorithm>();
+            if (SshAgent.KeySource() is { } agent) algs.AddRange(agent.HostKeyAlgorithms);
+            foreach (var k in LoadDefaultKeys()) algs.AddRange(k.HostKeyAlgorithms);
+            var picked = PickAlgorithms(algs, allowSha1Rsa: false);
+            if (picked.Count > 0) methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(picked)));
         }
         var state = new KbdAuth.State();
         if (!string.IsNullOrEmpty(password) || prompter != null)
@@ -187,6 +208,39 @@ public static class SshAuth
         if (prompter?.Banner is { } banner)
             ci.AuthenticationBanner += (_, e) => { if (!string.IsNullOrWhiteSpace(e.BannerMessage)) banner(e.BannerMessage); };
         return ci;
+    }
+
+    /// <summary>공개키 인증에 내밀 서명 알고리즘 목록을 그대로 담는 키 소스 (PickAlgorithms 로 정리한 것)</summary>
+    private sealed class AlgorithmSource(IReadOnlyCollection<HostAlgorithm> algs) : IPrivateKeySource
+    {
+        public IReadOnlyCollection<HostAlgorithm> HostKeyAlgorithms { get; } = algs;
+    }
+
+    /// <summary>
+    /// 공개키 인증에서 시도할 (서명 알고리즘, 공개키) 목록 정리 — 순서 유지, 같은 알고리즘·같은 공개키 blob 은 한 번만
+    /// (ssh-agent 와 ~/.ssh 에 같은 키가 있을 때). ssh-rsa·ssh-rsa 인증서(SHA-1 서명)는 allowSha1Rsa 면 맨 뒤로, 아니면 뺀다.
+    /// SSH.NET 은 알고리즘마다 서버에 한 번씩 물어 실패 횟수가 쌓이므로(MaxAuthTries) 중복을 줄여야 비밀번호까지 간다.
+    /// </summary>
+    public static List<HostAlgorithm> PickAlgorithms(IEnumerable<HostAlgorithm> algs, bool allowSha1Rsa)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<HostAlgorithm>();
+        var sha1 = new List<HostAlgorithm>();
+        foreach (var a in algs)
+        {
+            byte[] data;
+            try { data = a.Data; }
+            catch { continue; }
+            if (!seen.Add(a.Name + " " + Convert.ToBase64String(data))) continue;
+            if (a.Name is "ssh-rsa" or "ssh-rsa-cert-v01@openssh.com")
+            {
+                if (allowSha1Rsa) sha1.Add(a);
+                continue;
+            }
+            result.Add(a);
+        }
+        result.AddRange(sha1);
+        return result;
     }
 
     /// <summary>
@@ -266,6 +320,7 @@ public static class SshAuth
             prompter.Cancelled = true;
             throw new AuthPromptCancelledException(L.T("인증 입력이 취소되었습니다."));
         }
+        prompter.AnsweredByUser = true;
         var answered = new List<(string Prompt, string Answer)>();
         for (var i = 0; i < rest.Count; i++)
         {
@@ -300,9 +355,13 @@ public static class SshAuth
                 prompter.NewPassword = a[0];
                 return a[0];
             }
-            instruction = L.T("두 비밀번호가 같지 않습니다. 다시 입력하세요.");
+            instruction = a.Length >= 2 && a[0].Length == 0
+                ? L.T("새 비밀번호를 입력하세요.")
+                : L.T("두 비밀번호가 같지 않습니다. 다시 입력하세요.");
         }
-        throw new SshAuthenticationException(L.T("비밀번호 변경이 취소되었습니다."));
+        // 입력이 세 번 맞지 않음 — 서버가 비밀번호를 거부한 것이 아니므로 인증 실패(계정 다시 묻기)가 아니라 취소로 처리한다
+        prompter.Cancelled = true;
+        throw new AuthPromptCancelledException(L.T("새 비밀번호가 확인 값과 세 번 일치하지 않아 비밀번호 변경을 취소했습니다."));
     }
 
     /// <summary>
@@ -313,6 +372,10 @@ public static class SshAuth
     {
         // 키 암호가 틀림·파일 없음 등은 연결 실패가 아니다 — 구분해서 자동 재연결하지 않게
         try { return LoadKeyCore(host, password); }
+        catch (SshPassPhraseNullOrEmptyException ex)
+        {
+            throw new SshKeyLoadException(L.T("SSH 키에 암호가 걸려 있는데 키 암호(또는 비밀번호)가 저장되어 있지 않습니다."), ex);
+        }
         catch (Exception ex) when (ex is not SshKeyLoadException)
         {
             throw new SshKeyLoadException(L.F("SSH 키를 읽지 못했습니다 — {0}", ex.Message), ex);
@@ -324,13 +387,30 @@ public static class SshAuth
         if (!string.IsNullOrEmpty(host.KeyMaterial))
         {
             var bytes = System.Text.Encoding.UTF8.GetBytes(host.KeyMaterial);
-            var pass = !string.IsNullOrEmpty(host.KeyPassphrase) ? host.KeyPassphrase : password;
-            try { return new PrivateKeyFile(new System.IO.MemoryStream(bytes)); }
-            catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(new System.IO.MemoryStream(bytes), pass); }
+            return OpenKey(bytes, !string.IsNullOrEmpty(host.KeyPassphrase) ? host.KeyPassphrase : password);
         }
         if (string.IsNullOrWhiteSpace(host.KeyPath)) return null;
-        try { return new PrivateKeyFile(host.KeyPath); }
-        catch (SshPassPhraseNullOrEmptyException) { return new PrivateKeyFile(host.KeyPath, password); }
+        return OpenKey(System.IO.File.ReadAllBytes(host.KeyPath), password);
+    }
+
+    /// <summary>
+    /// 키 열기: 먼저 암호 없이, 암호가 걸렸으면 pass 로. SSH.NET 은 OpenSSH·PKCS#1·PuTTY 형식에서만 "암호 필요"
+    /// (SshPassPhraseNullOrEmptyException)를 알려 주고, 암호 걸린 PKCS#8("BEGIN ENCRYPTED PRIVATE KEY")은 다른 예외를 내서
+    /// Vault 에 키 암호까지 저장한 PKCS#8 키가 "키를 읽지 못했습니다" 로 실패하던 문제 — 그 형식은 처음부터 암호로 연다.
+    /// </summary>
+    private static PrivateKeyFile OpenKey(byte[] bytes, string? pass)
+    {
+        var encryptedPkcs8 = System.Text.Encoding.ASCII.GetString(bytes).Contains("-----BEGIN ENCRYPTED PRIVATE KEY-----", StringComparison.Ordinal);
+        if (encryptedPkcs8)
+        {
+            if (string.IsNullOrEmpty(pass)) throw new SshPassPhraseNullOrEmptyException("Private key is encrypted but passphrase is empty.");
+            return new PrivateKeyFile(new System.IO.MemoryStream(bytes), pass);
+        }
+        try { return new PrivateKeyFile(new System.IO.MemoryStream(bytes)); }
+        catch (SshPassPhraseNullOrEmptyException) when (!string.IsNullOrEmpty(pass))
+        {
+            return new PrivateKeyFile(new System.IO.MemoryStream(bytes), pass);
+        }
     }
 
     /// <summary>기본 키 폴더 (null 이면 %USERPROFILE%\.ssh). 테스트가 빈 폴더로 바꾼다</summary>
@@ -339,10 +419,6 @@ public static class SshAuth
     /// <summary>OpenSSH 가 키를 지정하지 않았을 때 시도하는 기본 키 (이 순서)</summary>
     public static readonly string[] DefaultKeyNames = ["id_ed25519", "id_ecdsa", "id_rsa"];
 
-    /// <summary>
-    /// 호스트·Vault 에 키가 없을 때 OpenSSH 처럼 ~/.ssh 의 기본 키를 시도한다 (ssh host 는 되는데 Nubis 는 비밀번호를 묻는 차이 방지).
-    /// 암호가 걸린 키·읽을 수 없는 키는 건너뛴다 (묻지 않음 — 쓰려면 호스트나 Vault 에 키와 암호를 지정).
-    /// </summary>
     /// <summary>기본 키 파일이나 ssh-agent 키가 하나라도 있는가 (비밀번호가 없어도 먼저 키로 시도해 볼지)</summary>
     public static bool HasDefaultKeyFiles()
     {
@@ -352,6 +428,10 @@ public static class SshAuth
         return SshAgent.PipeExists() && SshAgent.ListKeys(SshAgent.ListTimeoutMs).Count > 0;
     }
 
+    /// <summary>
+    /// 호스트·Vault 에 키가 없을 때 OpenSSH 처럼 ~/.ssh 의 기본 키를 시도한다 (ssh host 는 되는데 Nubis 는 비밀번호를 묻는 차이 방지).
+    /// 암호가 걸린 키·읽을 수 없는 키는 건너뛴다 (묻지 않음 — 쓰려면 호스트나 Vault 에 키와 암호를 지정).
+    /// </summary>
     public static IPrivateKeySource[] LoadDefaultKeys()
     {
         var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
@@ -367,11 +447,69 @@ public static class SshAuth
     }
 
     public static string HostKeyId(HostEntry h) => $"{h.Address}:{h.Port}";
-    public static string Fingerprint(HostKeyEventArgs e) => $"{e.HostKeyName} SHA256:{e.FingerPrintSHA256}";
+    /// <summary>
+    /// 저장·비교용 호스트키 지문 "키형식 SHA256:...". 형식은 협상된 서명 알고리즘(HostKeyName = rsa-sha2-512 등)이 아니라 키 형식(ssh-rsa)으로 —
+    /// 같은 RSA 키라도 서버·SSH.NET 버전에 따라 rsa-sha2-512 / rsa-sha2-256 / ssh-rsa 로 달라져 "키가 바뀌었다" 로 보이던 문제.
+    /// </summary>
+    public static string Fingerprint(HostKeyEventArgs e) => $"{KnownHostStore.KeyType(e.HostKeyName)} SHA256:{e.FingerPrintSHA256}";
+
+    /// <summary>같은 서버의 다른 주소에 저장된 호스트키와 비교한 결과</summary>
+    public enum SiblingVerdict
+    {
+        /// <summary>다른 주소에 저장된 같은 형식의 키가 없음</summary>
+        Unknown,
+        /// <summary>다른 주소에 같은 키가 신뢰돼 있음</summary>
+        Match,
+        /// <summary>다른 주소에 같은 형식의 다른 키가 신뢰돼 있음 (중간자 공격일 수 있음)</summary>
+        Mismatch,
+        /// <summary>사용자가 다른 주소에서 이 키를 거부함</summary>
+        Rejected,
+    }
+
+    /// <summary>
+    /// 호스트의 다른 주소(기본 주소·사설 IP·공인 IP)에 저장된 호스트키와 비교한다. 호스트키는 "주소:포트" 별로 저장되므로
+    /// 사설 IP 로 신뢰한 서버에 공인 IP 로 처음 접속하면(VPN 이 꺼져 공인 IP 재시도 등) 다른 키가 와도 처음 보는 서버로 자동 신뢰되던 문제를 막는다.
+    /// 우선순위: Rejected > Mismatch > Match > Unknown. 형식이 다른 키(ed25519 와 rsa)는 비교하지 않는다.
+    /// </summary>
+    public static (SiblingVerdict Verdict, string? Id, string? Known) CheckSiblingKeys(HostEntry h, string fp)
+    {
+        var verdict = SiblingVerdict.Unknown;
+        string? hitId = null, hitKnown = null;
+        var addrs = new List<string>();
+        foreach (var a in new[] { h.Address, h.PrivateIp, h.PublicIp })
+            if (!string.IsNullOrWhiteSpace(a) && !string.Equals(a, h.Address, StringComparison.OrdinalIgnoreCase) &&
+                !addrs.Contains(a, StringComparer.OrdinalIgnoreCase))
+                addrs.Add(a);
+        var type = FingerprintType(fp);
+        foreach (var a in addrs)
+        {
+            var id = $"{a}:{h.Port}";
+            var known = KnownHostStore.Get(id);
+            if (known == null || known == KnownHostStore.UnavailableMark) continue;
+            SiblingVerdict v;
+            if (KnownHostStore.IsRejected(known))
+            {
+                if (known != KnownHostStore.RejectedMark(fp)) continue;   // 다른 키를 거부한 기록은 신뢰한 키가 아니다
+                v = SiblingVerdict.Rejected;
+            }
+            else if (FingerprintType(known) != type) continue;
+            else v = known == fp ? SiblingVerdict.Match : SiblingVerdict.Mismatch;
+            if (v > verdict) (verdict, hitId, hitKnown) = (v, id, known);
+        }
+        return (verdict, hitId, hitKnown);
+    }
+
+    /// <summary>지문 "형식 SHA256:..." 의 형식 부분</summary>
+    private static string FingerprintType(string fp)
+    {
+        var sp = fp.IndexOf(' ');
+        return sp > 0 ? fp[..sp] : "";
+    }
 
     /// <summary>
     /// 비대화형 연결용 호스트키 확인 (ssh 의 accept-new 와 같음): 처음 보는 서버는 저장 후 신뢰, 저장값과 다르면 거부.
-    /// 거부 사유를 반환하고, 신뢰하면 null.
+    /// 처음 보는 주소라도 같은 서버의 다른 주소에 저장된 키와 다르면(또는 거기서 거부한 키면) 거부한다.
+    /// 거부 사유를 반환하고, 신뢰하면 null. (SFTP 패널 화면에도 보이므로 번역한다)
     /// </summary>
     public static string? VerifyAcceptNew(HostEntry h, HostKeyEventArgs e)
     {
@@ -381,18 +519,24 @@ public static class SshAuth
         // OpenSSH known_hosts 참고: 폐기(@revoked)된 키는 Nubis 에 저장된 키와 같아도 항상 거부
         var openSsh = OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey);
         if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
-            return $"OpenSSH known_hosts 에 폐기(@revoked)된 호스트키입니다 ({fp}).";
+            return L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키입니다 ({0}).", fp);
         if (known == null)
         {
             // 처음 보는 서버: 같은 키면 신뢰, 다른 키면 거부 (비대화형이라 묻지 않는다)
             if (openSsh == OpenSshKnownHosts.Verdict.Mismatch)
-                return $"호스트키가 OpenSSH known_hosts 에 저장된 값과 다릅니다 ({fp}). 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
+                return L.F("호스트키가 OpenSSH known_hosts 에 저장된 값과 다릅니다 ({0}). 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.", fp);
+            var (sibling, siblingId, siblingKnown) = CheckSiblingKeys(h, fp);
+            if (sibling == SiblingVerdict.Rejected)
+                return L.F("같은 서버의 다른 주소({0})에서 사용자가 거부한 호스트키입니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.", siblingId!);
+            if (sibling == SiblingVerdict.Mismatch)
+                return L.F("호스트키가 같은 서버의 다른 주소({0})에 저장된 값과 다릅니다 ({1} → {2}). 중간자 공격일 수 있어 자동으로 신뢰하지 않았습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.",
+                    siblingId!, siblingKnown!, fp);
             KnownHostStore.Set(id, fp);
             return null;
         }
         if (KnownHostStore.IsRejected(known))
-            return "사용자가 이 서버의 호스트키를 거부한 적이 있습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
-        return known == fp ? null : $"호스트키가 저장된 값과 다릅니다 ({known} → {fp}). Known Hosts 에서 확인 후 삭제하세요.";
+            return L.T("사용자가 이 서버의 호스트키를 거부한 적이 있습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.");
+        return known == fp ? null : L.F("호스트키가 저장된 값과 다릅니다 ({0} → {1}). Known Hosts 에서 확인 후 삭제하세요.", known, fp);
     }
 }
 
@@ -514,7 +658,8 @@ public static class KbdAuth
     /// 인증 실패 메시지("Permission denied (publickey,password).")에서 서버가 허용하는 방식을 읽어
     /// 사용자에게 보일 원인 안내를 만든다. 알 수 없으면 null.
     /// </summary>
-    public static string? FailureHint(string message, bool hasKey, bool hasPassword)
+    /// <param name="answeredPrompt">사용자가 입력 창에서 서버 질문(OTP 등)에 답했음 (AuthPrompter.AnsweredByUser) — 비밀번호보다 입력값을 먼저 의심하게 안내</param>
+    public static string? FailureHint(string message, bool hasKey, bool hasPassword, bool answeredPrompt = false)
     {
         var m = Regex.Match(message, @"\(([a-z0-9@.,\-]+)\)\s*\.?\s*$", RegexOptions.IgnoreCase);
         if (!m.Success) return null;
@@ -529,6 +674,8 @@ public static class KbdAuth
             return hasKey
                 ? L.T("서버가 SSH 키 인증만 허용하는데 등록된 키를 받아들이지 않았습니다. 사용자명과 서버의 authorized_keys 를 확인하세요.")
                 : L.T("서버가 SSH 키 인증만 허용합니다. Vault 에 SSH 키를 등록해 이 호스트에 연결하세요.");
+        if (answeredPrompt && allowed.Contains("keyboard-interactive"))
+            return L.T("서버가 입력한 인증 값(OTP·인증 코드 등)을 받아들이지 않았습니다. 코드가 만료되지 않았는지, 비밀번호가 맞는지 확인하세요. 여러 번 실패하면 계정이 잠길 수 있습니다.");
         if (!hasPassword && !hasKey)
             return L.T("서버가 비밀번호 인증을 요구합니다. 비밀번호를 입력하세요.");
         return L.T("사용자명 또는 비밀번호가 틀렸거나 계정이 잠겼을 수 있습니다. 여러 번 실패하면 서버가 계정을 잠글 수 있으니 확인 후 다시 시도하세요.");

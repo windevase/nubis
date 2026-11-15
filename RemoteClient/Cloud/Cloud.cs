@@ -159,6 +159,15 @@ public sealed record CloudInstance(
 public sealed record CloudFetchResult(List<CloudInstance> Items, List<string> Errors)
 {
     public bool IsPartial => Errors.Count > 0;
+
+    /// <summary>
+    /// 권한(SCP·IAM 정책)으로 조회가 거부된 리전 (CloudInstance.Region 과 같은 이름). 사유는 Errors 에도 한 줄씩 들어 있다.
+    /// 이 리전의 호스트는 지우지 않고, 나머지 리전은 정상 조회됐으면 삭제 판단에 쓸 수 있다 (CloudSync.ApplyResult).
+    /// </summary>
+    public List<string> DeniedRegions { get; init; } = new();
+
+    /// <summary>권한 거부 리전을 뺀 실제 조회 실패가 있는지 (있으면 어느 호스트도 지우면 안 된다)</summary>
+    public bool HasUnexpectedErrors => Errors.Count > DeniedRegions.Count;
 }
 
 public interface ICloudProvider
@@ -205,21 +214,29 @@ public static class CloudProviders
 
     internal static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(60) };
 
-    /// <summary>여러 항목을 동시성 제한을 두고 병렬 처리하며, 실패는 모아서 반환</summary>
+    /// <summary>
+    /// 여러 항목을 동시성 제한을 두고 병렬 처리하며, 실패는 모아서 반환 (오류는 표시가 매번 같도록 정렬).
+    /// ct 가 취소되면 취소 예외를 그대로 던진다 — 취소를 "일부 조회 실패" 로 바꾸지 않는다.
+    /// </summary>
     internal static async Task<(List<T> items, List<string> errors)> ParallelCollect<TIn, T>(
-        IEnumerable<TIn> inputs, int degree, Func<TIn, Task<IEnumerable<T>>> work, Func<TIn, string> label)
+        IEnumerable<TIn> inputs, int degree, Func<TIn, Task<IEnumerable<T>>> work, Func<TIn, string> label,
+        CancellationToken ct = default)
     {
         var bag = new ConcurrentBag<T>();
         var errors = new ConcurrentBag<string>();
         using var gate = new SemaphoreSlim(degree);
         await Task.WhenAll(inputs.Select(async x =>
         {
-            await gate.WaitAsync();
+            await gate.WaitAsync(ct);
             try { foreach (var r in await work(x)) bag.Add(r); }
-            catch (Exception ex) { errors.Add($"{label(x)}: {FirstLine(ex.Message)}"); }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                errors.Add($"{label(x)}: {FirstLine(ex.Message)}");
+            }
             finally { gate.Release(); }
         }));
-        return (bag.ToList(), errors.ToList());
+        ct.ThrowIfCancellationRequested();
+        return (bag.ToList(), errors.OrderBy(e => e, StringComparer.Ordinal).ToList());
     }
 
     internal static string FirstLine(string s) => (s ?? "").Split('\n')[0].Trim();

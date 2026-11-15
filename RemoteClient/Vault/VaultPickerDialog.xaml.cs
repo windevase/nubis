@@ -26,7 +26,9 @@ public partial class VaultPickerDialog : Window
             e.Name.Contains(q, StringComparison.OrdinalIgnoreCase) || e.Username.Contains(q, StringComparison.OrdinalIgnoreCase) ||
             e.Note.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
         EntryList.ItemsSource = items;
-        EntryList.SelectedItem = items.FirstOrDefault(e => e.Id == select) ?? items.FirstOrDefault();
+        // 지금 쓰는 계정만 미리 고른다. 아무것도 고르지 않은 채 Enter 를 누르면 첫 계정이 지정되던 문제 —
+        // 검색어를 입력한 경우에만 첫 결과를 골라 "검색 → Enter" 로 바로 고를 수 있게 한다
+        EntryList.SelectedItem = items.FirstOrDefault(e => e.Id == select) ?? (q.Length > 0 ? items.FirstOrDefault() : null);
         EmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -55,7 +57,13 @@ public partial class VaultPickerDialog : Window
     private void OnCreate(object sender, RoutedEventArgs e)
     {
         if (VaultEntryDialog.Create(this) is not { } entry) return;
-        VaultStore.Upsert(entry);
+        try { VaultStore.Upsert(entry); }
+        catch (Exception ex)
+        {
+            Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        FilterBox.Text = "";   // 새 계정이 검색어에 걸러져 안 보이는 일이 없게
         Reload(entry.Id);
     }
 

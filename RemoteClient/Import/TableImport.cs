@@ -36,7 +36,8 @@ public static class TableImport
         Add(Field.Group, "group", "그룹", "분류", "환경", "folder", "폴더", "env", "environment", "category", "카테고리", "구분",
             "project", "프로젝트");
         Add(Field.User, "user", "username", "user name", "사용자", "사용자명", "계정", "계정명", "login", "login id", "account", "user id", "userid");
-        Add(Field.Os, "os", "운영체제", "운영 체제", "platform", "플랫폼", "os type", "os name", "operating system");
+        Add(Field.Os, "os", "운영체제", "운영 체제", "platform", "플랫폼", "os type", "os name", "operating system",
+            "os 종류", "os 버전", "os version", "운영체제 종류", "운영체제 버전", "os 정보");
         Add(Field.Note, "note", "notes", "설명", "비고", "description", "purpose", "용도", "memo", "메모", "comment", "comments",
             "주석", "역할", "role");
         Add(Field.Jump, "jump", "jump host", "jump server", "점프", "점프 서버", "점프 호스트", "bastion", "bastion host", "배스천",
@@ -85,17 +86,27 @@ public static class TableImport
 
         var missing = new List<int>();
         var badPort = new List<int>();
+        // 엑셀에서 병합한 그룹 칸은 복사하면 첫 줄에만 값이 있고 나머지는 빈 칸 → 위 줄의 그룹으로 채운다
+        string? lastGroup = null;
+        int filledGroups = 0;
         for (int i = start; i < rows.Count; i++)
         {
             if (IsBlank(rows[i])) continue;
-            var cells = rows[i].Select(c => c.Trim()).ToList();
+            var cells = rows[i].Select(c => Narrow(c).Trim()).ToList();
             int rowNo = i + 1;   // 표의 행 번호 (머리글 · 빈 줄 포함, 1부터)
             bool portBad = false;
             var host = map != null ? FromHeader(cells, map, noAddressColumn, ref portBad) : FromCells(cells);
             if (portBad) badPort.Add(rowNo);
             if (host == null) { missing.Add(rowNo); continue; }
+            if (map != null && map.ContainsKey(Field.Group))
+            {
+                if (host.Group != null) lastGroup = host.Group;
+                else if (lastGroup != null) { host = host with { Group = lastGroup }; filledGroups++; }
+            }
             result.Hosts.Add(host);
         }
+        if (filledGroups > 0)
+            result.Warnings.Add(L.F("그룹 칸이 빈 {0}개 줄은 위 줄의 그룹으로 채웠습니다 (병합된 셀). 다르면 미리보기에서 확인하세요.", filledGroups));
 
         if (missing.Count > 0)
             result.Warnings.Add(L.F("주소가 없어 건너뛴 줄 ({0}개): {1}", missing.Count, FormatRows(missing)));
@@ -217,7 +228,12 @@ public static class TableImport
         // 흔한 변형: "서버 IP", "관리 IP", "SSH 포트", "접속 계정"
         if (n.EndsWith("ip", StringComparison.Ordinal) || n.EndsWith("ip주소", StringComparison.Ordinal) || n.EndsWith("아이피", StringComparison.Ordinal))
             return Field.Address;
-        if (n.EndsWith("port", StringComparison.Ordinal) || n.EndsWith("포트", StringComparison.Ordinal)) return Field.Port;
+        // "IP(사설)" · "IP 공인" 처럼 IP 가 앞에 오는 형태
+        if (n.StartsWith("ip", StringComparison.Ordinal) && (n.Contains("사설") || n.Contains("공인") || n.Contains("내부") || n.Contains("외부")
+            || n.EndsWith("private", StringComparison.Ordinal) || n.EndsWith("public", StringComparison.Ordinal)))
+            return Field.Address;
+        if (n.EndsWith("port", StringComparison.Ordinal) || n.EndsWith("포트", StringComparison.Ordinal)
+            || n.StartsWith("port", StringComparison.Ordinal) || n.StartsWith("포트", StringComparison.Ordinal)) return Field.Port;
         if (n.EndsWith("username", StringComparison.Ordinal) || n.EndsWith("계정", StringComparison.Ordinal)) return Field.User;
         return null;
     }
@@ -228,7 +244,7 @@ public static class TableImport
         var map = new Dictionary<Field, List<int>>();
         for (int i = 0; i < row.Count; i++)
         {
-            var c = row[i].Trim();
+            var c = Narrow(row[i]).Trim();
             if (c.Length == 0) continue;
             if (IsIpLiteral(SplitAddress(c).Host) || ParsePort(c) != null) return null;
             if (MapHeader(c) is { } f)
@@ -287,6 +303,14 @@ public static class TableImport
                                        string? user, string? os, string? note, string? jump, ref bool portBad)
     {
         if (string.IsNullOrWhiteSpace(addressRaw)) return null;
+        // "10. 0. 0. 1" · "10.0.0.1 (VIP)" 처럼 IP 에 공백·설명이 섞인 칸: 공백을 빼서 IP 가 되면 그것, 아니면 첫 토큰이 IP 면 그것
+        if (addressRaw.Any(char.IsWhiteSpace))
+        {
+            var squeezed = new string(addressRaw.Where(ch => !char.IsWhiteSpace(ch)).ToArray());
+            var firstToken = addressRaw.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0];
+            if (IsIpLiteral(SplitAddress(squeezed).Host)) addressRaw = squeezed;
+            else if (IsIpLiteral(SplitAddress(firstToken).Host)) addressRaw = firstToken;
+        }
         var addr = SplitAddress(addressRaw);
         if (addr.Host.Length == 0) return null;
 
@@ -368,10 +392,30 @@ public static class TableImport
         return (s.Trim(), port, user, scheme);
     }
 
+    /// <summary>1~65535. 엑셀 숫자 서식의 천 단위 쉼표("3,389")도 받는다 (쉼표 자리가 맞을 때만)</summary>
     private static int? ParsePort(string s)
     {
         s = s.Trim();
+        if (s.Length is 5 or 6 && s[^4] == ',' && s.Count(ch => ch == ',') == 1) s = s.Remove(s.Length - 4, 1);
         return int.TryParse(s, NumberStyles.None, CultureInfo.InvariantCulture, out var p) && p is >= 1 and <= 65535 ? p : null;
+    }
+
+    /// <summary>전각 영숫자·기호(１０．０．０．１, ：)와 전각 공백을 반각으로. 한글 등 다른 글자는 그대로</summary>
+    private static string Narrow(string s)
+    {
+        StringBuilder? sb = null;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            char n = c is >= '！' and <= '～' ? (char)(c - 0xFEE0) : c == '　' ? ' ' : c;
+            if (n != c)
+            {
+                sb ??= new StringBuilder(s, 0, i, s.Length);
+                sb.Append(n);
+            }
+            else sb?.Append(c);
+        }
+        return sb?.ToString() ?? s;
     }
 
     private static bool IsIpLiteral(string host)

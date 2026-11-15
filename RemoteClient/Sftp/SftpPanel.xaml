@@ -48,9 +48,13 @@
                 <ColumnDefinition Width="70"/>
                 <ColumnDefinition Width="124"/>
             </Grid.ColumnDefinitions>
-            <TextBlock Text="{l:Tr '이름'}" Foreground="{StaticResource SubText}" FontSize="11.5"/>
-            <TextBlock Grid.Column="1" Text="{l:Tr '크기'}" Foreground="{StaticResource SubText}" FontSize="11.5" HorizontalAlignment="Right"/>
-            <TextBlock Grid.Column="2" Text="{l:Tr '수정한 날짜'}" Foreground="{StaticResource SubText}" FontSize="11.5" Margin="12,0,0,0"/>
+            <!-- 머리글을 누르면 그 열로 정렬 (다시 누르면 반대로) — SftpPanel.List.cs -->
+            <TextBlock x:Name="NameHeader" Text="{l:Tr '이름'}" Tag="Name" Foreground="{StaticResource SubText}" FontSize="11.5"
+                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnSortHeader" ToolTip="{l:Tr '눌러서 정렬'}"/>
+            <TextBlock x:Name="SizeHeader" Grid.Column="1" Text="{l:Tr '크기'}" Tag="Size" Foreground="{StaticResource SubText}" FontSize="11.5" HorizontalAlignment="Right"
+                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnSortHeader" ToolTip="{l:Tr '눌러서 정렬'}"/>
+            <TextBlock x:Name="ModifiedHeader" Grid.Column="2" Text="{l:Tr '수정한 날짜'}" Tag="Modified" Foreground="{StaticResource SubText}" FontSize="11.5" Margin="12,0,0,0"
+                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnSortHeader" ToolTip="{l:Tr '눌러서 정렬'}" HorizontalAlignment="Left"/>
         </Grid>
 
         <!-- 파일 목록 (끌어다 놓아 업로드 · 탐색기로 끌어내 다운로드) -->
@@ -59,6 +63,7 @@
                      AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" DragLeave="OnDragLeave"
                      PreviewMouseLeftButtonDown="OnListMouseDown" PreviewMouseMove="OnListMouseMove" PreviewMouseLeftButtonUp="OnListMouseUp"
                      MouseDoubleClick="OnItemDoubleClick" KeyDown="OnListKeyDown"
+                     IsTextSearchEnabled="True" TextSearch.TextPath="Name"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                 <ListBox.ContextMenu>
@@ -70,6 +75,8 @@
                         <MenuItem Header="{l:Tr '삭제'}" Click="OnDelete"/>
                         <MenuItem Header="{l:Tr '새 폴더'}" Click="OnNewFolder"/>
                         <MenuItem Header="{l:Tr '경로 복사'}" Click="OnCopyPath"/>
+                        <Separator/>
+                        <MenuItem x:Name="HiddenMenuItem" Header="{l:Tr '숨김 파일 표시'}" InputGestureText="Ctrl+H" IsChecked="True" Click="OnToggleHidden"/>
                     </ContextMenu>
                 </ListBox.ContextMenu>
                 <ListBox.ItemContainerStyle>

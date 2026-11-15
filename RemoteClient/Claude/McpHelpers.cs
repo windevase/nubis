@@ -235,6 +235,24 @@ public static class McpHelpers
         return sb.ToString();
     }
 
+    /// <summary>보이지 않거나 표시 순서를 바꾸는 문자: 제어 문자(C0·DEL·C1, 탭·줄바꿈 포함), 폭 없는 문자·양방향 제어(U+200B~U+200F, U+202A~U+202E, U+2066~U+2069, U+FEFF), 줄·문단 구분자</summary>
+    public static bool HasInvisibleChars(string text)
+    {
+        foreach (var ch in text)
+            if (ch < 0x20 || ch is >= '\x7f' and <= '\x9f' or >= '​' and <= '‏' or >= '‪' and <= '‮'
+                    or >= '⁦' and <= '⁩' or '﻿' or '\u2028' or '\u2029')
+                return true;
+        return false;
+    }
+
+    /// <summary>승인 창용 계정 표시: "계정 root · Vault 계정 'ops'" (사용자명이 없으면 "계정 없음"). 비밀번호는 넣지 않는다</summary>
+    public static string AccountLabel(string? username, string? source)
+    {
+        if (string.IsNullOrWhiteSpace(username)) return L.T("계정 없음");
+        var user = VisibleControlChars(username);
+        return source is { Length: > 0 } ? L.F("계정 {0} · {1}", user, source) : L.F("계정 {0}", user);
+    }
+
     /// <summary>
     /// send_to_terminal 을 승인 없이 입력해도 되는가. 모두 만족할 때만:
     ///  - 사용자가 '읽기 전용 명령은 승인 없이 실행'(AutoApproveReadOnly) 을 켰다
@@ -438,6 +456,53 @@ public static class McpHelpers
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
     private static extern uint GetFinalPathNameByHandleW(Microsoft.Win32.SafeHandles.SafeFileHandle file, System.Text.StringBuilder path,
         uint pathLength, uint flags);
+
+    /// <summary>
+    /// UTF-8 바이트 조각을 글자로. 파일 중간에서 잘린 조각이면(cutStart: 앞이 잘림, cutEnd: 뒤가 잘림) 경계에서 반쯤 잘린 글자를 버린다
+    /// (끝 읽기가 한글 글자 중간에서 시작해 맨 앞에 깨진 글자 '�' 가 나오던 문제)
+    /// </summary>
+    public static string DecodeUtf8Slice(ReadOnlySpan<byte> data, bool cutStart, bool cutEnd)
+    {
+        if (cutStart)
+        {
+            var skip = 0;
+            while (skip < data.Length && skip < 3 && (data[skip] & 0xC0) == 0x80) skip++;
+            data = data[skip..];
+        }
+        if (cutEnd && data.Length > 0)
+        {
+            // 마지막 글자의 시작 바이트를 찾아, 그 글자에 필요한 바이트가 다 있지 않으면 버린다
+            var i = data.Length - 1;
+            var back = 0;
+            while (i > 0 && back < 3 && (data[i] & 0xC0) == 0x80) { i--; back++; }
+            var lead = data[i];
+            var need = lead >= 0xF0 ? 4 : lead >= 0xE0 ? 3 : lead >= 0xC0 ? 2 : 1;
+            if (need > 1 && data.Length - i < need) data = data[..i];
+        }
+        return System.Text.Encoding.UTF8.GetString(data);
+    }
+
+    /// <summary>
+    /// 비밀 정보가 들어 있을 수 있는 원격 경로 (sftp_read 자동 승인 제외): SSH 개인키·~/.ssh 안의 파일, /etc/shadow·gshadow,
+    /// .env 류, 인증서 개인키(.pem·.key·.p12·.pfx 등), 클라우드·도구 자격 증명(.aws/credentials, .kube/config, .docker/config.json,
+    /// .git-credentials, .netrc, .pgpass, .my.cnf, .vault-token 등). 애매하면 true 쪽 (승인 창이 한 번 더 뜰 뿐)
+    /// </summary>
+    public static bool IsSensitiveRemotePath(string path)
+    {
+        var p = path.Replace('\\', '/').Trim();
+        var lower = p.ToLowerInvariant();
+        var name = RemoteFileName(lower);
+        if (Regex.IsMatch(lower, @"(^|/)\.ssh(/|$)")) return true;   // ~/.ssh 폴더 안 전부 (개인키 이름이 제각각)
+        if (Regex.IsMatch(name, @"^(id_[a-z0-9_-]+|identity|ssh_host_.*_key)$")) return true;   // id_rsa · /etc/ssh/ssh_host_*_key 등 (공개키 .pub 는 아래에서도 걸리지 않음)
+        if (name is "shadow" or "shadow-" or "gshadow" or "gshadow-" or "master.passwd" or "sudoers" or "secrets" or "credentials"
+            or ".git-credentials" or ".netrc" or "_netrc" or ".pgpass" or ".my.cnf" or ".vault-token" or ".htpasswd" or "wp-config.php"
+            or ".npmrc" or ".pypirc" or "kubeconfig" or "secrets.yaml" or "secrets.yml" or "secrets.json") return true;
+        if (name == ".env" || name.StartsWith(".env.", StringComparison.Ordinal) || name.EndsWith(".env", StringComparison.Ordinal)) return true;
+        if (Regex.IsMatch(name, @"\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|ovpn)$")) return true;
+        if (Regex.IsMatch(lower, @"(^|/)\.(aws|kube|docker|gnupg|azure|config/gcloud|oci)(/|$)")) return true;
+        if (Regex.IsMatch(lower, @"(^|/)etc/(ssl/private|pki/tls/private|letsencrypt)(/|$)")) return true;
+        return false;
+    }
 
     /// <summary>원격 파일 이름 마지막 부분 (경로 구분자 제거)</summary>
     public static string RemoteFileName(string remotePath)

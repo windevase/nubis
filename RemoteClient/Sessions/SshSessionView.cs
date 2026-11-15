@@ -18,8 +18,19 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private SshClient? _client;
     private ShellStream? _shell;
-    private bool _closed, _connecting;
+    // _closed 는 연결 스레드(Task.Run)에서도 읽는다
+    private volatile bool _closed;
+    private bool _connecting;
     private volatile int _gen;
+    /// <summary>_client/_shell/_tunnel 교체와 "닫힘·세대 확인 후 대입"을 한 덩어리로 (연결 중 탭 닫기 경쟁 → 연결 누수 방지)</summary>
+    private readonly object _sshLock = new();
+    /// <summary>상태 전환(연결됨 ↔ 끊김)을 한 덩어리로 — 셸 Closed 와 ErrorOccurred 가 다른 스레드에서 동시에 와도 한 번만 처리</summary>
+    private readonly object _statusLock = new();
+    /// <summary>키 입력을 순서대로 보내는 백그라운드 작업 줄 (서버가 읽지 않아 SSH 창이 가득 차도 UI 스레드가 멈추지 않게)</summary>
+    private System.Threading.Tasks.Task _sendChain = System.Threading.Tasks.Task.CompletedTask;
+    private readonly object _sendLock = new();
+    /// <summary>이 연결에서 처음 받은 OSC 7 의 호스트 — 터미널에서 ssh 로 들어간 다른 서버의 OSC 7 은 무시한다</summary>
+    private string? _osc7Host;
     private SessionStatus _status = SessionStatus.Connecting;
 
     public event Action<SessionStatus>? StatusChanged;
@@ -89,8 +100,14 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         _term.Ready += () => { try { _shell?.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { } };
         _term.Resized += (c, r) => { try { _shell?.ChangeWindowSize(c, r, 0, 0); } catch { } };
         _term.Input += OnInput;
-        _term.CwdChanged += cwd =>
+        _term.CwdChanged += (cwd, host) =>
         {
+            // 터미널 안에서 ssh 로 다른 서버에 들어가면 그 서버의 OSC 7 이 온다 — 이 서버의 경로가 아니므로 따라가지 않는다
+            if (host.Length > 0)
+            {
+                _osc7Host ??= host;
+                if (!string.Equals(host, _osc7Host, StringComparison.OrdinalIgnoreCase)) return;
+            }
             _lastCwd = cwd;
             if (SettingsStore.Current.SftpFollowTerminal && _sftp is { IsVisible: true }) _ = _sftp.FollowAsync(cwd);
         };
@@ -278,16 +295,38 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r')) _ = ConnectAsync();
     }
 
+    /// <summary>
+    /// 셸에 입력 보내기. Write+Flush 는 서버가 읽지 않으면(SSH 채널 창이 가득 참) 막힐 수 있어 UI 스레드에서 하지 않고,
+    /// 한 줄로 이어진 백그라운드 작업에서 들어온 순서대로 보낸다
+    /// </summary>
     private void SendRaw(string d)
     {
+        var shell = _shell;
+        if (shell == null) return;
         var bytes = Encoding.UTF8.GetBytes(d);
-        try { _shell!.Write(bytes, 0, bytes.Length); _shell.Flush(); } catch { }
+        lock (_sendLock)
+            _sendChain = _sendChain.ContinueWith(_ =>
+            {
+                try { shell.Write(bytes, 0, bytes.Length); shell.Flush(); } catch { }
+            }, System.Threading.Tasks.TaskScheduler.Default);
     }
 
     private void SetStatus(SessionStatus s)
     {
-        _status = s;
+        lock (_statusLock) _status = s;
         Dispatcher.BeginInvoke(() => StatusChanged?.Invoke(s));
+    }
+
+    /// <summary>연결 완료 → 연결됨. 그사이 셸이 이미 닫혀 끊김으로 바뀌었으면 false (확인과 전환 사이에 끊김이 끼어들지 않게)</summary>
+    private bool TrySetConnected()
+    {
+        lock (_statusLock)
+        {
+            if (_status == SessionStatus.Disconnected || _closed) return false;
+            _status = SessionStatus.Connected;
+        }
+        Dispatcher.BeginInvoke(() => StatusChanged?.Invoke(SessionStatus.Connected));
+        return true;
     }
 
     // ---------- SSH ----------
@@ -296,8 +335,11 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         if (_connecting || _closed) return;
         _connecting = true;
         SetStatus(SessionStatus.Connecting);
-        var gen = ++_gen;   // 이전 연결의 Closed/Error 이벤트는 무시
+        var gen = ++_gen;   // 이전 연결의 Closed/Error/DataReceived 이벤트는 무시
         DisposeSsh();
+        // 앞 셸 출력이 UTF-8 글자 중간에서 끊겼으면 디코더에 남은 바이트가 새 셸 첫 출력을 깨뜨린다
+        lock (_decodeLock) _utf8.Reset();
+        _osc7Host = null;   // 새 로그인 — 처음 오는 OSC 7 의 호스트를 다시 기억한다
 
         // 새 연결 시도는 항상 원래(사설) 주소부터 — 지난번에 공인 IP 로 넘어갔어도 VPN 이 돌아왔으면 사설로 붙는다.
         // 공인 IP 재시도(바로 아래 catch 가 예약)일 때만 바꿔 둔 주소를 그대로 쓴다
@@ -401,7 +443,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                     finally { prompter.Detach(client); }
 
                     shell = client.CreateShellStream("xterm-256color", cols, rows, 0, 0, 65536);
-                    shell.DataReceived += OnData;
+                    // 세대 확인 — 버린(다시 연결 전) 셸에서 늦게 온 출력이 새 화면에 섞이지 않게
+                    shell.DataReceived += (s, e) => { if (gen == _gen) OnData(s, e); };
                     shell.Closed += (_, _) => { if (gen == _gen) OnDisconnected(null); };
                     // 오류 이벤트는 연결·셸이 준비된 뒤에 — 연결 중의 오류는 아래 catch 가 처리한다
                     // (먼저 달면 핸드셰이크 오류가 OnDisconnected 의 자동 재연결과 catch 경로를 둘 다 타 재연결이 겹친다)
@@ -416,18 +459,27 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                     throw;
                 }
 
-                // 연결하는 동안 탭이 닫혔거나 새 연결 시도가 시작됐으면 이 연결은 버린다 (누수 방지)
-                if (_closed || gen != _gen)
+                // 연결하는 동안 탭이 닫혔거나 새 연결 시도가 시작됐으면 이 연결은 버린다 (누수 방지).
+                // 확인과 대입을 DisposeSsh 와 같은 잠금 안에서 — 그 사이에 탭이 닫혀 DisposeSsh 가 빈 값을 정리하고 끝나는 일이 없게
+                bool discard;
+                lock (_sshLock)
+                {
+                    discard = _closed || gen != _gen;
+                    if (!discard)
+                    {
+                        _client = client;
+                        _shell = shell;
+                        _tunnel = tunnel;
+                    }
+                }
+                if (discard)
                 {
                     try { shell.Dispose(); } catch { }
                     try { client.Dispose(); } catch { }
                     tunnel?.Dispose();
                     throw new OperationCanceledException();
                 }
-                _client = client;
                 SshServerOs.Report(_host, client);
-                _shell = shell;
-                _tunnel = tunnel;
             });
             authenticated = true;
             _skipRemembered = false;
@@ -441,8 +493,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             });
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
-            if (_status == SessionStatus.Disconnected) return;
-            SetStatus(SessionStatus.Connected);
+            if (!TrySetConnected()) return;
             _askCredentials = false;
             _autoAttempts = 0;
             _triedPublic = false;
@@ -528,7 +579,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _term.Info(L.F("인증 실패: {0}", ex.Message), "31");
             if (prompter.LastAnsweredWithSavedPassword)
                 _term.Info(L.F("{0} 의 비밀번호를 서버가 거부했습니다. 비밀번호가 맞는지 확인하세요. 계속 실패하면 계정이 잠길 수 있습니다.", credSource ?? L.T("저장된 계정")), "33");
-            else if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password)) is { } hint) _term.Info(hint, "33");
+            else if (KbdAuth.FailureHint(ex.Message, _host.HasKey, !string.IsNullOrEmpty(password), answeredPrompt: prompter.AnsweredByUser) is { } hint) _term.Info(hint, "33");
             _term.Info(L.T("Enter 키를 누르면 계정을 다시 입력합니다."));
             DisposeSsh();
             SetStatus(SessionStatus.Disconnected);
@@ -685,6 +736,19 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             return HostKeyDecision.Trusted;
         }
 
+        // 이 주소로는 처음이지만 같은 서버의 다른 주소(사설·공인 IP)에 저장된 키가 있으면 그 값과 비교한다
+        // (사설 IP 로 신뢰한 서버에 공인 IP 로 재시도할 때 다른 키를 처음 보는 서버처럼 자동 신뢰하지 않게)
+        var sibling = known == null && openSsh == OpenSshKnownHosts.Verdict.Unknown
+            ? SshAuth.CheckSiblingKeys(h, fp) : (SshAuth.SiblingVerdict.Unknown, null, null);
+        if (sibling.Verdict == SshAuth.SiblingVerdict.Match)
+        {
+            KnownHostStore.Set(key, fp);
+            _term.Info(L.F("같은 서버의 다른 주소({0})에서 신뢰한 호스트키: {1}", sibling.Id, fp));
+            return HostKeyDecision.Trusted;
+        }
+        if (sibling.Verdict == SshAuth.SiblingVerdict.Mismatch) known = sibling.Known;          // 아래에서 "바뀐 키" 경고로 묻는다
+        if (sibling.Verdict == SshAuth.SiblingVerdict.Rejected) known = KnownHostStore.RejectedMark(fp);   // 전에 거부한 키 — 다시 묻는다
+
         // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)
         // 저장된 키와 다른 경우(중간자 공격 가능)와 사용자가 전에 거부한 키는 아래에서 항상 묻는다
         if (known == null && openSsh == OpenSshKnownHosts.Verdict.Unknown && !SettingsStore.Current.SshHostKeyPrompt)
@@ -732,10 +796,19 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         _term.Write(text);
     }
 
+    /// <remarks>
+    /// 셸만 닫힌 경우(exit·logout) SSH 연결(_client)은 여기서 닫지 않는다 — 다시 연결(ConnectAsync → DisposeSsh)이나 탭 닫기 때 정리된다.
+    /// 그동안 SFTP 패널은 같은 연결로 계속 쓸 수 있다. 오류로 끊긴 경우 연결은 이미 죽어 있다.
+    /// </remarks>
     private void OnDisconnected(string? reason)
     {
-        if (_status == SessionStatus.Disconnected || _closed) return;
-        SetStatus(SessionStatus.Disconnected);
+        // Closed·ErrorOccurred 가 서로 다른 스레드에서 거의 동시에 올 수 있다 — 확인과 전환을 한 번에 해 안내·자동 재연결이 두 번 나가지 않게
+        lock (_statusLock)
+        {
+            if (_status == SessionStatus.Disconnected || _closed) return;
+            _status = SessionStatus.Disconnected;
+        }
+        Dispatcher.BeginInvoke(() => StatusChanged?.Invoke(SessionStatus.Disconnected));
         _term.Write("\r\n");
         if (reason != null) _term.Info(L.F("오류: {0}", reason), "31");
         _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"), "33");
@@ -745,8 +818,12 @@ public sealed partial class SshSessionView : UserControl, ISessionView
 
     private void DisposeSsh()
     {
-        var shell = _shell; var client = _client; var tunnel = _tunnel;
-        _shell = null; _client = null; _tunnel = null;
+        ShellStream? shell; SshClient? client; JumpTunnel? tunnel;
+        lock (_sshLock)
+        {
+            shell = _shell; client = _client; tunnel = _tunnel;
+            _shell = null; _client = null; _tunnel = null;
+        }
         Task.Run(() =>
         {
             try { shell?.Dispose(); } catch { }
@@ -776,8 +853,10 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     public void CloseSession()
     {
         _closed = true;
-        DisposeSsh();
-        _sftp?.Close();
+        // SFTP 패널은 이 SSH 연결 위의 채널을 쓴다 — 편집 파일 자동 업로드(마지막 저장분 포함)가 끝난 뒤에 SSH 를 닫는다
+        // (Close 의 Task 는 최대 2분 안에 끝난다. DisposeSsh 는 잠금 + 백그라운드 해제라 어느 스레드에서 불러도 된다)
+        var sftpClosed = _sftp?.Close() ?? Task.CompletedTask;
         _term.Close();
+        _ = sftpClosed.ContinueWith(_ => DisposeSsh(), TaskScheduler.Default);
     }
 }
