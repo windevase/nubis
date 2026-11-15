@@ -31,9 +31,15 @@ public partial class MainWindow
             "이 PC 에서 서버 목록을 가져올 수 있는 출처를 찾아 보고한다 (아무것도 바꾸지 않음). " +
             "클라우드(AWS·Tencent·GCP·Azure·OCI): 찾은 프로필·프로젝트·구독 후보와 이미 추가됐는지, 로그인 필요 여부, 로그인 명령. " +
             "온프레미스: ~/.ssh/config · mRemoteNG 연결 파일 · Active Directory 도메인 가입 여부. " +
-            "사용자가 '서버 가져와 줘' 처럼 요청하면 먼저 이 도구로 무엇이 있는지 확인한다.",
-            Schema(new { }),
-            _ => DiscoverSourcesAsync());
+            "사용자가 '서버 가져와 줘' 처럼 요청하면 먼저 이 도구로 무엇이 있는지 확인한다. " +
+            $"후보는 클라우드마다 {DiscoverListLimit}개까지 보여 준다 — 더 많으면 provider 로 한 클라우드만, filter 로 이름 일부, offset 으로 다음 페이지를 본다.",
+            Schema(new
+            {
+                provider = new { type = "string", @enum = McpCloudHelpers.ProviderNames, description = "이 클라우드만 조회 (생략 시 전체 + 온프레미스)" },
+                filter = new { type = "string", description = "후보 이름·표시 이름에 이 문자열이 들어간 것만 (대소문자 무시)" },
+                offset = new { type = "integer", description = $"클라우드마다 건너뛸 후보 수 (다음 페이지, 기본 0, 한 번에 {DiscoverListLimit}개)" },
+            }),
+            DiscoverSourcesAsync);
 
         yield return new McpTool("cloud_add_profile",
             "클라우드 프로필(AWS/Tencent/OCI 프로필, GCP 프로젝트, Azure 구독)을 Nubis 에 추가하고 바로 동기화해 서버를 호스트로 가져온다. " +
@@ -84,12 +90,19 @@ public partial class MainWindow
         }
     }
 
-    private async Task<string> DiscoverSourcesAsync()
+    private async Task<string> DiscoverSourcesAsync(JsonElement a)
     {
         var ct = McpRequest.Token;
+        var providerArg = Arg(a, "provider").Trim();
+        CloudProvider? only = null;
+        if (providerArg.Length > 0)
+            only = McpCloudHelpers.ParseProvider(providerArg)
+                   ?? throw new McpToolException($"provider 는 {string.Join(", ", McpCloudHelpers.ProviderNames)} 중 하나입니다.");
+        var filter = Arg(a, "filter").Trim();
+        var offset = Math.Max(0, IntArg(a, "offset") ?? 0);
 
         // 프로바이더별 후보 탐색 (병렬)
-        var discoveries = await Task.WhenAll(CloudProviders.All.Select(async pr =>
+        var discoveries = await Task.WhenAll(CloudProviders.All.Where(pr => only == null || pr.Kind == only).Select(async pr =>
         {
             try { return new ProviderDiscovery(pr, await DiscoverWithTimeoutAsync(pr, ct), null); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw new McpToolException("Claude 쪽에서 요청이 취소되었습니다."); }
@@ -100,8 +113,8 @@ public partial class MainWindow
         var existing = await OnUi(() => _sections.ToDictionary(
             s => s.Provider, s => s.Profiles.Select(p => p.Name).ToList()));
 
-        // 온프레미스 출처 (파일 읽기는 백그라운드)
-        var onPrem = await Task.Run(() =>
+        // 온프레미스 출처 (파일 읽기는 백그라운드). 한 클라우드만 볼 때는 생략
+        var onPrem = only != null ? new List<string>() : await Task.Run(() =>
         {
             var lines = new List<string>();
             var sshPath = SshConfigImport.DefaultPath;
@@ -157,23 +170,35 @@ public partial class MainWindow
                     : "  후보 없음 — 이 PC 에 CLI 설정이 없어 보임 (CLI 설치·설정 또는 로그인 필요)");
                 continue;
             }
-            foreach (var c in d.Candidates.Take(DiscoverListLimit))
+            var page = McpCloudHelpers.PageCandidates(d.Candidates, filter, offset, DiscoverListLimit);
+            fresh += page.Matched.Count(c => !addedSet.Contains(c.Name));
+            if (filter.Length > 0) sb.AppendLine($"  '{filter}' 와 일치: {page.Matched.Count}개 (전체 {d.Candidates.Count}개)");
+            if (page.Matched.Count == 0) continue;
+            if (page.Shown.Count == 0)
+            {
+                sb.AppendLine($"  offset={offset} 은 범위를 벗어났습니다 (일치 {page.Matched.Count}개)");
+                continue;
+            }
+            if (offset > 0) sb.AppendLine($"  ({offset + 1}~{offset + page.Shown.Count}번째)");
+            foreach (var c in page.Shown)
             {
                 var isAdded = addedSet.Contains(c.Name);
-                if (!isAdded) fresh++;
                 var display = c.DisplayName.Equals(c.Name, StringComparison.OrdinalIgnoreCase) ? c.Name : $"{c.Name} ({c.DisplayName})";
                 sb.AppendLine($"  - {display} — {(isAdded ? "추가됨" : "추가 안 됨")}");
             }
-            if (d.Candidates.Count > DiscoverListLimit)
+            if (page.Remaining > 0)
             {
-                var restFresh = d.Candidates.Skip(DiscoverListLimit).Count(c => !addedSet.Contains(c.Name));
-                fresh += restFresh;
-                sb.AppendLine($"  ... 외 {d.Candidates.Count - DiscoverListLimit}개 (추가 안 됨 {restFresh}개)");
+                var restFresh = page.Matched.Skip(offset + page.Shown.Count).Count(c => !addedSet.Contains(c.Name));
+                sb.AppendLine($"  ... 외 {page.Remaining}개 (추가 안 됨 {restFresh}개) — 다음: provider={key}, offset={offset + page.Shown.Count}" +
+                              (filter.Length > 0 ? $", filter={filter}" : "") + " (또는 filter 로 좁히기)");
             }
         }
 
-        sb.AppendLine().AppendLine("## 온프레미스");
-        foreach (var l in onPrem) sb.AppendLine(l);
+        if (only == null)
+        {
+            sb.AppendLine().AppendLine("## 온프레미스");
+            foreach (var l in onPrem) sb.AppendLine(l);
+        }
 
         sb.AppendLine().AppendLine("## 다음 단계");
         if (fresh > 0) sb.AppendLine($"- 추가 안 된 클라우드 후보 {fresh}개: 사용자가 원하는 것을 cloud_add_profile 로 추가 (추가하면 바로 동기화됨)");
@@ -182,7 +207,8 @@ public partial class MainWindow
         sb.AppendLine("- 이미 추가된 프로필의 서버 목록 갱신은 cloud_sync");
         sb.AppendLine("- 온프레미스 서버(ssh config · mRemoteNG · AD · 엑셀/CSV · Ansible)는 import_hosts");
 
-        AuditLog.Write("discover_sources", discoveries.Select(d => CloudProviders.Label(d.Provider.Kind)).Append("온프레미스"), "discover", "조회");
+        AuditLog.Write("discover_sources", discoveries.Select(d => CloudProviders.Label(d.Provider.Kind)).Concat(only == null ? new[] { "온프레미스" } : Array.Empty<string>()),
+            "discover", "조회");
         return sb.ToString();
     }
 
@@ -245,9 +271,8 @@ public partial class MainWindow
             string Line(CloudProfile p)
             {
                 var hosts = _hosts.Where(h => h.CloudProfileId == p.Id).ToList();
-                var status = p.StatusText.Length > 0 ? p.StatusText : p.LastResult;
                 return $"[{p.ProviderText}] {p.GroupName} ({p.Name}) — 서버 {hosts.Count}대 (실행 {hosts.Count(h => !h.IsStopped)})" +
-                       (status.Length > 0 ? $" · {status}" : "");
+                       string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s));
             }
             var result = string.Join("\n", added.Select(Line));
             AuditLog.Write("cloud_add_profile", added.Select(p => $"[{p.ProviderText}] {p.GroupName} ({p.Name})"), command,
@@ -409,6 +434,22 @@ internal static class McpCloudHelpers
         return new Selection(pick, already, unknown);
     }
 
+    /// <summary>discover_sources 한 페이지: filter 에 맞는 후보 전체(Matched), 이번에 보여 줄 것(Shown), 그 뒤에 남은 수</summary>
+    public sealed record CandidatePage(List<CloudCandidate> Matched, List<CloudCandidate> Shown, int Remaining);
+
+    /// <summary>후보를 이름·표시 이름 부분 일치(대소문자 무시)로 거른 뒤 offset 부터 limit 개를 고른다</summary>
+    public static CandidatePage PageCandidates(IReadOnlyList<CloudCandidate> candidates, string? filter, int offset, int limit)
+    {
+        filter = (filter ?? "").Trim();
+        var matched = filter.Length == 0
+            ? candidates.ToList()
+            : candidates.Where(c => c.Name.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                                    c.DisplayName.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        offset = Math.Max(0, offset);
+        var shown = matched.Skip(offset).Take(Math.Max(1, limit)).ToList();
+        return new CandidatePage(matched, shown, Math.Max(0, matched.Count - offset - shown.Count));
+    }
+
     // 프로필 이름 · 테넌트 ID 로 허용하는 문자 (cmd 메타 문자 · 공백 · 따옴표 없음)
     private static readonly Regex SafeArg = new(@"^[A-Za-z0-9][A-Za-z0-9._@+\-]{0,127}\z", RegexOptions.CultureInvariant);
 
@@ -418,4 +459,13 @@ internal static class McpCloudHelpers
     public static bool IsSafeCliArg(string? s) => !string.IsNullOrEmpty(s) && SafeArg.IsMatch(s);
 
     public static bool IsSafeCommandLine(string? s) => !string.IsNullOrEmpty(s) && SafeCommand.IsMatch(s);
+
+    /// <summary>
+    /// 로그인 명령을 cmd 로 실행해도 되는지 (UI 로그인 버튼 · MCP cloud_login 공용 기준).
+    /// 프로필 이름 · 테넌트 ID 는 있으면 허용 문자만, 최종 명령에도 cmd 메타 문자가 없어야 한다
+    /// </summary>
+    public static bool IsSafeLogin(string? profileName, string? tenantId, string? command) =>
+        (string.IsNullOrEmpty(profileName) || IsSafeCliArg(profileName)) &&
+        (string.IsNullOrEmpty(tenantId) || IsSafeCliArg(tenantId)) &&
+        IsSafeCommandLine(command);
 }

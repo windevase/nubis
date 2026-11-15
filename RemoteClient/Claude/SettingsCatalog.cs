@@ -28,7 +28,17 @@ public static class SettingsCatalog
     public sealed record Change(Def Def, object Old, object New)
     {
         public string Text => $"{Def.Label} ({Def.Key}): {Show(Old)} → {Show(New)}";
+
+        /// <summary>언어와 무관한 표기 (키 · true/false · 숫자) — 영어 화면의 승인 창에 쓴다</summary>
+        public string NeutralText => $"{Def.Key}: {ShowRaw(Old)} → {ShowRaw(New)}";
     }
+
+    private static string ShowRaw(object v) => v switch
+    {
+        bool b => b ? "true" : "false",
+        string s => $"\"{s}\"",
+        _ => v.ToString() ?? "",
+    };
 
     /// <summary>기본 포트는 클라우드 호스트 포트도 함께 바꿔야 해서 MainWindow 가 따로 적용한다</summary>
     public static readonly string[] PortKeys = { nameof(AppSettings.DefaultSshPort), nameof(AppSettings.DefaultRdpPort) };

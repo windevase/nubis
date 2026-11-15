@@ -62,7 +62,8 @@ public partial class SftpPanel
         _dragStart = null;
         _deferSelect = false;
         var items = Selected();
-        if (items.Count == 0 || _busy || _cwd.Length == 0) return;
+        if (items.Count == 0 || _cwd.Length == 0) return;
+        if (_busy) { ShowBusyHint(); return; }
 
         CleanupDragTemp();
         var dir = Path.Combine(DragTempRoot, Guid.NewGuid().ToString("N")[..12]);
@@ -146,7 +147,13 @@ public partial class SftpPanel
             if (_downloading) return null;
             if (System.Windows.Forms.Control.MouseButtons != System.Windows.Forms.MouseButtons.None) return _targets.ToArray();
             _downloading = true;
-            try { _result = _panel.DownloadForDrag(_items, _targets, _dir) ? _targets.ToArray() : null; }
+            try
+            {
+                // 받지 않고 건너뛴 항목(특수 파일 등)은 경로가 없다 — 실제로 만들어진 것만 넘긴다
+                _result = _panel.DownloadForDrag(_items, _targets, _dir)
+                    ? _targets.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray() : null;
+                if (_result is { Length: 0 }) _result = null;
+            }
             finally { _downloading = false; _done = true; }
             return _result;
         }
@@ -187,7 +194,10 @@ public partial class SftpPanel
         ct.ThrowIfCancellationRequested();
         if (!isDir)
         {
-            files.Add((remote, local, c.GetAttributes(remote).Size));
+            // 직접 고른 항목도 장치·FIFO·소켓이면 받지 않는다 — /dev/zero·/dev/urandom 은 끝없이, FIFO 는 멈춘다
+            var a = c.GetAttributes(remote);
+            if (IsSpecialFile(a.IsSocket, a.IsNamedPipe, a.IsCharacterDevice, a.IsBlockDevice)) { skipped.Add(remote); return; }
+            files.Add((remote, local, a.Size));
             return;
         }
         dirs.Add(local);

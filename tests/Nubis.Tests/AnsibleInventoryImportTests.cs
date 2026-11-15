@@ -78,7 +78,7 @@ public class AnsibleInventoryImportTests
     [Fact]
     public void 범위가_한도를_넘으면_잘라내고_경고()
     {
-        var r = AnsibleInventoryImport.Parse("[big]\nh[1:5000]\n");
+        var r = AnsibleInventoryImport.Parse($"[big]\nh[1:{AnsibleInventoryImport.MaxHosts + 1}]\n");
         Assert.Equal(AnsibleInventoryImport.MaxHosts, r.Hosts.Count);
         Assert.Contains(r.Warnings, w => w.Contains(AnsibleInventoryImport.MaxHosts.ToString()));
     }

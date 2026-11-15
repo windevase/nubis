@@ -113,7 +113,7 @@ public static class SshAgent
         WriteUInt32(ms, flags);
         // 하드웨어 키(FIDO)·확인 요청이 있는 에이전트는 사용자가 누를 때까지 기다린다
         var reply = Request(ms.ToArray(), SignTimeoutMs);
-        if (reply.Length == 0 || reply[0] != SignResponse) throw new InvalidOperationException("ssh-agent 가 서명을 거부했습니다.");
+        if (reply.Length == 0 || reply[0] != SignResponse) throw new InvalidOperationException(L.T("ssh-agent 가 서명을 거부했습니다."));
         return new Reader(reply, 1).Bytes();
     }
 
@@ -187,7 +187,20 @@ public static class SshAgent
     private sealed class AgentHostAlgorithm(string name, byte[] blob, uint flags) : HostAlgorithm(name)
     {
         public override byte[] Data => blob;
-        public override byte[] Sign(byte[] data) => SshAgent.Sign(blob, data, flags);
+        public override byte[] Sign(byte[] data)
+        {
+            // 서명 실패(하드웨어 키 터치 대기 초과·확인 거부·에이전트 응답 없음)는 인증 실패로 바꾼다 —
+            // TimeoutException 이 그대로 나가면 네트워크 오류로 분류돼 공인 IP 재시도·자동 재연결이 터치·확인 요청을 반복한다
+            try { return SshAgent.Sign(blob, data, flags); }
+            catch (TimeoutException ex)
+            {
+                throw new SshAgentSignException(L.T("ssh-agent 가 서명하지 않았습니다 (하드웨어 키 터치·확인 대기 시간 초과 또는 에이전트 응답 없음)."), ex);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException)
+            {
+                throw new SshAgentSignException(L.F("ssh-agent 서명 실패 — {0}", ex.Message), ex);
+            }
+        }
         public override bool VerifySignature(byte[] data, byte[] signature) => throw new NotSupportedException();
     }
 }

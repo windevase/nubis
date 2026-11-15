@@ -39,9 +39,28 @@ public sealed class AzureProvider : ICloudProvider
     // az CLI 로 토큰을 받는 데 수 초가 걸리므로 테넌트별로 만료 5분 전까지 재사용
     private static readonly ConcurrentDictionary<string, AccessToken> TokenCache = new();
 
+    /// <summary>
+    /// 토큰 캐시 키: 테넌트 + az 설정 폴더 + azureProfile.json 수정 시각.
+    /// az login / az logout 은 azureProfile.json 을 다시 쓰므로, 로그인 버튼으로 다른 계정에 로그인하면 키가 바뀌어 이전 계정 토큰을 쓰지 않는다
+    /// </summary>
+    private static string CacheKey(string? tenant)
+    {
+        var dir = CloudPaths.Effective(CloudProvider.Azure);
+        long stamp = 0;
+        try { stamp = File.GetLastWriteTimeUtc(Path.Combine(dir, "azureProfile.json")).Ticks; } catch { }
+        return $"{tenant}|{dir}|{stamp}";
+    }
+
+    /// <summary>ARM 이 401 로 거부한 토큰은 캐시에서 뺀다 (az 로 다른 계정에 로그인했거나 토큰이 폐기된 경우 — 다음 동기화가 새 토큰을 받게)</summary>
+    private static void ForgetTokenOn401(string? tenant, Exception ex)
+    {
+        if (ex is HttpRequestException && ex.Message.StartsWith("401", StringComparison.Ordinal))
+            TokenCache.TryRemove(CacheKey(tenant), out _);
+    }
+
     private static async Task<string> TokenAsync(string? tenant, CancellationToken ct)
     {
-        var key = (tenant ?? "") + "|" + (Environment.GetEnvironmentVariable("AZURE_CONFIG_DIR") ?? "");
+        var key = CacheKey(tenant);
         if (TokenCache.TryGetValue(key, out var cached) && cached.ExpiresOn > DateTimeOffset.UtcNow.AddMinutes(5))
             return cached.Token;
         var cred = new AzureCliCredential(new AzureCliCredentialOptions
@@ -52,6 +71,20 @@ public sealed class AzureProvider : ICloudProvider
         var t = await cred.GetTokenAsync(new TokenRequestContext(new[] { Arm + "/.default" }), ct);
         TokenCache[key] = t;
         return t.Token;
+    }
+
+    /// <summary>
+    /// 토큰을 못 받은 오류를 안내 문구로. 로그인 안 됨·만료·MFA 필요(CredentialUnavailable / AuthenticationFailed)만 "az 로그인 필요" 로,
+    /// az 응답 시간 초과 등 그 밖의 오류는 로그인 문제로 단정하지 않는다
+    /// </summary>
+    private InvalidOperationException TokenError(CloudProfile? p, Exception ex)
+    {
+        var detail = CloudProviders.FirstLine(ex.Message);
+        var timedOut = ex.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase) ||
+                       ex.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase);
+        return !timedOut && ex is CredentialUnavailableException or AuthenticationFailedException
+            ? new InvalidOperationException(L.F("az 로그인이 필요합니다 ({0}) — {1}", LoginCommand(p), detail))
+            : new InvalidOperationException(L.F("az 에서 토큰을 받지 못했습니다 — {0}", detail));
     }
 
     /// <summary>az login 후 다른 계정으로 바뀌었을 수 있으므로 캐시 비우기</summary>
@@ -72,8 +105,15 @@ public sealed class AzureProvider : ICloudProvider
 
     public async Task<List<CloudCandidate>> DiscoverAsync(CancellationToken ct)
     {
-        var home = await TokenAsync(null, ct);
-        var tenants = (await ListAsync($"{Arm}/tenants?api-version=2022-12-01", home, ct)).Select(t => t.Str("tenantId")).ToList();
+        string home;
+        try { home = await TokenAsync(null, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw TokenError(null, ex);
+        }
+        List<string> tenants;
+        try { tenants = (await ListAsync($"{Arm}/tenants?api-version=2022-12-01", home, ct)).Select(t => t.Str("tenantId")).ToList(); }
+        catch (Exception ex) { ForgetTokenOn401(null, ex); throw; }
 
         var list = new List<CloudCandidate>();
         var skipped = new List<string>();
@@ -91,6 +131,7 @@ public sealed class AzureProvider : ICloudProvider
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 // MFA 등으로 테넌트 토큰을 못 받으면 그 테넌트만 건너뛰되, 사유를 모아 둔다
+                ForgetTokenOn401(tenant, ex);
                 skipped.Add(SkippedTenant(tenant, ex.Message));
             }
         }
@@ -113,18 +154,23 @@ public sealed class AzureProvider : ICloudProvider
     {
         string token;
         try { token = await TokenAsync(p.TenantId, ct); }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw new InvalidOperationException(L.F("az 로그인이 필요합니다 ({0}) — {1}", LoginCommand(p), CloudProviders.FirstLine(ex.Message)));
+            throw TokenError(p, ex);
         }
 
-        var sub = $"{Arm}/subscriptions/{p.Name}";
+        var sub = $"{Arm}/subscriptions/{Uri.EscapeDataString(p.Name)}";
         // statusOnly=true 는 전원 상태(instanceView)만 주고 네트워크/OS 정보가 빠지므로 전체 목록과 따로 받아 합친다
         var vmsTask = ListAsync($"{sub}/providers/Microsoft.Compute/virtualMachines?api-version=2024-07-01", token, ct);
         var statusTask = ListAsync($"{sub}/providers/Microsoft.Compute/virtualMachines?api-version=2024-07-01&statusOnly=true", token, ct);
         var nicsTask = ListAsync($"{sub}/providers/Microsoft.Network/networkInterfaces?api-version=2024-05-01", token, ct);
         var pipsTask = ListAsync($"{sub}/providers/Microsoft.Network/publicIPAddresses?api-version=2024-05-01", token, ct);
-        await Task.WhenAll(vmsTask, statusTask, nicsTask, pipsTask);
+        try { await Task.WhenAll(vmsTask, statusTask, nicsTask, pipsTask); }
+        catch (Exception ex)
+        {
+            ForgetTokenOn401(p.TenantId, ex);
+            throw;
+        }
 
         var power = new Dictionary<string, string>();
         foreach (var s in statusTask.Result)

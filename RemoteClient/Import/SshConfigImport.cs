@@ -25,10 +25,14 @@ public static class SshConfigImport
     private static string SshDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
 
-    /// <summary>설정 텍스트를 읽는다. Include 의 상대 경로는 baseDir(없으면 ~/.ssh) 기준</summary>
-    public static ImportResult Parse(string text, string? baseDir = null)
+    /// <summary>
+    /// 설정 텍스트를 읽는다. Include 의 상대 경로는 baseDir(없으면 ~/.ssh) 기준.
+    /// blockPath: Include 로 읽을 파일 검사 (막을 이유를 돌려주면 건너뜀) — Claude(MCP) 가 넘긴 내용이 Include 로
+    /// Nubis 데이터 폴더·개인키 등을 읽지 못하게 할 때 쓴다
+    /// </summary>
+    public static ImportResult Parse(string text, string? baseDir = null, Func<string, string?>? blockPath = null)
     {
-        var st = new State(baseDir ?? SshDir);
+        var st = new State(baseDir ?? SshDir) { BlockPath = blockPath };
         ParseText(text ?? "", "config", 0, st);
         return Build(st);
     }
@@ -86,6 +90,7 @@ public static class SshConfigImport
         public readonly List<string> Warnings = new();
         public Block Current;
         public bool MatchWarned;
+        public Func<string, string?>? BlockPath;
     }
 
     private static void ParseText(string text, string source, int depth, State st)
@@ -141,6 +146,12 @@ public static class SshConfigImport
 
         var path = ExpandHome(arg);
         if (!Path.IsPathRooted(path)) path = Path.Combine(st.BaseDir, path);
+        // 파일 존재 확인(네트워크 경로면 접속이 일어남)보다 먼저 검사
+        if (st.BlockPath?.Invoke(path) is { } blocked)
+        {
+            st.Warnings.Add(L.F("Include 파일을 건너뛰었습니다: {0} ({1})", path, blocked));
+            return;
+        }
 
         List<string> files;
         if (HasWildcard(path))
@@ -155,6 +166,11 @@ public static class SshConfigImport
 
         foreach (var file in files)
         {
+            if (st.BlockPath?.Invoke(file) is { } why)
+            {
+                st.Warnings.Add(L.F("Include 파일을 건너뛰었습니다: {0} ({1})", file, why));
+                continue;
+            }
             string text;
             try { text = File.ReadAllText(file); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -353,8 +369,16 @@ public static class SshConfigImport
         string? jump = null;
         if (proxyKey == "proxyjump" && proxyArgs != null)
         {
-            var hop = proxyArgs[0].Split(',')[0].Trim();
-            if (hop.Length > 0 && !hop.Equals("none", StringComparison.OrdinalIgnoreCase)) jump = hop;
+            var hops = proxyArgs[0].Split(',');
+            var hop = hops[0].Trim();
+            if (hop.StartsWith("ssh://", StringComparison.OrdinalIgnoreCase)) hop = hop[6..].TrimEnd('/');
+            if (hop.Length > 0 && !hop.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                jump = hop;
+                // Nubis 의 점프 서버는 한 단계뿐 — 첫 번째(이 PC 에서 바로 닿는) 점프 서버만 쓴다
+                if (hops.Count(x => x.Trim().Length > 0) > 1)
+                    st.Warnings.Add(L.F("{0}: 다단계 ProxyJump 는 첫 번째 점프 서버만 가져왔습니다.", alias));
+            }
         }
         else if (proxyKey == "proxycommand" && proxyArgs != null
                  && !(proxyArgs.Count == 1 && proxyArgs[0].Equals("none", StringComparison.OrdinalIgnoreCase)))

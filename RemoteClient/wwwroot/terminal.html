@@ -75,6 +75,8 @@
     zoom = Math.max(-6, Math.min(24, z));
     term.options.fontSize = Math.max(6, baseFontSize + zoom);
     try { fit.fit(); } catch (e) { }
+    // 앱이 기억해 두었다가 화면을 다시 불러올 때(렌더러 복구) 되돌린다
+    post({ t: 'zoom', z: zoom });
   }
   el.addEventListener('wheel', e => {
     if (!e.ctrlKey) return;
@@ -112,14 +114,21 @@
     return true;
   });
 
-  // MCP 용: 현재 화면 버퍼(일반/전체화면)의 마지막 n 줄
+  // MCP 용: 현재 화면 버퍼(일반/전체화면)의 마지막 n 줄.
+  // 화면 폭을 넘어 자동으로 접힌 줄(isWrapped)은 원래 한 줄로 이어 붙인다 — 긴 명령·경로·프롬프트가 잘려 읽히지 않게
   function readBuffer(n) {
     const b = term.buffer.active;
     const end = b.baseY + b.cursorY;
+    const start = Math.max(0, end - n + 1);
     const out = [];
-    for (let y = Math.max(0, end - n + 1); y <= end; y++) {
+    for (let y = start; y <= end; y++) {
       const line = b.getLine(y);
-      if (line) out.push(line.translateToString(true));
+      if (!line) continue;
+      const next = y < end ? b.getLine(y + 1) : null;
+      // 다음 줄로 이어지는 줄은 끝 공백도 내용이라 자르지 않는다
+      const s = line.translateToString(!(next && next.isWrapped));
+      if (line.isWrapped && y > start && out.length) out[out.length - 1] += s;
+      else out.push(s);
     }
     while (out.length && out[out.length - 1] === '') out.pop();
     return out.join('\n');
@@ -151,7 +160,7 @@
     if (sel && !sel.includes('\n')) findText.value = sel;
     findText.focus(); findText.select();
   }
-  function closeFind() { findBox.style.display = 'none'; findPos = null; findCount.textContent = ''; term.clearSelection(); term.focus(); }
+  function closeFind() { findBox.style.display = 'none'; findPos = null; findCount.textContent = ''; findText.style.borderColor = ''; term.clearSelection(); term.focus(); }
 
   /**
    * 한 줄의 글자와 각 글자의 화면 칸 위치·폭. 한글·한자 같은 넓은 글자는 2칸이라
@@ -171,7 +180,7 @@
   /** 대소문자 무시, 줄 단위로 찾기. dir: 1 = 아래(다음), -1 = 위(이전) */
   function find(dir) {
     const q = findText.value.toLowerCase();
-    if (!q) { findCount.textContent = ''; return; }
+    if (!q) { findCount.textContent = ''; findText.style.borderColor = ''; return; }
     const b = term.buffer.active;
     const total = b.length;
     const hits = [];
@@ -186,6 +195,9 @@
         i = s.indexOf(q, i + 1);
       }
     }
+    // 찾은 게 없으면 입력란 테두리·개수를 빨갛게 (있으면 원래대로)
+    findText.style.borderColor = hits.length ? '' : '#F0616D';
+    findCount.style.color = hits.length ? '' : '#F0616D';
     if (hits.length === 0) { findCount.textContent = '0'; term.clearSelection(); return; }
     let idx;
     if (!findPos) {
@@ -340,6 +352,7 @@
   function applySettings(s) {
     term.options.theme = s.theme;
     baseFontSize = s.fontSize;
+    if (typeof s.zoom === 'number') zoom = Math.max(-6, Math.min(24, s.zoom));
     term.options.fontSize = Math.max(6, s.fontSize + zoom);
     smartCopy = !!s.smartCopy;
     copyOnSelect = !!s.copyOnSelect;

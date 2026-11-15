@@ -28,6 +28,8 @@ public sealed class SftpItem
     public long Size { get; init; }
     public DateTime Modified { get; init; }
     public string Perms { get; init; } = "";
+    /// <summary>소켓·FIFO·장치 파일 (링크면 가리키는 대상 기준) — 열기·편집·다운로드하지 않는다 (/dev/zero 처럼 끝없이 읽히거나 멈춤)</summary>
+    public bool IsSpecial { get; init; }
 
     public string Glyph => IsDir ? "" : IsLink ? "" : "";
     public Brush GlyphBrush => IsDir ? DirBrush : FileBrush;
@@ -74,9 +76,15 @@ public partial class SftpPanel : UserControl
     /// <summary>터미널이 cd 한 폴더로 따라가기 (전송 중이거나 이미 그 폴더로 가는 중이면 무시)</summary>
     public async Task FollowAsync(string path)
     {
-        if (_busy || _cwd.Length == 0 || path == (_navTarget ?? _cwd)) return;
+        if (_cwd.Length == 0) return;
+        if (path == (_navTarget ?? _cwd)) { _pendingFollow = null; return; }
+        // 전송 중에는 바로 가지 않고 기억해 뒀다가 전송이 끝나면 간다 (EndTransfer) — 전송 중 cd 가 무시돼 패널이 옛 폴더에 남지 않게
+        if (_busy) { _pendingFollow = path; return; }
         await NavigateAsync(path);
     }
+
+    /// <summary>전송 중에 터미널이 이동한 폴더 — 전송이 끝나면 그리로 간다 (사용자가 직접 이동하면 버린다)</summary>
+    private string? _pendingFollow;
 
     private async void OnTerminalCwd(object sender, RoutedEventArgs e)
     {
@@ -225,10 +233,11 @@ public partial class SftpPanel : UserControl
     {
         var seq = ++_navSeq;
         _navTarget = path;
+        _pendingFollow = null;   // 직접 이동했거나 따라가는 중 — 전송 중 기억해 둔 터미널 폴더는 버린다
         try
         {
             List<ISftpFile> files;
-            var linkIsDir = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+            var linkTarget = new System.Collections.Concurrent.ConcurrentDictionary<string, SftpFileAttributes>();
             // 목록을 읽는 동안 연결을 잡아 둔다 — 사용자 전환(RunAsAsync)이 쓰는 중인 연결을 닫지 않게
             await _clientLock.WaitAsync();
             try
@@ -240,23 +249,30 @@ public partial class SftpPanel : UserControl
                 // 심볼릭 링크가 폴더인지는 링크마다 서버에 물어야 한다 — 차례로 물으면 /etc·/usr/lib 처럼 링크가 많은 폴더가 느려 병렬로
                 await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, f =>
                 {
-                    try { linkIsDir[f.FullName] = c.GetAttributes(f.FullName).IsDirectory; } catch { }
+                    try { linkTarget[f.FullName] = c.GetAttributes(f.FullName); } catch { }
                 }));
             }
             finally { _clientLock.Release(); }
             if (seq != _navSeq) return;
-            var items = files.Select(f => new SftpItem
+            var items = files.Select(f =>
             {
-                Name = f.Name, FullName = f.FullName, IsLink = f.IsSymbolicLink,
-                IsDir = f.IsSymbolicLink && linkIsDir.TryGetValue(f.FullName, out var d) ? d : f.IsDirectory,
-                Size = f.Length, Modified = f.LastWriteTime, Perms = Perms(f),
-            }).OrderByDescending(i => i.IsDir).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
+                var t = f.IsSymbolicLink && linkTarget.TryGetValue(f.FullName, out var a) ? a : null;
+                return new SftpItem
+                {
+                    Name = f.Name, FullName = f.FullName, IsLink = f.IsSymbolicLink,
+                    IsDir = t?.IsDirectory ?? f.IsDirectory,
+                    IsSpecial = t != null
+                        ? IsSpecialFile(t.IsSocket, t.IsNamedPipe, t.IsCharacterDevice, t.IsBlockDevice)
+                        : !f.IsSymbolicLink && IsSpecialFile(f.IsSocket, f.IsNamedPipe, f.IsCharacterDevice, f.IsBlockDevice),
+                    Size = f.Length, Modified = f.LastWriteTime, Perms = Perms(f),
+                };
+            }).ToList();
 
             _navTarget = null;
+            var sameFolder = path == _cwd;
             _cwd = path;
             PathBox.Text = path;
-            FileList.ItemsSource = items;
-            ShowMessage(items.Count == 0 ? L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다.") : null);
+            SetItems(items, keepSelection: sameFolder);   // 정렬·숨김 파일 표시 (SftpPanel.List.cs)
         }
         catch (Exception ex)
         {
@@ -309,8 +325,9 @@ public partial class SftpPanel : UserControl
     {
         if (e.Key != Key.Enter) return;
         e.Handled = true;
+        // ~ · ~/x · 상대 경로(현재 폴더 기준) · . / .. 를 절대 경로로 바꿔서 간다
         var p = PathBox.Text.Trim();
-        if (p.Length > 0) await NavigateAsync(p);
+        if (p.Length > 0) await NavigateAsync(ResolvePathInput(p, _cwd, _home));
     }
 
     private async void OnItemDoubleClick(object sender, MouseButtonEventArgs e)
@@ -331,101 +348,26 @@ public partial class SftpPanel : UserControl
             case Key.F5: await NavigateAsync(_cwd); break;
             case Key.Delete: OnDelete(sender, e); break;
             case Key.F2: OnRename(sender, e); break;
+            case Key.H when Keyboard.Modifiers == ModifierKeys.Control: ToggleHidden(); break;
             default: return;
         }
         e.Handled = true;
     }
 
-    private async void OnNewFolder(object sender, RoutedEventArgs e)
-    {
-        var name = PromptDialog.Ask(Window.GetWindow(this), L.T("새 폴더"), L.F("{0} 에 만들 폴더 이름", _cwd));
-        if (string.IsNullOrEmpty(name)) return;
-        try
-        {
-            var c = await ClientAsync();
-            await Task.Run(() => c.CreateDirectory(Combine(_cwd, name)));
-            await NavigateAsync(_cwd);
-        }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("새 폴더")); }
-    }
-
-    private async void OnRename(object sender, RoutedEventArgs e)
-    {
-        if (FileList.SelectedItem is not SftpItem item) return;
-        var name = PromptDialog.Ask(Window.GetWindow(this), L.T("이름 변경"), item.FullName, item.Name);
-        if (string.IsNullOrEmpty(name) || name == item.Name) return;
-        try
-        {
-            var c = await ClientAsync();
-            var newPath = Combine(ParentPath(item.FullName), name);
-            // 링크는 경로를 그대로 보낸다 — RenameFile 은 REALPATH 로 링크를 따라가 원본을 옮겨 버린다
-            await Task.Run(() =>
-            {
-                if (item.IsLink) SftpRaw.Rename(c, item.FullName, newPath);
-                else c.RenameFile(item.FullName, newPath);
-            });
-            await NavigateAsync(_cwd);
-        }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("이름 변경")); }
-    }
-
-    private async void OnDelete(object sender, RoutedEventArgs e)
-    {
-        var items = Selected();
-        if (items.Count == 0 || _busy) return;
-        var dirs = items.Count(i => i.IsDir && !i.IsLink);   // 폴더를 가리키는 링크는 링크만 지운다 (안의 내용은 그대로)
-        var msg = L.F("{0}개 항목을 서버에서 삭제할까요?", items.Count) + (dirs > 0 ? L.F("\n(폴더 {0}개는 안의 내용까지 모두 삭제)", dirs) : "") +
-                  "\n\n" + string.Join("\n", items.Take(10).Select(i => i.FullName)) + (items.Count > 10 ? "\n..." : "");
-        if (Dialog.Show(Window.GetWindow(this)!, msg, L.T("삭제 확인"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        if (_busy) { ShowBusyHint(); return; }   // 확인 창을 띄운 사이 다른 전송이 시작됨
-        // 연결을 기다리기 전에 전송 중으로 표시 — 그 사이 다른 작업·사용자 전환이 끼어들지 않게
-        var ct = BeginTransfer(L.T("삭제 중..."), 0);
-        try
-        {
-            var c = await ClientAsync();
-            await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink, i.IsLink, ct); }, ct);
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("삭제")); }
-        finally { EndTransfer(null); }
-        await NavigateAsync(_cwd);
-    }
-
-    /// <summary>
-    /// 항목 하나씩 지우면서 취소 버튼을 확인한다 (이미 지운 것은 되돌릴 수 없음).
-    /// 링크는(폴더를 가리키는 링크 포함) 안으로 들어가지 않고 링크 자체만 지운다 —
-    /// DeleteFile 은 REALPATH 로 링크를 따라가 폴더 밖의 원본까지 지우므로 링크에는 쓰지 않는다.
-    /// </summary>
-    private static void DeleteRecursive(SftpClient c, string path, bool isDir, bool isLink, CancellationToken ct)
-    {
-        ct.ThrowIfCancellationRequested();
-        if (isLink) { SftpRaw.Remove(c, path); return; }
-        if (!isDir)
-        {
-            // 일반 파일도 경로를 그대로 지울 수 있으면 그렇게 한다 (목록을 읽은 뒤 링크로 바뀌었어도 원본이 지워지지 않게)
-            if (SftpRaw.Supported) SftpRaw.Remove(c, path); else c.DeleteFile(path);
-            return;
-        }
-        foreach (var f in c.ListDirectory(path).Where(f => f.Name is not "." and not ".."))
-            DeleteRecursive(c, f.FullName, f.IsDirectory && !f.IsSymbolicLink, f.IsSymbolicLink, ct);
-        c.DeleteDirectory(path);
-    }
-
-    private void OnCopyPath(object sender, RoutedEventArgs e)
-    {
-        var items = Selected();
-        try { Clipboard.SetText(items.Count > 0 ? string.Join("\n", items.Select(i => i.FullName)) : _cwd); } catch { }
-    }
-
     // ===================== 전송 상태 표시 =====================
+
+    /// <summary>상태 줄 표시 번호 — 몇 초 뒤 숨길 때 그 사이 더 새 결과·알림이 떴으면 숨기지 않는다</summary>
+    private int _statusSeq;
 
     private CancellationToken BeginTransfer(string text, long total)
     {
         _busy = true;
+        _statusSeq++;
         _cts = new CancellationTokenSource();
         TransferBar.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Visible;
         TransferText.Text = text;
+        TransferText.ToolTip = null;
         TransferProgress.IsIndeterminate = total == 0;
         TransferProgress.Value = 0;
         return _cts.Token;
@@ -447,20 +389,33 @@ public partial class SftpPanel : UserControl
         // 전송 중 sudo 전환에 실패하는 등 미뤄 둔 알림 (SftpPanel.RunAs.cs)
         result = AppendNotice(result, _pendingNotice);
         _pendingNotice = null;
+        // 전송 중에 터미널이 이동한 폴더로 — 전송 뒤 새로고침(NavigateAsync(_cwd))보다 나중에 돌아 마지막 이동이 이기게
+        if (_pendingFollow is { } follow)
+        {
+            _pendingFollow = null;
+            _ = Dispatcher.InvokeAsync(async () => { if (!_busy && !_closed) await NavigateAsync(follow); }, DispatcherPriority.Background);
+        }
+        var seq = ++_statusSeq;
         if (result == null) { TransferBar.Visibility = Visibility.Collapsed; return; }
         TransferText.Text = result;
+        TransferText.ToolTip = result;
         TransferProgress.Value = 1;
         await Task.Delay(6000);
-        if (!_busy) TransferBar.Visibility = Visibility.Collapsed;
+        if (!_busy && seq == _statusSeq) TransferBar.Visibility = Visibility.Collapsed;
     }
 
     private void OnCancelTransfer(object sender, RoutedEventArgs e) => _cts?.Cancel();
 
-    public void Close()
+    /// <summary>
+    /// 탭이 닫힘. 돌려주는 Task 는 편집 자동 업로드(진행 중 + 저장했지만 아직 안 올린 것)를 마치고 SFTP 연결을 닫은 뒤 끝난다 —
+    /// 터미널 연결 위의 SFTP 채널이면 부르는 쪽은 이 Task 가 끝난 뒤에 SSH 연결을 닫아야 마지막 업로드가 잘리지 않는다.
+    /// </summary>
+    public Task Close()
     {
         _closed = true;   // 지금 연결 중인 ClientCoreAsync 는 연결이 끝나면 스스로 닫는다
         var uploading = _edits.Values.Any(ed => ed.Uploading);
-        foreach (var ed in _edits.Values) ed.Dispose();
+        var sessions = _edits.Values.ToList();
+        foreach (var ed in sessions) ed.Dispose();   // 감시·디바운스 중지 (대기 중이던 저장은 아래에서 마지막으로 올린다)
         _edits.Clear();
         _cts?.Cancel();
         var c = _client;
@@ -468,13 +423,30 @@ public partial class SftpPanel : UserControl
         // 편집용 임시 폴더는 지우지 않는다 — 메모장·VS Code 는 파일을 잠그지 않아, 편집기에 열린 채 저장하지 않은 내용이
         // 파일을 잃는다. 하루 지난 것은 CleanupEditTemp 가 정리한다. 열기·끌어내기용 임시 폴더만 지운다
         var temps = TakePanelTempDirs().Where(d => !IsEditTempDir(d)).ToList();
-        // 편집 자동 업로드는 _clientLock 을 잡고 한다 — 올리는 중이면 끝난 뒤에 연결을 닫는다 (서버 파일이 반쯤 쓰인 채 남지 않게)
-        _ = Task.Run(async () =>
+        var owner = Window.GetWindow(this) ?? Application.Current?.MainWindow;
+        // 편집 자동 업로드는 _clientLock 을 잡고 한다 — 올리는 중이면 끝난 뒤에 연결을 닫는다 (서버 파일이 반쯤 쓰인 채 남지 않게).
+        // 저장했지만 디바운스(0.8초)를 기다리던 편집도 연결을 닫기 전에 올린다
+        return Task.Run(async () =>
         {
-            var locked = uploading && await _clientLock.WaitAsync(TimeSpan.FromMinutes(2));
-            try { c?.Dispose(); } catch { }
-            finally { if (locked) _clientLock.Release(); }
+            var locked = (uploading || sessions.Count > 0) && await _clientLock.WaitAsync(TimeSpan.FromMinutes(2));
+            var failures = new List<string>();
+            try
+            {
+                foreach (var s in sessions)
+                    if (await FlushEditOnCloseAsync(c, s) is { } err) failures.Add(err);
+            }
+            finally
+            {
+                try { c?.Dispose(); } catch { }
+                if (locked) _clientLock.Release();
+            }
             DeleteTempDirs(temps);
+            if (failures.Count > 0)
+                _ = Dispatcher.InvokeAsync(() =>
+                {
+                    Dialog.Show(owner, L.T("탭을 닫으면서 저장한 편집 내용을 서버에 올리지 못했습니다. 편집한 파일은 이 PC 에 남아 있습니다."),
+                        L.T("편집 업로드"), MessageBoxButton.OK, MessageBoxImage.Warning, string.Join("\n\n", failures));
+                });
         });
     }
 }

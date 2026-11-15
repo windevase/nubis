@@ -51,24 +51,34 @@ public static class Profiles
     /// 로그인을 켜기 전 공통 폴더의 데이터를 소유자 프로필로 옮긴다. 프로필에 이미 같은 파일이 있으면 건드리지 않는다.
     /// 옮긴 항목 수를 돌려준다.
     /// </summary>
-    public static int ClaimLegacy(string rootDir, string profileDir)
+    /// <param name="warn">
+    /// 일부를 옮기지 못했을 때 알린다 (예: hosts.json 은 옮겼는데 vault.json 은 못 옮김 → 호스트가 가리키는 Vault 계정이 없어 보인다).
+    /// 다음 실행 때 다시 시도하지만, 그 사이 프로필 쪽에 같은 파일이 새로 생기면 더는 옮기지 않으므로 조용히 넘기지 않는다.
+    /// </param>
+    public static int ClaimLegacy(string rootDir, string profileDir, Action<string>? warn = null)
     {
         Directory.CreateDirectory(profileDir);
         var moved = 0;
+        var failed = new System.Collections.Generic.List<string>();
         foreach (var f in DataFiles)
         {
             var src = Path.Combine(rootDir, f);
             var dst = Path.Combine(profileDir, f);
             if (!File.Exists(src) || File.Exists(dst)) continue;
-            try { File.Move(src, dst); moved++; } catch { }
+            try { File.Move(src, dst); moved++; }
+            catch (Exception ex) { failed.Add($"{f} ({ex.Message.Split('\n')[0]})"); }
         }
         foreach (var d in DataDirs)
         {
             var src = Path.Combine(rootDir, d);
             var dst = Path.Combine(profileDir, d);
             if (!Directory.Exists(src) || Directory.Exists(dst)) continue;
-            try { Directory.Move(src, dst); moved++; } catch { }
+            try { Directory.Move(src, dst); moved++; }
+            catch (Exception ex) { failed.Add($"{d}\\ ({ex.Message.Split('\n')[0]})"); }
         }
+        if (failed.Count > 0)
+            warn?.Invoke(L.F("로그인 전 데이터 일부를 프로필로 옮기지 못했습니다:\n{0}\n{1}\n→ {2}\n\n다른 프로그램이 파일을 쓰고 있지 않은지 확인한 뒤 Nubis 를 다시 시작하면 다시 옮깁니다. 그 전에 같은 데이터를 새로 만들면 자동으로 옮기지 않으니 직접 옮기세요.",
+                string.Join("\n", failed), rootDir, profileDir));
         return moved;
     }
 
@@ -93,7 +103,7 @@ public static class Profiles
                 // 둘 다 데이터가 있으면 어느 쪽이 맞는지 알 수 없어 합치지 않는다
                 warn?.Invoke(L.F("예전 소유자 프로필({0})과 새 프로필({1})에 모두 데이터가 있어 자동으로 합치지 않았습니다.\n필요하면 Nubis 를 끈 뒤 직접 옮기세요:\n{2}\n→ {3}",
                     cfg.PreviousOwnerKey, Path.GetFileName(dir), prev, dir));
-                ClaimLegacy(rootDir, dir);
+                ClaimLegacy(rootDir, dir, warn);
                 return false;
             }
             string? aside = null;
@@ -117,7 +127,7 @@ public static class Profiles
                 return false;
             }
         }
-        ClaimLegacy(rootDir, dir);
+        ClaimLegacy(rootDir, dir, warn);
         return true;
     }
 

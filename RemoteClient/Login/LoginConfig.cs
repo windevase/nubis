@@ -83,7 +83,9 @@ public sealed class LoginConfig
             if (a.Length == 0) continue;
             if (a.StartsWith('@'))
             {
-                if (who.Account.Contains('@') && who.Account.EndsWith(a, StringComparison.OrdinalIgnoreCase)) return true;
+                // 도메인 전체 허용은 그 도메인을 조직이 관리하는 계정만 (Google hd 클레임 · Microsoft 회사/학교 테넌트).
+                // 회사 이메일로 만든 개인 Google·Microsoft 계정이 들어오지 못하게
+                if (who.DomainVerified && who.Account.Contains('@') && who.Account.EndsWith(a, StringComparison.OrdinalIgnoreCase)) return true;
             }
             else if (a.Equals(who.Account, StringComparison.OrdinalIgnoreCase)) return true;
         }
@@ -106,7 +108,11 @@ public sealed class LoginConfig
 }
 
 /// <summary>로그인한 사람 (토큰은 담지 않는다)</summary>
-public sealed record LoginIdentity(LoginProviderKind Provider, string Account, string Name, string Id)
+/// <param name="DomainVerified">
+/// Account 의 이메일 도메인을 조직이 관리하는 계정인지 ("@도메인" 허용 규칙에 쓴다). Google = hd 클레임이 그 도메인,
+/// Microsoft = 개인 계정(MSA) 테넌트가 아님. GitHub 는 이메일을 쓰지 않아 상관없다.
+/// </param>
+public sealed record LoginIdentity(LoginProviderKind Provider, string Account, string Name, string Id, bool DomainVerified = true)
 {
     public string ProfileKey => Profiles.Key(Provider, Id, Account);
 }
@@ -127,6 +133,11 @@ public sealed class LoginState
     public string Org { get; set; } = "";
     /// <summary>Microsoft: 로그인한 때의 테넌트 설정 (다른 제공자는 빈 값). 예전 기록에는 없다 → Microsoft 면 다시 로그인</summary>
     public string Tenant { get; set; } = "";
+    /// <summary>
+    /// 마지막 온라인 로그인 때 도메인 확인(LoginIdentity.DomainVerified)을 통과했는지. 예전 기록에는 없다(null) →
+    /// Google·Microsoft 는 "@도메인" 규칙으로 다시 인정하지 않는다 (한 번 다시 로그인하면 기록됨)
+    /// </summary>
+    public bool? DomainVerified { get; set; }
 
     public string ProfileKey => Profiles.Key(Provider, AccountId, Account);
 
@@ -148,6 +159,7 @@ public sealed class LoginState
             Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, AccountId = who.Id, LastSuccessUtc = nowUtc,
             OrgMember = orgMember && org.Length > 0, Org = orgMember ? org : "",
             Tenant = TenantOf(cfg),
+            DomainVerified = who.DomainVerified,
         };
     }
 
@@ -179,7 +191,8 @@ public sealed class LoginState
     public bool StillAllowed(LoginConfig cfg, bool offline = false)
     {
         if (Account.Length == 0) return false;
-        if (cfg.IsAllowed(new LoginIdentity(Provider, Account, "", AccountId), orgMember: OrgStillVerified(cfg))) return true;
+        var domainVerified = DomainVerified ?? Provider == LoginProviderKind.GitHub;
+        if (cfg.IsAllowed(new LoginIdentity(Provider, Account, "", AccountId, domainVerified), orgMember: OrgStillVerified(cfg))) return true;
         return offline && cfg.OwnerKey.Length > 0 && ProfileKey == cfg.OwnerKey;
     }
 

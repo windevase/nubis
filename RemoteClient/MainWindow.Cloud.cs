@@ -64,12 +64,23 @@ public partial class MainWindow
     private async void OnGroupSync(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        if ((sender as FrameworkElement)?.DataContext is HostGroup { Profile: { } p }) await SyncProfileAsync(p);
+        if ((sender as FrameworkElement)?.DataContext is HostGroup { Profile: { } p }) await SyncOrCancelAsync(p);
     }
 
     private async void OnProfileSync(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is CloudProfile p) await SyncProfileAsync(p);
+        if ((sender as FrameworkElement)?.DataContext is CloudProfile p) await SyncOrCancelAsync(p);
+    }
+
+    /// <summary>동기화 버튼: 동기화 중이면 취소, 아니면 동기화</summary>
+    private async Task SyncOrCancelAsync(CloudProfile p)
+    {
+        if (p.IsSyncing && _syncCancels.TryGetValue(p, out var cts))
+        {
+            cts.Cancel();
+            return;
+        }
+        await SyncProfileAsync(p);
     }
 
     private async void OnSyncAll(object sender, RoutedEventArgs e) => await SyncAllAsync();
@@ -81,6 +92,8 @@ public partial class MainWindow
     {
         var s = SettingsStore.Current;
         _cloudSyncTimer?.Stop();
+        // hosts.json 을 읽지 못해 빈 목록으로 시작했으면 자동 동기화가 클라우드 호스트만으로 원본을 덮어쓰지 않게 건너뛴다
+        if (HostStore.LoadFailed) return;
         if (s.CloudSyncIntervalMinutes > 0)
         {
             _cloudSyncTimer ??= new System.Windows.Threading.DispatcherTimer();
@@ -119,34 +132,103 @@ public partial class MainWindow
         }
     }
 
-    /// <summary>프로필의 인스턴스를 조회해 호스트 목록에 반영 (조회는 백그라운드, 반영은 UI 스레드)</summary>
-    private async Task SyncProfileAsync(CloudProfile p)
+    // 진행 중인 프로필 동기화 (UI 스레드에서만 접근). 이미 동기화 중인 프로필을 다시 부르면 같은 작업을 기다린다
+    private readonly Dictionary<CloudProfile, Task> _syncTasks = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<CloudProfile, System.Threading.CancellationTokenSource> _syncCancels = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// 프로필의 인스턴스를 조회해 호스트 목록에 반영 (조회는 백그라운드, 반영은 UI 스레드).
+    /// 이미 동기화 중이면 바로 돌아가지 않고 진행 중인 동기화가 끝날 때까지 기다린다 (MCP cloud_sync 등이 이전 결과를 보고하지 않도록)
+    /// </summary>
+    private Task SyncProfileAsync(CloudProfile p)
     {
-        if (p.IsSyncing) return;
+        if (_syncTasks.TryGetValue(p, out var running)) return running;
+        var task = SyncProfileCoreAsync(p);
+        // 첫 await 전에 끝난 경우(예외 등)는 등록하지 않는다 — 끝난 작업이 남아 다음 동기화를 막지 않도록
+        if (!task.IsCompleted) _syncTasks[p] = task;
+        return task;
+    }
+
+    private async Task SyncProfileCoreAsync(CloudProfile p)
+    {
+        using var cts = new System.Threading.CancellationTokenSource();
+        _syncCancels[p] = cts;
         p.IsSyncing = true;
         p.StatusText = "";
         try
         {
             var provider = CloudProviders.Get(p.Provider);
-            var fetched = await Task.Run(() => provider.FetchAsync(p, System.Threading.CancellationToken.None));
+            var fetch = Task.Run(() => provider.FetchAsync(p, cts.Token));
+            CloudFetchResult fetched;
+            // 취소 토큰을 무시하는 SDK 호출도 있어, 취소하면 결과를 기다리지 않고 바로 끝낸다 (늦게 온 결과는 버림)
+            try { fetched = await fetch.WaitAsync(cts.Token); }
+            catch (OperationCanceledException) when (cts.IsCancellationRequested)
+            {
+                _ = fetch.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                if (_profiles.Contains(p))
+                {
+                    p.StatusText = L.T("동기화를 취소했습니다 (변경 없음)");
+                    p.LastResult = "";
+                }
+                return;
+            }
             if (!_profiles.Contains(p)) return;   // 조회 중 제거됨
-            var (added, updated, removed) = CloudSync.Apply(p, fetched.Items, _hosts, removeMissing: !fetched.IsPartial);
-            p.LastResult = added + removed > 0 ? L.F("추가 {0} · 제거 {1}", added, removed) : L.T("변경 없음");
-            if (fetched.IsPartial)
-                p.StatusText = L.F("일부 조회 실패 {0}건 — 이번엔 삭제하지 않음: {1}", fetched.Errors.Count, CloudProviders.FirstLine(fetched.Errors[0]));
+
+            // 반영 전 주소: 주소가 바뀐 서버 수를 알려 주기 위해 (Id 가 겹치는 이상한 데이터에도 예외 없이)
+            var beforeAddress = new Dictionary<Guid, string>();
+            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id)) beforeAddress.TryAdd(h.Id, h.Address);
+            var removedHosts = new List<HostEntry>();
+            // 실제 조회 실패가 있으면 지우지 않고, 권한 거부 리전만 있으면 그 리전 서버만 남긴다 (CloudSync.ApplyResult)
+            var (added, _, removed) = CloudSync.ApplyResult(p, fetched, _hosts, removedHosts);
+            var addressChanged = _hosts.Count(h => h.CloudProfileId == p.Id && beforeAddress.TryGetValue(h.Id, out var a) && a != h.Address);
+
+            var parts = new List<string>();
+            if (added + removed > 0) parts.Add(L.F("추가 {0} · 제거 {1}", added, removed));
+            if (addressChanged > 0) parts.Add(L.F("주소 변경 {0}", addressChanged));
+            if (fetched.IsPartial) parts.Add(L.T("일부 조회 실패"));
+            p.LastResult = parts.Count > 0 ? string.Join(" · ", parts) : L.T("변경 없음");
+
+            var status = new List<string>();
+            // 실패한 리전·영역을 모두 보여 준다 (그룹 헤더에서는 잘리므로 툴팁으로 전체 확인)
+            var errors = string.Join(" · ", fetched.Errors.Select(e => CloudProviders.FirstLine(e)));
+            if (fetched.HasUnexpectedErrors)
+                status.Add(L.F("일부 조회 실패 {0}건 — 이번엔 삭제하지 않음: {1}", fetched.Errors.Count, errors));
+            else if (fetched.IsPartial)
+                status.Add(L.F("권한이 없어 조회하지 못한 리전 {0}개 — 그 리전 서버는 그대로 둠: {1}", fetched.DeniedRegions.Count, errors));
+            if (removedHosts.Count > 0)
+            {
+                var removedIds = removedHosts.Select(h => h.Id).ToHashSet();
+                status.Add(L.F("클라우드에서 사라져 제거된 호스트: {0}", NameList(removedHosts.Select(h => h.Label))));
+                // 제거된 서버를 점프 호스트로 쓰던 호스트는 접속할 수 없게 된다
+                var dependents = _hosts.Where(h => h.JumpHostId is { } j && removedIds.Contains(j)).Select(h => h.Label).ToList();
+                if (dependents.Count > 0)
+                    status.Add(L.F("주의: 제거된 서버를 점프 호스트로 쓰던 호스트 {0}개 — 호스트 편집에서 점프 호스트를 다시 지정하세요: {1}",
+                        dependents.Count, NameList(dependents)));
+            }
+            p.StatusText = string.Join("  ·  ", status);
             SaveHosts();
             SaveProfiles();
         }
         catch (Exception ex)
         {
             p.StatusText = L.F("실패: {0}", CloudProviders.FirstLine(ex.Message));
+            p.LastResult = "";   // 이전 동기화 결과가 이번 결과처럼 보이지 않도록
         }
         finally
         {
+            _syncCancels.Remove(p);
+            _syncTasks.Remove(p);
             p.IsSyncing = false;
             UpdateProfileCounts();
             RefreshHosts();
         }
+    }
+
+    /// <summary>이름 목록을 한 줄로 (많으면 앞 5개 + "외 N개")</summary>
+    private static string NameList(IEnumerable<string> names)
+    {
+        var list = names.ToList();
+        return list.Count <= 5 ? string.Join(", ", list) : string.Join(", ", list.Take(5)) + " " + L.F("외 {0}개", list.Count - 5);
     }
 
     private async void OnAddProfiles(object sender, RoutedEventArgs e)
@@ -222,9 +304,17 @@ public partial class MainWindow
     {
         var (oldSsh, oldRdp, oldPublic) = (p.EffectiveSshPort, p.EffectiveRdpPort, p.UsePublicIp);
         if (!ProfileDialog.Edit(this, p)) return;
-        // 기본 접속 주소(사설/공인)를 바꾸면 공인 IP 가 있는 서버 전체에 적용
+        // 기본 접속 주소(사설/공인)를 바꾸면 기본값을 따르던 서버에 적용. 호스트별로 따로 고른 서버가 있으면 그것도 바꿀지 묻는다
         if (oldPublic != p.UsePublicIp)
-            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id && h.HasPublicIp)) h.UsePublicIp = p.UsePublicIp;
+        {
+            var withPublic = _hosts.Where(h => h.CloudProfileId == p.Id && h.HasPublicIp).ToList();
+            var custom = withPublic.Count(h => h.UsePublicIp != oldPublic);
+            var all = custom == 0 || Dialog.Show(this,
+                L.F("호스트별로 접속 주소를 따로 고른 서버가 {0}개 있습니다. 이 서버들도 새 기본값({1})으로 바꿀까요?\n(아니요: 기본값을 따르던 서버만 바꿉니다)",
+                    custom, p.UsePublicIp ? L.T("공인 IP") : L.T("사설 IP")),
+                L.T("프로필 설정"), MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes;
+            foreach (var h in withPublic.Where(h => all || h.UsePublicIp == oldPublic)) h.UsePublicIp = p.UsePublicIp;
+        }
 
         // 기본 포트를 바꾸면 기본값을 쓰던 호스트도 함께 변경
         foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
@@ -245,6 +335,7 @@ public partial class MainWindow
         if (Dialog.Show(this, L.F("[{0}] {1} 프로필과 동기화된 호스트 {2}개를 제거할까요?\n(클라우드의 서버에는 아무 영향이 없습니다)", p.ProviderText, p.GroupName, count),
                 L.T("프로필 제거"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
 
+        if (_syncCancels.TryGetValue(p, out var cts)) cts.Cancel();   // 진행 중인 동기화는 결과를 버린다
         _hosts.RemoveAll(h => h.CloudProfileId == p.Id);
         _profiles.Remove(p);
         SectionOf(p).Profiles.Remove(p);
@@ -328,8 +419,17 @@ public partial class MainWindow
         SectionOf(p).Message = msg;
     }
 
-    private static string StartLogin(CloudProvider provider, CloudProfile? p) =>
-        LaunchLoginCommand(CloudProviders.Get(provider).LoginCommand(p), out _);
+    /// <summary>
+    /// UI 로그인 버튼 경로. 프로필 이름은 사용자 PC 의 설정 파일에서 온 값이라 cmd 메타 문자가 섞일 수 있으므로
+    /// MCP cloud_login 과 같은 기준으로 검증한 뒤에만 실행한다
+    /// </summary>
+    private static string StartLogin(CloudProvider provider, CloudProfile? p)
+    {
+        var cmd = CloudProviders.Get(provider).LoginCommand(p);
+        if (!McpCloudHelpers.IsSafeLogin(p?.Name, p?.TenantId, cmd))
+            return L.F("프로필 이름 또는 로그인 명령에 명령줄에 넣을 수 없는 문자가 있어 실행하지 않습니다. 터미널에서 직접 로그인하세요: {0}", cmd);
+        return LaunchLoginCommand(cmd, out _);
+    }
 
     /// <summary>로그인 명령을 새 cmd 창에서 실행 (UI 로그인 버튼 · MCP cloud_login 공용). 화면에 보여 줄 안내 문구를 돌려준다</summary>
     private static string LaunchLoginCommand(string cmd, out bool started)

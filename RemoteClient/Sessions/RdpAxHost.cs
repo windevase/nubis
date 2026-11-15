@@ -24,6 +24,16 @@ public sealed class RdpAxHost : AxHost
     public event Action<int>? FatalError;
     public event Action? LeftFullScreen;
 
+    // 지금 탭이 연결을 시작한 세션인가. 풀에서 재사용한 컨트롤에 이전 세션의 늦은 OnDisconnected 가 도착해도
+    // 새 탭이 "연결 종료" 로 바뀌지 않게, 연결을 시작한 뒤의 첫 OnDisconnected 만 전달한다.
+    private bool _sessionActive;
+
+    /// <summary>OnFatalError 를 받은 컨트롤 — 내부 상태를 믿을 수 없으므로 다시 쓰지 않고 풀에도 넣지 않는다</summary>
+    public bool Faulted { get; private set; }
+
+    /// <summary>Connect() 직전에 부른다 (이 뒤의 OnDisconnected 만 탭에 전달)</summary>
+    public void BeginSession() => _sessionActive = true;
+
     public RdpAxHost() : base(Clsid)
     {
         _sink = new EventSink(this);
@@ -82,7 +92,8 @@ public sealed class RdpAxHost : AxHost
         object? ocx = null;
         try { ocx = GetOcx(); } catch { }
         DetachSink();
-        Connecting = null; Connected = null; LoginComplete = null; Disconnected = null; FatalError = null;
+        ClearHandlers();
+        _sessionActive = false;
         try { Dispose(); } catch { }
         try { if (ocx != null && Marshal.IsComObject(ocx)) Marshal.FinalReleaseComObject(ocx); } catch { }
     }
@@ -114,6 +125,7 @@ public sealed class RdpAxHost : AxHost
         {
             var ax = Pool.Pop();
             if (ax.IsDisposed) continue;
+            if (ax.Faulted) { ax.Shutdown(); continue; }
             int state;
             try { state = (int)ax.Ocx.Connected; } catch { ax.Shutdown(); continue; }
             if (state == 0) { found = ax; break; }
@@ -126,11 +138,12 @@ public sealed class RdpAxHost : AxHost
     public static void Release(RdpAxHost ax)
     {
         ax.ClearHandlers();
+        ax._sessionActive = false;   // 이제부터 오는 OnDisconnected 는 이전 세션 것 — 다음 탭에 전달하지 않는다
         try { if ((bool)ax.Ocx.FullScreen) ax.Ocx.FullScreen = false; } catch { }
         try { if ((int)ax.Ocx.Connected != 0) ax.Ocx.Disconnect(); } catch { }
         // 풀에 보관하는 동안 이전 탭의 비밀번호가 컨트롤에 남지 않게 지운다 (다음 연결은 Connect 에서 항상 다시 설정)
         try { ax.Ocx.AdvancedSettings9.ClearTextPassword = ""; } catch { }
-        if (ax.IsDisposed || Pool.Count >= MaxPooled) { ax.Shutdown(); return; }
+        if (ax.IsDisposed || ax.Faulted || Pool.Count >= MaxPooled) { ax.Shutdown(); return; }
         Pool.Push(ax);   // 부모에서 떼어도 WinForms 주차 창이 핸들을 유지한다
     }
 
@@ -142,8 +155,18 @@ public sealed class RdpAxHost : AxHost
         public void OnConnecting() => _owner.Connecting?.Invoke();
         public void OnConnected() => _owner.Connected?.Invoke();
         public void OnLoginComplete() => _owner.LoginComplete?.Invoke();
-        public void OnDisconnected(int discReason) => _owner.Disconnected?.Invoke(discReason);
-        public void OnFatalError(int errorCode) => _owner.FatalError?.Invoke(errorCode);
+        public void OnDisconnected(int discReason)
+        {
+            if (!_owner._sessionActive) return;   // 이전 세션(풀 반납 전)의 늦은 이벤트
+            _owner._sessionActive = false;
+            _owner.Disconnected?.Invoke(discReason);
+        }
+        public void OnFatalError(int errorCode)
+        {
+            _owner.Faulted = true;
+            _owner._sessionActive = false;
+            _owner.FatalError?.Invoke(errorCode);
+        }
         public void OnLeaveFullScreenMode() => _owner.LeftFullScreen?.Invoke();
     }
 }

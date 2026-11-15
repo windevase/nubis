@@ -33,13 +33,14 @@ public partial class MessageDialog : Window
         dlg.PreviewKeyDown += (_, e) => { if (e.Key == Key.Escape) { dlg.Result = MessageBoxResult.None; dlg.DialogResult = false; } };
         dlg.PrimaryButton.IsDefault = true;
         dlg.Loaded += (_, _) => dlg.PrimaryButton.Focus();
-        if (owner is { WindowState: WindowState.Minimized }) owner.WindowState = WindowState.Normal;
+        Dialog.RestoreIfMinimized(owner);
         dlg.ShowDialog();
         return dlg._extraChosen ? 2 : dlg.Result switch { MessageBoxResult.Yes => 0, MessageBoxResult.No => 1, _ => -1 };
     }
 
     private bool _extraChosen;
-    private void OnExtra(object sender, RoutedEventArgs e) { _extraChosen = true; DialogResult = false; }
+    private MessageBoxResult _extraResult = MessageBoxResult.None;
+    private void OnExtra(object sender, RoutedEventArgs e) { _extraChosen = true; Result = _extraResult; DialogResult = false; }
 
     internal static MessageBoxResult Show(Window? owner, string message, string title, MessageBoxButton buttons,
         MessageBoxImage icon, string? detail)
@@ -47,18 +48,36 @@ public partial class MessageDialog : Window
         var dlg = Create(owner, message, title, icon, detail);
         ConfigureButtons(dlg, buttons, icon);
 
-        if (owner is { WindowState: WindowState.Minimized }) owner.WindowState = WindowState.Normal;
+        Dialog.RestoreIfMinimized(owner);
         dlg.ShowDialog();
-        // 창을 그냥 닫으면(Esc) 부정 응답
+        // 창을 그냥 닫으면(Esc) 부정 응답 (YesNoCancel 은 취소)
         return dlg.Result != MessageBoxResult.None ? dlg.Result
-            : buttons == MessageBoxButton.OK ? MessageBoxResult.OK : dlg._secondaryResult;
+            : buttons == MessageBoxButton.OK ? MessageBoxResult.OK
+            : buttons == MessageBoxButton.YesNoCancel ? MessageBoxResult.Cancel
+            : dlg._secondaryResult;
     }
 
     private static MessageDialog Create(Window? owner, string message, string title, MessageBoxImage icon, string? detail)
     {
         var dlg = new MessageDialog();
         if (owner is { IsLoaded: true, IsVisible: true }) dlg.Owner = owner;
-        else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        else
+        {
+            // 주인 창이 없으면 작업 표시줄에 보이게 하고 앞으로 — 다른 창 뒤에 숨어 앱이 멈춘 것처럼 보이는 일 방지
+            dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            dlg.ShowInTaskbar = true;
+            dlg.Loaded += (_, _) => { dlg.Activate(); dlg.Topmost = true; dlg.Topmost = false; };
+        }
+        // Ctrl+C: 제목·내용·상세를 클립보드로 (Windows 메시지 상자와 같음). 상세 칸에서 글자를 고른 경우는 그 선택을 복사
+        dlg.PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key != Key.C || (Keyboard.Modifiers & ModifierKeys.Control) == 0) return;
+            if (dlg.DetailBox.IsKeyboardFocusWithin && dlg.DetailBox.SelectionLength > 0) return;
+            var text = dlg.TitleText.Text + "\r\n\r\n" + dlg.MessageText.Text +
+                       (dlg.DetailBox.Visibility == Visibility.Visible ? "\r\n\r\n" + dlg.DetailBox.Text : "");
+            try { Clipboard.SetText(text); } catch { }
+            e.Handled = true;
+        };
 
         dlg.TitleText.Text = title;
         dlg.Title = title;
@@ -94,8 +113,16 @@ public partial class MessageDialog : Window
         switch (buttons)
         {
             case MessageBoxButton.YesNo:
-            case MessageBoxButton.YesNoCancel:
                 dlg.SetButtons(L.T("예"), MessageBoxResult.Yes, L.T("아니요"), MessageBoxResult.No);
+                break;
+            case MessageBoxButton.YesNoCancel:
+                // 세 번째 버튼(취소)이 Esc. "아니요" 는 Esc 로 눌리지 않게 한다
+                dlg.SetButtons(L.T("예"), MessageBoxResult.Yes, L.T("아니요"), MessageBoxResult.No);
+                dlg.SecondaryButton.IsCancel = false;
+                dlg.ExtraButton.Content = L.T("취소");
+                dlg.ExtraButton.Visibility = Visibility.Visible;
+                dlg.ExtraButton.IsCancel = true;
+                dlg._extraResult = MessageBoxResult.Cancel;
                 break;
             case MessageBoxButton.OKCancel:
                 dlg.SetButtons(L.T("확인"), MessageBoxResult.OK, L.T("취소"), MessageBoxResult.Cancel);
@@ -148,4 +175,15 @@ public static class Dialog
     public static MessageBoxResult Show(string message, string title = "Nubis",
         MessageBoxButton buttons = MessageBoxButton.OK, MessageBoxImage icon = MessageBoxImage.None) =>
         MessageDialog.Show(Application.Current?.MainWindow, message, title, buttons, icon, null);
+
+    /// <summary>최소화된 창을 이전 상태로 되돌린다 (최대화였으면 최대화로 — WindowState = Normal 은 최대화를 잃는다)</summary>
+    public static void RestoreIfMinimized(Window? w)
+    {
+        if (w is not { WindowState: WindowState.Minimized }) return;
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(w).Handle;
+        if (hwnd == System.IntPtr.Zero || !ShowWindow(hwnd, 9 /* SW_RESTORE */)) w.WindowState = WindowState.Normal;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
 }

@@ -1,6 +1,57 @@
+using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text;
 
 namespace Nubis;
+
+/// <summary>
+/// 가져오기 파일을 텍스트로 읽는다. BOM(UTF-8 · UTF-16) → 엄격한 UTF-8 → 시스템 ANSI 코드 페이지(한국어 Windows 는 CP949) 순.
+/// 한국어 Windows 엑셀의 "CSV (쉼표로 분리)" 는 CP949 로 저장되므로 UTF-8 로만 읽으면 한글 머리글이 깨진다.
+/// </summary>
+public static class ImportText
+{
+    public static string ReadFile(string path) => Decode(File.ReadAllBytes(path));
+
+    public static string Decode(byte[] bytes)
+    {
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            return new UTF8Encoding(false).GetString(bytes, 3, bytes.Length - 3);
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        try
+        {
+            return new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            // UTF-8 이 아니면 시스템 ANSI 코드 페이지 (없으면 Latin-1 — 바이트를 잃지 않음)
+            Encoding ansi;
+            try
+            {
+                ansi = CodePagesEncodingProvider.Instance.GetEncoding(SystemAnsiCodePage()) ?? Encoding.Latin1;
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { ansi = Encoding.Latin1; }
+            return ansi.GetString(bytes);
+        }
+    }
+
+    /// <summary>시스템 로캘(유니코드를 지원하지 않는 프로그램용 언어)의 ANSI 코드 페이지. 앱 표시 언어와 무관</summary>
+    private static int SystemAnsiCodePage()
+    {
+        try { return (int)GetACP(); }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return CultureInfo.InstalledUICulture.TextInfo.ANSICodePage;
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetACP();
+}
 
 /// <summary>
 /// 가져오기(엑셀/CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory)가 읽어 낸 서버 한 대.

@@ -11,7 +11,7 @@ namespace Nubis;
 public sealed class RdpSessionView : UserControl, ISessionView
 {
     private readonly HostEntry _host;
-    private readonly RdpAxHost _rdp = RdpAxHost.Acquire();   // 풀에서 재사용 (핸들·스레드 누수 방지)
+    private RdpAxHost _rdp = RdpAxHost.Acquire();   // 풀에서 재사용 (핸들·스레드 누수 방지). 치명적 오류 뒤에는 새 컨트롤로 바꾼다
     private readonly WindowsFormsHost _wfh;
     private readonly Border _overlay;
     private readonly TextBlock _overlayTitle = new();
@@ -51,7 +51,18 @@ public sealed class RdpSessionView : UserControl, ISessionView
         grid.Children.Add(_overlay);
         Content = grid;
 
-        _rdp.Connected += () => { HideOverlay(); SetStatus(SessionStatus.Connected); _rdp.Focus(); };
+        WireEvents();
+
+        _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
+        _displayRetryTimer.Tick += (_, _) => { _displayRetryTimer.Stop(); UpdateDisplay(); };   // 재시도도 실패하면 SmartSizing 으로 대체
+        SizeChanged += (_, _) => RestartResizeTimer();
+        Loaded += (_, _) => { if (!_initialized) { _initialized = true; Dispatcher.BeginInvoke(Connect, DispatcherPriority.Loaded); } };
+    }
+
+    /// <summary>RDP 컨트롤 이벤트 연결 (생성 때, 그리고 치명적 오류 뒤 컨트롤을 바꿀 때)</summary>
+    private void WireEvents()
+    {
+        _rdp.Connected += () => { HideOverlay(); SetStatus(SessionStatus.Connected); if (IsVisible) _rdp.Focus(); };
         _rdp.LoginComplete += () =>
         {
             _loggedIn = true;
@@ -69,11 +80,19 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _rdp.Disconnected += OnDisconnected;
         _rdp.LeftFullScreen += () => Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background);
         _rdp.FatalError += code => OnDisconnected(-code);
+    }
 
-        _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
-        _displayRetryTimer.Tick += (_, _) => { _displayRetryTimer.Stop(); UpdateDisplay(); };   // 재시도도 실패하면 SmartSizing 으로 대체
-        SizeChanged += (_, _) => RestartResizeTimer();
-        Loaded += (_, _) => { if (!_initialized) { _initialized = true; Dispatcher.BeginInvoke(Connect, DispatcherPriority.Loaded); } };
+    /// <summary>
+    /// 치명적 오류(OnFatalError)를 낸 컨트롤은 다시 연결해도 실패하므로 반납(해제)하고 새 컨트롤로 바꾼다.
+    /// </summary>
+    private void ReplaceFaultedControl()
+    {
+        var old = _rdp;
+        try { _wfh.Child = null; } catch { }
+        RdpAxHost.Release(old);   // Faulted 라 풀에 넣지 않고 해제
+        _rdp = RdpAxHost.Acquire();
+        WireEvents();
+        _wfh.Child = _rdp;
     }
 
     private void RestartResizeTimer()
@@ -161,9 +180,13 @@ public sealed class RdpSessionView : UserControl, ISessionView
         return (w, h, Math.Clamp(scale, 100, 500));
     }
 
+    /// <summary>마지막 연결 시도에서 사용자가 계정 입력을 취소했는가 ("끊긴 탭 모두 다시 연결" 이 나머지 탭을 묻지 않고 멈추는 데 씀)</summary>
+    public bool LastConnectCancelled { get; private set; }
+
     private void Connect()
     {
         if (_closed) return;
+        LastConnectCancelled = false;
 
         // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로 다시 읽는다
         // 계정이 새로 바뀌었으면 인증 실패 때의 비밀번호가 아니므로 저장된 값으로 바로 시도한다
@@ -187,6 +210,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
                     // 인증 실패 뒤 취소했으면 사용자 이름은 남겨 다음에도 다시 묻고, 틀린 비밀번호는 버린다
                     if (_forcePrompt) _password = null;
                     else _user = null;
+                    LastConnectCancelled = true;
                     SetStatus(SessionStatus.Disconnected);
                     ShowOverlay(L.T("연결 취소됨"), L.T("인증 정보 입력이 취소되었습니다."));
                     return;
@@ -204,6 +228,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
         try
         {
+            if (_rdp.Faulted) ReplaceFaultedControl();
             _rdp.CreateControl();
             var ocx = _rdp.Ocx;
             var (w, h, scale) = DesktopSize();
@@ -246,6 +271,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             try { ocx.SecuredSettings3.KeyboardHookMode = d.KeyboardHook; } catch { }   // Win/Alt+Tab 키 전달 방식
             try { ocx.SecuredSettings2.AudioRedirectionMode = d.AudioMode; } catch { }   // 소리 재생 위치
 
+            _rdp.BeginSession();
             ocx.Connect();
         }
         catch (Exception ex)
@@ -324,7 +350,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         }
         // 인증 실패로 끊긴 경우 다음 연결 때 저장된 비밀번호가 있어도 다시 묻는다 (같은 비밀번호 재시도 → 계정 잠김 방지)
         // 2055 비밀번호 오류 · 2567 사용자 없음 · 2823 계정 사용 안 함 · 3335 계정 잠김 · 3591 계정 만료 · 3847 비밀번호 만료 · 4615 비밀번호 변경 필요
-        if (reason is 2055 or 2567 or 2823 or 3335 or 3591 or 3847 or 4615)
+        if (IsAuthFailureReason(reason))
         {
             _forcePrompt = true;
             _pendingSave = false;   // 실패한 계정은 저장하지 않는다
@@ -332,6 +358,10 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
         ShowOverlay(L.F("{0} 연결 종료", _host.DisplayName), text);
     }
+
+    /// <summary>인증 실패로 끊긴 사유 코드인가 (다음 연결 때 저장된 비밀번호를 쓰지 않고 다시 묻는다)</summary>
+    internal static bool IsAuthFailureReason(int reason) =>
+        reason is 2055 or 2567 or 2823 or 3335 or 3591 or 3847 or 4615;
 
     public System.Threading.Tasks.Task<string?> ReadTerminalAsync(int lines) => System.Threading.Tasks.Task.FromResult<string?>(null);
     public System.Threading.Tasks.Task<string?> GetSelectionAsync() => System.Threading.Tasks.Task.FromResult<string?>(null);

@@ -33,23 +33,29 @@ public partial class MainWindow
         var timeout = Math.Clamp(IntArg(a, "timeout_sec") ?? 60, 5, 1800);
         if (specs.Count == 0 || command.Trim().Length == 0) throw new McpToolException("targets 와 command 가 필요합니다.");
 
-        // 대상 해석 (UI 스레드의 호스트 목록 사용)
-        var (targets, skipped) = await OnUi(() =>
+        // 대상 해석 (UI 스레드의 호스트 목록 사용).
+        // skipped = 실제로 빠진 대상(미일치·중지), notes = 안내(여러 호스트와 일치해 모두 포함) — 승인 창의 '제외 N건' 에 안내를 세지 않는다
+        var (targets, skipped, notes, accounts) = await OnUi(() =>
         {
             var found = new List<HostEntry>();
             var skip = new List<string>();
+            var note = new List<string>();
             foreach (var spec in specs)
             {
                 var r = ResolveHosts(spec);
                 if (r.Count == 0) skip.Add($"{spec}: 일치하는 호스트 없음");
                 if (r.Count > 1 && !spec.StartsWith("group:", StringComparison.OrdinalIgnoreCase))
-                    skip.Add($"{spec}: {r.Count}개 일치 → 모두 포함");
+                    note.Add($"{spec}: {r.Count}개 일치 → 모두 포함");
                 found.AddRange(r);
             }
             var unique = found.DistinctBy(h => h.Id).ToList();
             foreach (var h in unique.Where(h => h.IsStopped)) skip.Add($"{h.DisplayName}: 중지 상태({h.CloudState})");
-            var run = unique.Where(h => h.Protocol is Protocol.Ssh or Protocol.Rdp && !h.IsStopped).Select(WithProfileDefaults).ToList();
-            return (run, skip);
+            var saved = unique.Where(h => h.Protocol is Protocol.Ssh or Protocol.Rdp && !h.IsStopped).ToList();
+            var run = saved.Select(WithProfileDefaults).ToList();
+            // 승인 창에 보일 서버별 계정 (사용자명 + 출처: Vault·호스트·프로필 기본값). 비밀번호는 넣지 않는다
+            var acct = saved.Zip(run, (s, c) => (s.Id, Text: McpHelpers.AccountLabel(c.Username,
+                s.CredentialSourceText(_profiles.FirstOrDefault(p => p.Id == s.CloudProfileId))))).ToDictionary(x => x.Id, x => x.Text);
+            return (run, skip, note, acct);
         });
 
         if (targets.Count == 0)
@@ -59,13 +65,28 @@ public partial class MainWindow
         var linux = targets.Where(h => h.Protocol == Protocol.Ssh).ToList();
         var windows = targets.Where(h => h.Protocol == Protocol.Rdp).ToList();
         var winLabel = useCmd ? "WinRM cmd" : "WinRM PowerShell";
-        // 시도할 주소 순서(사설 → 공인)를 승인 창에 그대로 보여준다
+        // 이 호스트의 SSH 탭이 열려 있으면 그 로그인된 연결로 실행한다 (OTP 서버도 다시 인증하지 않음).
+        // 승인 창에 보여 준 것과 같은 연결을 쓰도록 승인 전에 정한다 — 승인을 기다리는 동안 새로 연 탭은 쓰지 않고, 그사이 끊긴 탭은 새 접속(아래 계정)으로
+        var shared = await OnUi(() => OpenSshConnections(linux));
+        // 시도할 주소 순서(사설 → 공인)와 계정을 승인 창에 그대로 보여준다. 이름의 보이지 않는 제어·양방향 문자는 드러낸다
         string Addrs(HostEntry h, string ports) => string.Join(" → ", h.AddressCandidates().Select(a => $"{a}:{ports}"));
-        var labels = linux.Select(h => $"[SSH]  {h.DisplayName}  ({Addrs(h, h.Port.ToString())})")
-            .Concat(windows.Select(h => $"[{winLabel}]  {h.DisplayName}  ({Addrs(h, $"{WinRm.HttpsPort}/{WinRm.HttpPort}")})"))
+        string Name(HostEntry h) => McpHelpers.VisibleControlChars(h.DisplayName);
+        string Account(HostEntry h) => accounts.TryGetValue(h.Id, out var t) ? t : "";
+        string SshLabel(HostEntry h)
+        {
+            var label = $"[SSH]  {Name(h)}  ({Addrs(h, h.Port.ToString())})  {Account(h)}";
+            if (!shared.TryGetValue(h.Id, out var s)) return label;
+            // 열린 탭의 연결로 실행 — 탭에 로그인한 계정이 호스트 설정 계정과 다르면 분명히 알린다
+            return label + "\n      " + (string.Equals(s.User, h.Username, StringComparison.Ordinal)
+                ? L.F("→ 열린 터미널 탭의 연결로 실행 (계정 {0})", s.User)
+                : L.F("→ 열린 터미널 탭의 연결로 실행 — ⚠ 탭 로그인 계정 {0} (호스트 설정 계정 {1} 과 다름)", s.User, h.Username.Length > 0 ? h.Username : "-"));
+        }
+        var labels = linux.Select(SshLabel)
+            .Concat(windows.Select(h => $"[{winLabel}]  {Name(h)}  ({Addrs(h, $"{WinRm.HttpsPort}/{WinRm.HttpPort}")})  {Account(h)}"))
             .ToList();
         var mixed = linux.Count > 0 && windows.Count > 0
             ? L.T("\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요.") : "";
+        var multi = notes.Count > 0 ? L.F("\n⚠ 여러 호스트와 일치해 모두 포함: {0}", string.Join(", ", notes.Select(McpHelpers.VisibleControlChars))) : "";
         // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행.
         // 단 OS 가 Windows 로 보이거나 OS 를 모르는(직접 추가한 호스트 등) SSH 대상은 Windows OpenSSH 서버(기본 셸 cmd/PowerShell)일 수 있어
         // sh 기준 판정이 맞지 않으므로 항상 승인 (echo 'x & net user a P1 /add & ' 는 sh 에선 문자열이지만 cmd 에선 net user 가 실행된다)
@@ -76,14 +97,17 @@ public partial class MainWindow
         if (!autoApproved)
         {
             var approved = await OnUiAsync(() => AskApprovalAsync("run_command", L.F("Claude 가 서버 {0}대에 명령 실행을 요청합니다", targets.Count),
-                L.T("승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다.") + mixed +
-                (skipped.Count > 0 ? L.F("\n제외: {0}건 (중지·미일치)", skipped.Count) : ""), labels, command));
+                L.T("승인하면 아래 서버들에 접속해 명령을 실행하고 결과를 Claude 에게 돌려줍니다.") + mixed + multi +
+                (skipped.Count > 0 ? L.F("\n제외: {0}건 (중지·미일치)", skipped.Count) : "") +
+                L.F("\n제한 시간: 서버당 {0}초 (넘으면 중단)", timeout), labels, command));
             if (!approved)
             {
                 AuditLog.Write("run_command", labels, command, "거부");
                 throw new McpToolException("사용자가 실행을 거부했습니다.");
             }
         }
+        // 실행 전에 먼저 기록한다 — 앱이 실행 중에 끝나거나 멈춰도 '무엇을 어디에 실행했는지' 는 남게
+        AuditLog.Write("run_command", labels, command, $"{(autoApproved ? "자동 승인(읽기 전용)" : "승인")}·실행 시작 (제한 {timeout}초)");
 
         // 실행 중에는 Claude 패널 위에 "실행 중 · 취소" 줄을 보여 준다 (Claude CLI 에서 Esc 를 눌러도 앱의 실행은 계속되므로)
         using var cts = new CancellationTokenSource();
@@ -94,11 +118,9 @@ public partial class MainWindow
         List<ExecResult> results;
         try
         {
-            // 이 호스트의 SSH 탭이 열려 있으면 그 로그인된 연결로 실행 (OTP 서버도 다시 인증하지 않음)
-            var shared = await OnUi(() => OpenSshConnections(linux));
             var sshTask = SshExec.RunAsync(linux, command, timeout, cts.Token, shared);
             var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, cts.Token);
-            // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 이미 시작한 서버는 끝까지 돌 수 있음)
+            // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 실행 중인 명령에는 SSH 는 SIGTERM · WinRM 은 셸 삭제로 중단을 시도)
             var all = Task.WhenAll(sshTask, winTask);
             try { await Task.WhenAny(all, Task.Delay(Timeout.Infinite, cts.Token)); }
             catch (OperationCanceledException) { }
@@ -111,7 +133,9 @@ public partial class MainWindow
             if (cts.IsCancellationRequested)
             {
                 AuditLog.Write("run_command", labels, command, "승인·실행 후 사용자가 취소");
-                throw new McpToolException($"사용자가 실행을 취소했습니다 ({(DateTime.Now - started).TotalSeconds:0}초 경과). 이미 실행된 서버에서는 명령이 끝까지 돌았을 수 있습니다.");
+                throw new McpToolException($"사용자가 실행을 취소했습니다 ({(DateTime.Now - started).TotalSeconds:0}초 경과). " +
+                    "아직 시작하지 않은 서버에는 보내지 않았고, 실행 중이던 명령에는 중단 신호(SSH SIGTERM · WinRM 셸 삭제)를 보냈지만 " +
+                    "서버가 신호를 무시하거나 이미 일부를 실행했을 수 있습니다.");
             }
             results = sshTask.Result.Concat(winTask.Result).ToList();
         }
@@ -124,6 +148,7 @@ public partial class MainWindow
 
         var sb = new StringBuilder($"실행 완료: 성공 {okCount} / 실패 {results.Count - okCount} (총 {results.Count}대)\n");
         if (skipped.Count > 0) sb.AppendLine("제외: " + string.Join("; ", skipped));
+        if (notes.Count > 0) sb.AppendLine("참고: " + string.Join("; ", notes));
         // 대수가 많으면 서버당 출력을 줄여 전체를 약 60,000자 안으로 (Claude 컨텍스트 절약)
         var perHost = Math.Clamp(60_000 / Math.Max(1, results.Count), 1_000, 8_000);
         foreach (var r in results.OrderBy(r => r.Ok).ThenBy(r => r.Host.DisplayName))

@@ -44,6 +44,7 @@
                     <TextBox x:Name="RdpPortBox"/>
                 </StackPanel>
             </Grid>
+            <TextBlock x:Name="ErrorText" Foreground="#F5B740" FontSize="11.5" Margin="2,6,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
 
             <TextBlock Text="{l:Tr '기본 접속 주소 (공인 IP 가 있는 서버)'}" Style="{StaticResource FieldLabel}"/>
             <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1">

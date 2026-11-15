@@ -43,8 +43,8 @@ public sealed class XtermView : UserControl
     /// <summary>사용자 키 입력 (UTF-16 문자열)</summary>
     public event Action<string>? Input;
     public event Action<uint, uint>? Resized;
-    /// <summary>셸이 OSC 7 로 알려준 현재 폴더 (원격 경로)</summary>
-    public event Action<string>? CwdChanged;
+    /// <summary>셸이 OSC 7 로 알려준 현재 폴더 (원격 경로, 호스트 — "file:///path" 처럼 호스트가 없으면 "")</summary>
+    public event Action<string, string>? CwdChanged;
     /// <summary>WatchPrompt 이후 출력이 그려질 때마다: Enter 친 줄부터 커서 줄까지의 화면</summary>
     public event Action<string>? PromptScreen;
 
@@ -53,14 +53,44 @@ public sealed class XtermView : UserControl
     public void StopWatchPrompt() => Post(new { t = "unwatch" });
 
     /// <summary>"file://host/home/a%20b" → "/home/a b". 형식이 아니면 null</summary>
-    public static string? ParseOsc7(string data)
+    public static string? ParseOsc7(string data) => ParseOsc7(data, out _);
+
+    /// <summary>ParseOsc7 + 호스트 부분 ("file://web01/home" → "web01", "file:///home" → "")</summary>
+    public static string? ParseOsc7(string data, out string host)
     {
+        host = "";
         if (!data.StartsWith("file://", StringComparison.OrdinalIgnoreCase)) return null;
         var rest = data[7..];
         var slash = rest.IndexOf('/');
         if (slash < 0) return null;
-        try { return Uri.UnescapeDataString(rest[slash..]); }
+        try
+        {
+            var path = Uri.UnescapeDataString(rest[slash..]);
+            host = rest[..slash];
+            return path;
+        }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// 안내 문구(서버 배너·오류 메시지 포함)를 터미널에 그대로 쓰기 전에 제어 문자를 뺀다 — 서버가 보낸 배너의
+    /// ESC 시퀀스가 화면·제목·링크를 바꾸지 못하게 (OpenSSH 도 배너를 걸러 보여 준다). 줄바꿈은 CRLF 로 맞춘다
+    /// </summary>
+    public static string SanitizeInfo(string text) =>
+        SanitizePaste(text, out _).Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
+
+    /// <summary>
+    /// 화면 준비 전 모아 둔 출력이 한도를 넘으면 앞부분을 버릴 위치. 줄 경계(다음 \n 뒤)에서 자른다 —
+    /// ESC 시퀀스·서로게이트 쌍 중간에서 잘라 첫 줄이 깨지지 않게. 한도 근처에 줄바꿈이 없으면 서로게이트만 피한다
+    /// </summary>
+    public static int PendingCut(string text, int max)
+    {
+        if (text.Length <= max) return 0;
+        var cut = text.Length - max;
+        var nl = text.IndexOf('\n', cut, Math.Min(4096, text.Length - cut));
+        if (nl >= 0) return nl + 1;
+        if (cut < text.Length && char.IsLowSurrogate(text[cut])) cut++;
+        return cut;
     }
 
     /// <summary>
@@ -341,12 +371,17 @@ public sealed class XtermView : UserControl
                 catch { }
                 break;
 
+            case "zoom":
+                // 이 탭의 글자 크기 조절(Ctrl+휠 등) — 렌더러 복구로 페이지를 다시 불러와도 유지
+                if (m.TryGetProperty("z", out var z) && z.TryGetInt32(out var zv)) _zoom = Math.Clamp(zv, -6, 24);
+                break;
+
             case "hotkey":
                 Hotkey?.Invoke(m.GetProperty("k").GetString() ?? "");
                 break;
 
             case "cwd":
-                if (ParseOsc7(m.GetProperty("d").GetString() ?? "") is { } cwd) CwdChanged?.Invoke(cwd);
+                if (ParseOsc7(m.GetProperty("d").GetString() ?? "", out var osc7Host) is { } cwd) CwdChanged?.Invoke(cwd, osc7Host);
                 break;
 
             case "screen":
@@ -389,8 +424,12 @@ public sealed class XtermView : UserControl
         {
             t = "settings", theme = theme.ToXterm(), fontSize = s.FontSize, fontFamily = s.FontFamily, autoContrast = s.AutoContrast,
             hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste, copyOnSelect = s.CopyOnSelect,
+            zoom = _zoom,
         });
     }
+
+    /// <summary>이 탭의 글자 크기 조절값 (페이지가 알려 줌, 설정 글꼴 크기에 더한다)</summary>
+    private int _zoom;
 
     private void Post(object msg)
     {
@@ -432,14 +471,22 @@ public sealed class XtermView : UserControl
         {
             // 탭이 아직 한 번도 보이지 않아 터미널이 준비 전 — 모아 뒀다가 준비되면 출력 (최대 2MB)
             _pending.Append(text);
-            if (_pending.Length > 2_000_000) _pending.Remove(0, _pending.Length - 2_000_000);
+            if (_pending.Length > PendingMax)
+            {
+                // 한도의 3/4 까지 줄여 출력이 계속 쏟아질 때 조각마다 2MB 를 복사하지 않게
+                var cut = PendingCut(_pending.ToString(), PendingMax / 4 * 3);
+                // 잘린 앞부분이 켜 둔 색·속성이 남지 않게 초기화부터
+                _pending.Remove(0, cut).Insert(0, "\x1b[0m");
+            }
             return;
         }
         Post(new { t = "out", d = text });
     }
 
-    /// <summary>안내 문구 한 줄 (ANSI 색 코드: 90 회색, 31 빨강, 33 노랑)</summary>
-    public void Info(string text, string color = "90") => Write($"\x1b[{color}m{text}\x1b[0m\r\n");
+    private const int PendingMax = 2_000_000;
+
+    /// <summary>안내 문구 한 줄 (ANSI 색 코드: 90 회색, 31 빨강, 33 노랑). 서버가 보낸 배너·오류 문구도 오므로 제어 문자는 뺀다</summary>
+    public void Info(string text, string color = "90") => Write($"\x1b[{color}m{SanitizeInfo(text)}\x1b[0m\r\n");
 
     public void FocusTerminal()
     {
@@ -454,7 +501,7 @@ public sealed class XtermView : UserControl
         if (!IsReady || _web.CoreWebView2 == null)
         {
             // 화면 준비 전: 모아 둔 출력에서 ANSI 제어문자를 빼고 마지막 N 줄
-            var plain = System.Text.RegularExpressions.Regex.Replace(_pending.ToString(), @"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\r", "");
+            var plain = System.Text.RegularExpressions.Regex.Replace(_pending.ToString(), @"\x1b\[[0-9;?<=>]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>78]|\r", "");
             var all = plain.Split('\n');
             return string.Join("\n", all[Math.Max(0, all.Length - lines)..]).TrimEnd();
         }

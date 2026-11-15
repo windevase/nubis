@@ -88,7 +88,9 @@ public class MiscFix2Tests
 
         // 도메인 허용
         var google = new LoginConfig { Provider = LoginProviderKind.Google, ClientId = "g", AllowedAccounts = new() { "@example.com" } };
-        Assert.True(new LoginState { Provider = LoginProviderKind.Google, ClientId = "g", Account = "me@example.com" }.StillAllowed(google));
+        Assert.True(new LoginState { Provider = LoginProviderKind.Google, ClientId = "g", Account = "me@example.com", DomainVerified = true }.StillAllowed(google));
+        // 도메인 확인 기록이 없는 예전 기록·개인 계정은 도메인 규칙으로 인정하지 않음 (다시 로그인)
+        Assert.False(new LoginState { Provider = LoginProviderKind.Google, ClientId = "g", Account = "me@example.com" }.StillAllowed(google));
         Assert.False(new LoginState { Provider = LoginProviderKind.Google, ClientId = "g", Account = "" }.StillAllowed(google));
     }
 

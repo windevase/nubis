@@ -100,14 +100,28 @@ public partial class MainWindow
         // 일반 그룹은 호스트에 직접 지정 → Vault 계정이 우선이라 묻지 않는다.
         // 클라우드 그룹은 프로필 기본 계정으로 저장 → 기본 계정은 호스트에 적힌 값보다 뒤라 지울지 묻는다
         var clearOwn = false;
+        var keepHostVault = new HashSet<HostEntry>();
         if (g.IsCloud)
         {
-            if (AskClearOwnCredentials(targets, v) is not { } answer) return;
+            // 호스트마다 다른 Vault 계정을 직접 골라 둔 경우 — 예전에는 묻지 않고 지정을 지워 프로필 기본 계정으로 바꿨다
+            var picked = targets.Where(h => h.VaultId != null && h.VaultId != id && VaultStore.Get(h.VaultId) != null).ToList();
+            if (picked.Count > 0)
+            {
+                var choice = Dialog.Choose(this,
+                    L.F("이 중 {0}개 호스트에는 다른 Vault 계정을 직접 골라 두었습니다 (그 계정이 프로필 기본 계정보다 우선).\n그 지정을 해제하고 '{1}' 계정을 쓸까요?", picked.Count, v.Name),
+                    L.T("Vault 계정 지정"), L.T("해제하고 이 계정 사용"), L.T("직접 고른 계정 유지"), L.T("취소"),
+                    MessageBoxImage.Question, string.Join("\n", picked.Take(15).Select(h => h.DisplayName)) + (picked.Count > 15 ? "\n..." : ""));
+                if (choice is not (0 or 1)) return;
+                if (choice == 1) keepHostVault.UnionWith(picked);
+            }
+            // 직접 고른 계정을 유지하는 호스트는 Vault 계정이 우선이라 직접 적은 값을 물을 필요가 없다
+            if (AskClearOwnCredentials(targets.Where(h => !keepHostVault.Contains(h)).ToList(), v) is not { } answer) return;
             clearOwn = answer;
         }
 
         foreach (var h in targets)
         {
+            if (keepHostVault.Contains(h)) continue;
             if (clearOwn) BulkEdit.ClearCredentials(h);
             // 클라우드 그룹: 호스트는 프로필 기본값을 따르게 비워 둔다
             h.VaultId = g.IsCloud ? null : id;
@@ -120,6 +134,7 @@ public partial class MainWindow
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
+        FlashHostStatus(L.F("'{0}' 에 Vault 계정 '{1}' 을 지정했습니다", g.Name, v.Name));
     }
 
     /// <summary>
@@ -152,6 +167,7 @@ public partial class MainWindow
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
+        FlashHostStatus(L.F("'{0}' 의 {1} Vault 계정 지정을 해제했습니다", g.Name, name));
     }
 
     /// <summary>그룹의 공인 IP 가 있는 호스트 전체를 공인/사설 IP 접속으로. 클라우드 그룹은 프로필 기본값도 바꿔 새 서버에도 적용</summary>
@@ -166,14 +182,18 @@ public partial class MainWindow
         }
         SaveHosts();
         RefreshHosts();
+        FlashHostStatus(usePublic ? L.F("호스트 {0}개를 공인 IP 접속으로 바꿨습니다", targets.Count)
+                                  : L.F("호스트 {0}개를 사설 IP 접속으로 바꿨습니다", targets.Count));
     }
 
     private void RenameGroup(HostGroup g)
     {
-        if (PromptDialog.Ask(this, L.T("그룹 이름 바꾸기"), L.F("'{0}' 그룹의 새 이름", g.GroupName), g.GroupName) is not { Length: > 0 } name) return;
+        if (PromptDialog.Ask(this, L.T("그룹 이름 바꾸기"), L.F("'{0}' 그룹의 새 이름", g.GroupName), g.GroupName)?.Trim() is not { Length: > 0 } name
+            || name == g.GroupName) return;
         foreach (var h in _hosts.Where(h => !h.IsCloud && string.Equals(h.Group?.Trim(), g.GroupName, StringComparison.CurrentCultureIgnoreCase)))
             h.Group = name;
-        if (_collapsedLocal.Remove(g.Key)) _collapsedLocal.Add("L:" + name);
+        // 접힘 상태는 새 이름의 키로 (이미 있는 그룹과 합쳐졌으면 그 그룹의 표기로)
+        if (_collapsedLocal.Remove(g.Key) && CanonicalGroupNames(_hosts).TryGetValue(name, out var canon)) _collapsedLocal.Add("L:" + canon);
         SaveGroupState();
         SaveHosts();
         RefreshHosts();

@@ -200,8 +200,13 @@ public static class SafeFile
     /// 사용자가 settings.json 을 직접 고치는 것이 안내된 해결 방법인데, 고치다 JSON 을 틀리면 .bak(로그인이 켜진 예전 설정)이 되살아나
     /// 다시 갇히게 된다. 예전처럼 기본값(로그인 꺼짐)으로 시작하는 편이 안전하다.
     /// </param>
-    public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback, bool restoreBackup = true) where T : class
+    public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback, bool restoreBackup = true) where T : class =>
+        Load(path, parse, fallback, out _, restoreBackup);
+
+    /// <param name="failed">읽지 못해 fallback(또는 restoreBackup 이면 .bak 도 실패)을 돌려줬으면 true</param>
+    public static T Load<T>(string path, Func<string, T?> parse, Func<T> fallback, out bool failed, bool restoreBackup = true) where T : class
     {
+        failed = false;
         if (!File.Exists(path)) return fallback();
         try
         {
@@ -209,8 +214,22 @@ public static class SafeFile
         }
         catch (Exception ex)
         {
-            return Recover(path, bytes => parse(Encoding.UTF8.GetString(bytes).TrimStart('﻿')), fallback, ex.Message.Split('\n')[0], out _, restoreBackup);
+            return Recover(path, bytes => parse(Encoding.UTF8.GetString(bytes).TrimStart('﻿')), fallback, ex.Message.Split('\n')[0], out failed, restoreBackup);
         }
+    }
+
+    // 읽기 실패로 원본 사본(.corrupt)을 만들었는지 (경로 → 성공 여부). 만들지 못했으면 원본 위에 저장하면 내용이 영영 사라진다
+    private static readonly Dictionary<string, bool> CorruptCopied = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 이 파일을 덮어써도 원본을 잃지 않는지: 읽기 실패가 없었거나, 실패했을 때 .corrupt 사본을 만들었으면 true.
+    /// 사본을 만들지 못했으면 false — 호출하는 쪽은 저장을 막는다.
+    /// </summary>
+    public static bool OriginalPreserved(string path)
+    {
+        string key;
+        try { key = Path.GetFullPath(path); } catch { key = path; }
+        lock (CorruptCopied) return !CorruptCopied.TryGetValue(key, out var copied) || copied;
     }
 
     // 이미 .corrupt 사본을 만들고 경고한 손상 파일 (경로 → 수정 시각·크기). .bak 을 원본 자리로 되돌려 쓰지 못한 경우 등
@@ -244,7 +263,19 @@ public static class SafeFile
     {
         var first = FirstReport(path);
         var backup = $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}";
-        if (first) { try { File.Copy(path, backup, overwrite: true); } catch { } }
+        string? copyError = null;
+        if (first)
+        {
+            try { File.Copy(path, backup, overwrite: true); }
+            catch (Exception ex) { copyError = ex.Message.Split('\n')[0]; }
+            string key;
+            try { key = Path.GetFullPath(path); } catch { key = path; }
+            lock (CorruptCopied) CorruptCopied[key] = copyError == null;
+        }
+        // 사본을 만들지 못했으면 "보관했습니다" 라고 하지 않는다
+        var kept = copyError == null
+            ? L.F("원본은 {0} 에 보관했습니다.", backup)
+            : L.F("원본 사본을 만들지 못했습니다 ({0}). 덮어쓰기 전에 {1} 을(를) 직접 다른 곳에 복사해 두세요.", copyError, path);
         var bak = BackupPath(path);
         if (restoreBackup)
         {
@@ -252,11 +283,13 @@ public static class SafeFile
             {
                 if (File.Exists(bak) && parseBytes(File.ReadAllBytes(bak)) is { } recovered)
                 {
-                    try { File.Copy(bak, path, overwrite: true); } catch { /* 되돌려 쓰지 못함 — 다음 읽기도 여기로 오지만 FirstReport 로 사본·경고는 한 번만 */ }
+                    // 손상된 원본의 사본을 만들지 못했으면 그 위에 .bak 을 되돌려 쓰지 않는다 (원본이 영영 사라지지 않게)
+                    if (OriginalPreserved(path))
+                        try { File.Copy(bak, path, overwrite: true); } catch { /* 되돌려 쓰지 못함 — 다음 읽기도 여기로 오지만 FirstReport 로 사본·경고는 한 번만 */ }
                     if (first)
                         lock (LoadWarnings)
-                            LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 직전 저장본({1})으로 복구했습니다.\n읽지 못한 원본은 {2} 에 보관했습니다.\n({3})",
-                                Path.GetFileName(path), bak, backup, why));
+                            LoadWarnings.Add(L.F("{0} 을(를) 읽지 못해 직전 저장본({1})으로 복구했습니다.\n{2}\n({3})",
+                                Path.GetFileName(path), bak, kept, why));
                     failed = false;
                     return recovered;
                 }
@@ -266,8 +299,8 @@ public static class SafeFile
         if (first)
             lock (LoadWarnings)
                 LoadWarnings.Add(restoreBackup
-                    ? L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why)
-                    : L.F("{0} 을(를) 읽지 못해 기본 설정으로 시작했습니다.\n원본은 {1} 에 보관했습니다.\n({2})", Path.GetFileName(path), backup, why));
+                    ? L.F("{0} 을(를) 읽지 못해 빈 상태로 시작했습니다.\n{1}\n({2})", Path.GetFileName(path), kept, why)
+                    : L.F("{0} 을(를) 읽지 못해 기본 설정으로 시작했습니다.\n{1}\n({2})", Path.GetFileName(path), kept, why));
         failed = true;
         return fallback();
     }
@@ -308,17 +341,29 @@ public static class HostStore
         Converters = { new JsonStringEnumConverter() },
     };
 
+    /// <summary>
+    /// hosts.json 을 읽지 못해(.bak 복구도 실패) 빈 목록으로 시작했는지. 이 상태에서 시작 자동 동기화 등이 저장하면
+    /// 클라우드 호스트만 남은 목록이 원본 자리에 쓰이므로, 호출하는 쪽은 자동 동기화를 건너뛰는 데 쓴다.
+    /// </summary>
+    public static bool LoadFailed { get; private set; }
+
     public static List<HostEntry> Load()
     {
-        var hosts = SafeFile.LoadProtected(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>());
+        var hosts = SafeFile.LoadProtected(AppPaths.HostsFile, s => JsonSerializer.Deserialize<List<HostEntry>>(s, Options), () => new List<HostEntry>(), out var failed);
+        LoadFailed = failed;
         var migrated = false;
         foreach (var h in hosts) migrated |= h.MigrateLegacyVault();
         if (migrated) { try { Save(hosts); } catch { } }
         return hosts;
     }
 
-    public static void Save(IEnumerable<HostEntry> hosts) =>
+    public static void Save(IEnumerable<HostEntry> hosts)
+    {
+        // 읽지 못한 원본의 사본(.corrupt)도 만들지 못했으면 덮어쓰지 않는다 — 덮어쓰면 원래 호스트 목록을 되찾을 길이 없다
+        if (!SafeFile.OriginalPreserved(AppPaths.HostsFile))
+            throw new IOException(L.T("hosts.json 을 읽지 못했고 원본 사본도 만들지 못해, 덮어쓰지 않도록 저장하지 않았습니다. 파일을 복구하거나 다른 곳으로 옮긴 뒤 Nubis 를 다시 시작하세요."));
         SafeFile.WriteProtected(AppPaths.HostsFile, JsonSerializer.Serialize(hosts, Options));
+    }
 }
 
 public sealed class AppSettings
@@ -406,14 +451,41 @@ public static class SettingsStore
     private static string GlobalPath => Path.Combine(AppPaths.RootDir, "settings.json");
     private static string FilePath => Path.Combine(AppPaths.DataDir, "settings.json");
 
-    public static AppSettings Global { get; private set; } = Load(GlobalPath);
+    public static AppSettings Global { get; private set; } = LoadGlobal();
     public static AppSettings Current { get; private set; } = Global;
 
     public static event Action? Changed;
 
-    private static AppSettings Load(string path) =>
+    private static AppSettings Load(string path) => Load(path, out _);
+
+    private static AppSettings Load(string path, out bool failed) =>
         // .bak 자동 복구 안 함: 사용자가 settings.json 을 직접 고치다 틀려도 예전(로그인이 켜진) 설정으로 되돌아가지 않고 기본값으로
-        SafeFile.Load(path, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings(), restoreBackup: false);
+        SafeFile.Load(path, s => JsonSerializer.Deserialize<AppSettings>(s), () => new AppSettings(), out failed, restoreBackup: false);
+
+    /// <summary>
+    /// 공통 settings.json 읽기. 읽지 못해 기본값으로 시작하면 로그인은 꺼지지만(갇히지 않게), 소유자 프로필 이름(OwnerKey)까지
+    /// 잃으면 소유자 프로필(users\...)의 호스트·Vault 가 안 보여 데이터가 사라진 것처럼 된다 — 그래서 소유자 이름만 직전 저장본에서 되살린다.
+    /// </summary>
+    private static AppSettings LoadGlobal()
+    {
+        var s = Load(GlobalPath, out var failed);
+        if (failed) RecoverOwner(s, SafeFile.BackupPath(GlobalPath));
+        return s;
+    }
+
+    /// <summary>bakPath 의 Login.OwnerKey · PreviousOwnerKey 만 옮긴다 (로그인 방식 등 나머지는 기본값 그대로)</summary>
+    internal static void RecoverOwner(AppSettings target, string bakPath)
+    {
+        try
+        {
+            if (!File.Exists(bakPath)) return;
+            var bak = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(bakPath).TrimStart('﻿'));
+            if (bak?.Login == null) return;
+            if (target.Login.OwnerKey.Length == 0) target.Login.OwnerKey = bak.Login.OwnerKey ?? "";
+            if (target.Login.PreviousOwnerKey.Length == 0) target.Login.PreviousOwnerKey = bak.Login.PreviousOwnerKey ?? "";
+        }
+        catch { /* .bak 도 읽지 못함 — 기본값 그대로 */ }
+    }
 
     /// <summary>
     /// AppPaths.UseDataDir 다음에 부른다: 그 계정의 settings.json 을 읽는다.
@@ -508,7 +580,37 @@ public static class KnownHostStore
     public static Dictionary<string, string> Load()
     {
         lock (Gate)
-            return TryLoad() ?? new Dictionary<string, string>(SessionTrust);
+        {
+            var all = TryLoad() ?? SessionTrust;
+            var result = new Dictionary<string, string>(all.Count);
+            foreach (var kv in all) result[kv.Key] = Normalize(kv.Value);
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// 서명 알고리즘 이름 → 키 형식 이름. SSH.NET 의 HostKeyName 은 협상된 서명 알고리즘(rsa-sha2-512 등)이라
+    /// 같은 RSA 키라도 서버 설정·버전에 따라 ssh-rsa / rsa-sha2-256 / rsa-sha2-512 로 달라진다. 지문(SHA256)은 키 자체의 것이라 형식만 맞춘다.
+    /// </summary>
+    public static string KeyType(string algorithm) => algorithm switch
+    {
+        "rsa-sha2-256" or "rsa-sha2-512" => "ssh-rsa",
+        "rsa-sha2-256-cert-v01@openssh.com" or "rsa-sha2-512-cert-v01@openssh.com" => "ssh-rsa-cert-v01@openssh.com",
+        _ => algorithm,
+    };
+
+    /// <summary>
+    /// 저장값 "형식 SHA256:..." (거부 표시 "REJECTED " 포함)의 형식 부분을 키 형식으로 맞춘다 — 예전에 "rsa-sha2-512 SHA256:..." 로
+    /// 저장된 값이 새 지문("ssh-rsa SHA256:...")과 같게 비교되도록. SHA256 부분은 그대로라 다른 키가 같아지지 않는다. WinRM(x509) 등 다른 값은 그대로
+    /// </summary>
+    public static string Normalize(string value)
+    {
+        var prefix = IsRejected(value) ? RejectedPrefix : "";
+        var body = value[prefix.Length..];
+        var sp = body.IndexOf(' ');
+        if (sp <= 0) return value;
+        var type = KeyType(body[..sp]);
+        return type == body[..sp] ? value : prefix + type + body[sp..];
     }
 
     /// <summary>
@@ -518,8 +620,8 @@ public static class KnownHostStore
     {
         lock (Gate)
         {
-            if (TryLoad() is { } all) return all.TryGetValue(key, out var v) ? v : null;
-            return SessionTrust.TryGetValue(key, out var t) ? t : UnavailableMark;
+            if (TryLoad() is { } all) return all.TryGetValue(key, out var v) ? Normalize(v) : null;
+            return SessionTrust.TryGetValue(key, out var t) ? Normalize(t) : UnavailableMark;
         }
     }
 
@@ -530,6 +632,7 @@ public static class KnownHostStore
 
     public static void Set(string key, string value)
     {
+        value = Normalize(value);
         lock (Gate)
         {
             if (TryLoad() is not { } all) { SessionTrust[key] = value; return; }   // 손상된 원본 위에 쓰지 않는다

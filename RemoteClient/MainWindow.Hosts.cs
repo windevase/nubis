@@ -55,18 +55,24 @@ public partial class MainWindow
             }
         }
 
-        // 직접 등록한 호스트: Group 별 (지정된 그룹 먼저, 미지정은 "Hosts"). 대소문자만 다른 그룹 이름은 하나로
+        // 직접 등록한 호스트: Group 별 (지정된 그룹 먼저, 미지정은 "Hosts"). 대소문자만 다른 그룹 이름은 하나로.
+        // 그룹 키(접힘 상태 저장)·표시 이름은 호스트 순서·검색 결과와 상관없이 늘 같은 표기로 (CanonicalGroupNames)
+        var canon = CanonicalGroupNames(_hosts);
+        // 예전 표기(대소문자만 다른 이름)로 저장된 접힘 상태는 지금 표기로 옮긴다
+        foreach (var k in _collapsedLocal.Where(k => k.StartsWith("L:", StringComparison.Ordinal)).ToList())
+            if (canon.TryGetValue(k[2..], out var cn) && cn != k[2..]) { _collapsedLocal.Remove(k); _collapsedLocal.Add("L:" + cn); }
         groups.AddRange(filtered.Where(h => !h.IsCloud)
             .GroupBy(h => string.IsNullOrWhiteSpace(h.Group) ? "" : h.Group.Trim(), StringComparer.CurrentCultureIgnoreCase)
-            .OrderBy(g => g.Key.Length == 0)
-            .ThenBy(g => g.Key, StringComparer.CurrentCultureIgnoreCase)
+            .Select(g => (Name: canon.TryGetValue(g.Key, out var n) ? n : g.Key, Hosts: g))
+            .OrderBy(g => g.Name.Length == 0)
+            .ThenBy(g => g.Name, StringComparer.CurrentCultureIgnoreCase)
             .Select(g => new HostGroup
             {
-                Key = "L:" + g.Key,
-                Name = g.Key.Length == 0 ? "Hosts" : g.Key,
-                GroupName = g.Key,
-                Hosts = g.OrderBy(h => h.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToList(),
-                IsCollapsed = !searching && _collapsedLocal.Contains("L:" + g.Key),
+                Key = "L:" + g.Name,
+                Name = g.Name.Length == 0 ? "Hosts" : g.Name,
+                GroupName = g.Name,
+                Hosts = g.Hosts.OrderBy(h => h.DisplayName, StringComparer.CurrentCultureIgnoreCase).ToList(),
+                IsCollapsed = !searching && _collapsedLocal.Contains("L:" + g.Name),
             }));
 
         // 클라우드 프로필 그룹: AWS → Tencent → GCP → Azure → OCI, 기본은 접힌 상태 (서버가 많으므로)
@@ -97,8 +103,12 @@ public partial class MainWindow
             UpdateSelectionBar();
         }
         RebuildRows();
-        // 검색 중이면 첫 결과를 골라 둔다 (Enter = 그 호스트로 연결, ↑↓ 로 이동)
-        SetHighlight(searching ? VisibleHosts().FirstOrDefault() : null);
+        // 검색어가 바뀌었으면 첫 결과를 골라 둔다 (Enter = 그 호스트로 연결, ↑↓ 로 이동).
+        // 검색어가 그대로인 새로 고침(자동 동기화·편집 저장·창 크기)은 키보드로 고른 카드를 유지한다
+        var visible = VisibleHosts();
+        var keep = q == _lastSearch && _highlighted != null && visible.Contains(_highlighted) ? _highlighted : null;
+        _lastSearch = q;
+        SetHighlight(keep ?? (searching ? visible.FirstOrDefault() : null), scroll: keep == null);
         // 보이는 그룹이 없으면 안내 (검색 중이면 검색 결과 없음)
         EmptyState.Visibility = groups.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitle.Text = searching ? L.T("검색 결과가 없습니다") : _profiles.Count > 0 ? L.T("동기화된 서버가 없습니다") : L.T("등록된 호스트가 없습니다");
@@ -106,13 +116,53 @@ public partial class MainWindow
             ? L.T("Enter 를 누르면 입력한 user@host 로 바로 접속합니다.")
             : _profiles.Count > 0
                 ? L.T("Cloud 페이지에서 프로필을 동기화하거나, NEW HOST 로 서버를 추가하세요.")
-                : L.T("NEW HOST 로 SSH / RDP 서버를 추가하거나, Cloud 에서 클라우드 계정의 서버를 가져오세요.");
+                : L.T("NEW HOST(Ctrl+N) 로 서버를 추가하거나, IMPORT 로 엑셀·~/.ssh/config 등에서 가져오거나, Cloud 에서 클라우드 계정의 서버를 가져오세요.");
+        // 빈 화면의 바로가기 버튼은 검색 결과가 없을 때가 아니라 정말 비어 있을 때만
+        EmptyActions.Visibility = searching ? Visibility.Collapsed : Visibility.Visible;
         var shown = groups.Where(g => !g.IsVirtual).Sum(g => g.Hosts.Count);
-        CountText.Text = searching ? L.F("{0} / {1}개", shown, _hosts.Count) : L.F("{0}개 호스트", _hosts.Count);
+        _countBase = searching ? L.F("{0} / {1}개", shown, _hosts.Count) : L.F("{0}개 호스트", _hosts.Count);
+        UpdateCountText();
     }
 
     private const string FavoritesKey = "F:";
     private const string RecentKey = "R:";
+    // 마지막으로 목록을 만든 검색어 (검색어가 그대로면 키보드로 고른 카드를 유지)
+    private string _lastSearch = "";
+
+    /// <summary>
+    /// 그룹 이름(대소문자 무시)마다 늘 같은 표기 하나 — 접힘 상태 키("L:이름")가 호스트 순서에 따라 바뀌어
+    /// 다시 시작하거나 호스트를 추가하면 접어 둔 그룹이 펼쳐지던 문제. 서수 비교로 가장 앞선 표기를 쓴다
+    /// </summary>
+    internal static Dictionary<string, string> CanonicalGroupNames(IEnumerable<HostEntry> hosts) =>
+        hosts.Where(h => !h.IsCloud)
+            .Select(h => string.IsNullOrWhiteSpace(h.Group) ? "" : h.Group.Trim())
+            .GroupBy(n => n, StringComparer.CurrentCultureIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.OrderBy(n => n, StringComparer.Ordinal).First(), StringComparer.CurrentCultureIgnoreCase);
+
+    // ----- 일괄 작업 결과 같은 짧은 안내 (호스트 수 · 선택 막대 옆에 몇 초 보였다가 사라짐) -----
+    private string _countBase = "";
+    private string? _flashText;
+    private DispatcherTimer? _flashTimer;
+
+    private void UpdateCountText()
+    {
+        CountText.Text = _flashText == null ? _countBase : _countBase + "  ·  " + _flashText;
+    }
+
+    /// <summary>작업 결과를 몇 초 동안 보여 준다 (대화 상자 없이)</summary>
+    private void FlashHostStatus(string text)
+    {
+        _flashText = text;
+        if (_flashTimer == null)
+        {
+            _flashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            _flashTimer.Tick += (_, _) => { _flashTimer.Stop(); _flashText = null; UpdateCountText(); UpdateSelectionBar(); };
+        }
+        _flashTimer.Stop();
+        _flashTimer.Start();
+        UpdateCountText();
+        UpdateSelectionBar();
+    }
 
     /// <summary>
     /// 검색어 한 단어가 호스트와 맞는지. 이름·주소(사설/공인)·사용자·그룹·프로토콜·인스턴스 ID·리전·OS·용도·프로필 이름.
@@ -148,28 +198,6 @@ public partial class MainWindow
     private List<HostEntry> VisibleHosts() =>
         _groups.Where(g => !g.IsCollapsed).SelectMany(g => g.Hosts).Distinct().ToList();
 
-    private HostEntry? _highlighted;
-
-    private void SetHighlight(HostEntry? h)
-    {
-        if (_highlighted != null) _highlighted.IsHighlighted = false;
-        _highlighted = h;
-        if (h == null) return;
-        h.IsHighlighted = true;
-        // 그 카드가 있는 줄이 보이게
-        if (HostRows.ItemsSource is List<object> rows && rows.FirstOrDefault(r => r is CardRow cr && cr.Hosts.Contains(h)) is { } row)
-            HostRows.ScrollIntoView(row);
-    }
-
-    private void MoveHighlight(int delta)
-    {
-        var hosts = VisibleHosts();
-        if (hosts.Count == 0) return;
-        var i = _highlighted == null ? -1 : hosts.IndexOf(_highlighted);
-        i = i < 0 ? (delta > 0 ? 0 : hosts.Count - 1) : Math.Clamp(i + delta, 0, hosts.Count - 1);
-        SetHighlight(hosts[i]);
-    }
-
     private List<HostGroup> _groups = new();
     private int _cardsPerRow = 3;
     private const double CardSlotWidth = 302;   // 카드 290 + 간격 12
@@ -197,7 +225,9 @@ public partial class MainWindow
         var per = Math.Max(1, (int)((e.NewSize.Width - 44 - 12) / CardSlotWidth));
         if (per == _cardsPerRow) return;
         _cardsPerRow = per;
-        RebuildRows();
+        // "최근 접속" 은 두 줄 분량(카드 수 × 2)만 보이므로 한 줄 카드 수가 바뀌면 목록을 다시 만든다
+        if (SettingsStore.Current.ShowRecent && SearchBox.Text.Trim().Length == 0) RefreshHosts();
+        else RebuildRows();
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
@@ -216,81 +246,6 @@ public partial class MainWindow
         catch (Exception ex) { Dialog.Show(this, L.F("호스트 목록 저장 실패: {0}", ex.Message), "Nubis"); }
     }
 
-    private DispatcherTimer? _searchTimer;
-
-    /// <summary>입력이 잠깐 멈췄을 때 한 번만 목록 갱신</summary>
-    private void OnSearchChanged(object sender, TextChangedEventArgs e)
-    {
-        if (_searchTimer == null)
-        {
-            _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
-            _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); RefreshHosts(); };
-        }
-        _searchTimer.Stop();
-        _searchTimer.Start();
-    }
-
-    private void OnSearchKeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter) { QuickConnect(); e.Handled = true; }
-        else if (e.Key == Key.Escape) { SearchBox.Clear(); SetHighlight(null); e.Handled = true; }
-        else if (e.Key is Key.Down or Key.Up)
-        {
-            if (_searchTimer?.IsEnabled == true) { _searchTimer.Stop(); RefreshHosts(); }
-            // ↑↓ = 카드 한 줄씩, Tab / Shift+Tab = 한 장씩
-            MoveHighlight(e.Key == Key.Down ? (_highlighted == null ? 1 : _cardsPerRow) : -_cardsPerRow);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Tab && _highlighted != null && (Keyboard.Modifiers & ~ModifierKeys.Shift) == ModifierKeys.None)
-        {
-            MoveHighlight(Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) ? -1 : 1);
-            e.Handled = true;
-        }
-    }
-
-    private void OnQuickConnect(object sender, RoutedEventArgs e) => QuickConnect();
-
-    /// <summary>검색 결과가 1개면 그 호스트로, 아니면 "user@host:port" / "rdp host" 형식으로 바로 접속</summary>
-    private void QuickConnect()
-    {
-        var text = SearchBox.Text.Trim();
-        if (text.Length == 0) return;
-
-        if (_searchTimer?.IsEnabled == true) { _searchTimer.Stop(); RefreshHosts(); }   // 입력 직후 Enter
-        var matches = _groups.SelectMany(g => g.Hosts).Distinct().ToList();
-        var m = QuickRegex.Match(text);
-
-        // 1) 이름·주소가 정확히 일치하는 호스트 → 그 호스트로 (10.0.0.1 을 쳤는데 10.0.0.12 로 붙는 일 방지)
-        var exact = matches.Where(h => h.DisplayName.Equals(text, StringComparison.OrdinalIgnoreCase) ||
-                                       h.Address.Equals(text, StringComparison.OrdinalIgnoreCase)).ToList();
-        if (exact.Count == 1) { Connect(exact[0]); return; }
-        // 2) 주소·user@host 형태면 입력한 그대로 접속, 그 외 검색 결과가 하나뿐이면 그 호스트로
-        var looksLikeAddress = m.Success && (text.Contains('@') || text.Contains('.') || m.Groups["proto"].Success || m.Groups["port"].Success);
-        if (!looksLikeAddress && matches.Count == 1) { Connect(matches[0]); return; }
-        // 3) 주소처럼 보이지 않는데 결과가 여러 개면 키보드로 고른(처음엔 첫 번째) 호스트로 — 입력한 글자를 주소로 접속하지 않음
-        if (!looksLikeAddress && matches.Count > 1)
-        {
-            Connect(_highlighted != null && matches.Contains(_highlighted) ? _highlighted : matches[0]);
-            return;
-        }
-        if (!m.Success)
-        {
-            Dialog.Show(this, L.T("user@host[:port] 또는 rdp host[:port] 형식으로 입력하세요."), L.T("빠른 접속"));
-            return;
-        }
-
-        var proto = m.Groups["proto"].Value.Equals("rdp", StringComparison.OrdinalIgnoreCase) ? Protocol.Rdp : Protocol.Ssh;
-        var host = new HostEntry
-        {
-            Protocol = proto,
-            Address = m.Groups["host"].Value,
-            Username = m.Groups["user"].Value,
-            Port = m.Groups["port"].Success ? int.Parse(m.Groups["port"].Value) : HostEntry.PreferredPort(proto),
-        };
-        if (host.Port is < 1 or > 65535) host.Port = HostEntry.PreferredPort(proto);
-        Connect(host);
-    }
-
     /// <summary>카드(또는 공유 우클릭 메뉴의 대상 카드)의 호스트</summary>
     private static HostEntry? HostOf(object sender)
     {
@@ -302,9 +257,35 @@ public partial class MainWindow
     private void OnCardMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (HostOf(sender) is not { } h) return;
-        if (e.ClickCount == 1 && HandleCardSelectClick(h)) { e.Handled = true; return; }
+        if (e.ClickCount == 1 && HandleCardSelectClick(h, ScreenIndexOf(sender as DependencyObject, h))) { e.Handled = true; return; }
         if (e.ClickCount == 2 && Keyboard.Modifiers == ModifierKeys.None) { Connect(h); e.Handled = true; }
     }
+
+    /// <summary>
+    /// 클릭한 카드의 화면 위치 (ScreenOrder 의 순번). 같은 호스트가 즐겨찾기·최근 접속과 원래 그룹에 함께 있으면
+    /// 실제로 클릭한 쪽. 모르면 -1
+    /// </summary>
+    private int ScreenIndexOf(DependencyObject? card, HostEntry h)
+    {
+        CardRow? clicked = null;
+        for (var d = card; d != null && clicked == null; d = VisualTreeHelper.GetParent(d))
+            if (d is FrameworkElement { DataContext: CardRow cr }) clicked = cr;
+        if (clicked == null) return -1;
+        var offset = 0;
+        foreach (var row in CardRows())
+        {
+            if (ReferenceEquals(row, clicked))
+            {
+                var i = row.Hosts.IndexOf(h);
+                return i >= 0 ? offset + i : -1;
+            }
+            offset += row.Hosts.Count;
+        }
+        return -1;
+    }
+
+    /// <summary>화면 순서 그대로의 호스트 (접힌 그룹 제외, 즐겨찾기·최근 접속과 원래 그룹에 함께 있는 호스트는 두 번)</summary>
+    private List<HostEntry> ScreenOrder() => _groups.Where(g => !g.IsCollapsed).SelectMany(g => g.Hosts).ToList();
 
     private void OnEditHost(object sender, RoutedEventArgs e) { if (HostOf(sender) is { } h) OpenEditor(h); }
     private void OnMenuConnect(object sender, RoutedEventArgs e) { if (HostOf(sender) is { } h) Connect(h); }
@@ -381,7 +362,8 @@ public partial class MainWindow
             if (string.IsNullOrEmpty(copy.Username)) copy.Username = profile?.DefaultUsername ?? "";
             if (string.IsNullOrEmpty(copy.ProtectedPassword)) copy.ProtectedPassword = profile?.ProtectedDefaultPassword;
         }
-        copy.Group = profile?.GroupName ?? "";
+        // 그룹은 비어 있을 때만 프로필 이름으로 — 편집 패널에서 적은 그룹(지워진 클라우드 호스트를 다시 추가할 때)을 덮어쓰지 않게
+        if (string.IsNullOrWhiteSpace(copy.Group)) copy.Group = profile?.GroupName ?? "";
         copy.CloudProfileId = null;
         copy.CloudInstanceId = null;
         copy.CloudState = null;

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 
 namespace Nubis;
@@ -42,6 +45,31 @@ public static class ClaudeGuard
     public static string LegacyDataDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RemoteClient");
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetLongPathNameW(string shortPath, StringBuilder longPath, uint size);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint size);
+
+    /// <summary>
+    /// 같은 폴더의 다른 표기 — 긴 이름과 8.3 짧은 이름. 폴더가 없거나 변환에 실패하면 그 표기는 빠진다.
+    /// </summary>
+    internal static IEnumerable<string> PathVariants(string path)
+    {
+        var list = new List<string>();
+        foreach (var f in new Func<string, StringBuilder, uint, uint>[] { GetLongPathNameW, GetShortPathNameW })
+        {
+            try
+            {
+                var sb = new StringBuilder(1024);
+                var n = f(path, sb, (uint)sb.Capacity);
+                if (n > 0 && n < sb.Capacity) list.Add(sb.ToString());
+            }
+            catch { }
+        }
+        return list;
+    }
+
     /// <param name="dataDir">지금 쓰는 데이터 폴더 (로그인했으면 그 계정의 프로필 폴더)</param>
     /// <param name="rootDir">공통 폴더 (로그인 설정·로그인 기록, users\ 아래 다른 계정의 프로필). 생략하면 dataDir 와 같음</param>
     /// <param name="legacyDir">이름 변경 전 데이터 폴더 (보통 <see cref="LegacyDataDir"/>). 생략하면 넣지 않음</param>
@@ -60,6 +88,18 @@ public static class ClaudeGuard
         if (common != null) bases.Add(common);
         if ((common ?? root) is { } top) bases.Add($"{top}/users/**");
         if (legacy != null) bases.Add(legacy);
+        // 같은 폴더의 8.3 짧은 이름 / 긴 이름 표기도 같이 건다 (폴더가 실제로 있을 때만 변환됨).
+        // APPDATA 가 짧은 이름(C:\Users\ABCDEF~1)으로 잡혀 있으면 규칙도 짧은 이름으로만 만들어져 긴 이름 접근을 놓친다
+        var dirs = new List<(string Dir, bool Users)> { (dataDir, rootDir == null) };
+        if (rootDir != null) dirs.Add((rootDir, true));
+        if (legacyDir != null) dirs.Add((legacyDir, false));
+        foreach (var (dir, users) in dirs)
+            foreach (var v in PathVariants(dir))
+            {
+                if (ToRulePath(v) is not { } rp) continue;
+                foreach (var b in users ? new[] { rp, $"{rp}/users/**" } : new[] { rp })
+                    if (!bases.Contains(b, StringComparer.OrdinalIgnoreCase)) bases.Add(b);
+            }
 
         foreach (var f in SecretFiles)
         {
@@ -83,8 +123,14 @@ public static class ClaudeGuard
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
             rules.Add($"Edit({b}/settings.json*)");
         }
+        // 셸로 앱 settings.json 을 고치는 것도 막는다 — Nubis 경로가 들어간 명령 · 작업 폴더(<data>\claude)에서 본 상위 폴더만 (2차 안전장치)
+        foreach (var pat in new[] { "*Nubis*settings.json*", "*../settings.json*", @"*..\settings.json*" })
+        {
+            rules.Add($"Bash({pat})");
+            rules.Add($"PowerShell({pat})");
+        }
         // 저장된 암호 복호화(DPAPI) 시도 — 키워드가 그대로 들어간 명령만 막는다 (2차 안전장치, 우회 가능)
-        foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "AutoApproveReadOnly" })
+        foreach (var kw in new[] { "ProtectedData", "CryptUnprotectData", "ProtectedPassword", "ProtectedSecret", "ProtectedKey", "ProtectedPassphrase", "AutoApproveReadOnly", "OwnerKey", "AllowedAccounts" })
         {
             rules.Add($"Bash(*{kw}*)");
             rules.Add($"PowerShell(*{kw}*)");
@@ -103,8 +149,13 @@ public static class ClaudeGuard
     public static string ContextHookCommand(string contextFile)
     {
         var p = Path.GetFullPath(contextFile).Replace('\\', '/').Replace("'", "''");
-        return "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command " +
-               $"\"[Console]::OutputEncoding=[Text.Encoding]::UTF8; if (Test-Path -LiteralPath '{p}') {{ Get-Content -Raw -Encoding UTF8 -LiteralPath '{p}' }}\"";
+        var script = $"[Console]::OutputEncoding=[Text.Encoding]::UTF8; if (Test-Path -LiteralPath '{p}') {{ Get-Content -Raw -Encoding UTF8 -LiteralPath '{p}' }}";
+        // 경로에 셸이 해석하는 문자($ ` " % ! — bash 큰따옴표 안의 변수·명령 치환, cmd 의 %변수%·!변수!)가 있으면
+        // 이스케이프 대신 -EncodedCommand(UTF-16LE base64: 영숫자와 + / = 만)로 넘겨 어느 셸이 실행해도 그대로 전달되게 한다
+        if (p.Any(ch => ch is '$' or '`' or '"' or '%' or '!' || char.IsControl(ch)))
+            return "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " +
+                   Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        return $"powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script}\"";
     }
 
     public static string BuildSettingsJson(string dataDir, string? contextFile = null, string? rootDir = null, string? legacyDir = null)

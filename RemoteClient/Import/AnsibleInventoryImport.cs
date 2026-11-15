@@ -17,10 +17,13 @@ namespace Nubis;
 /// 비밀번호 변수는 절대 가져오지 않는다. Jinja 템플릿 값은 해석하지 않고 건너뛴다.
 /// YAML 은 YamlDotNet 표현 모델(YamlStream)로만 읽는다 — 타입 인스턴스화 없음.
 /// </summary>
-public static class AnsibleInventoryImport
+public static partial class AnsibleInventoryImport
 {
     /// <summary>가져올 최대 호스트 수 (범위 확장 폭주 방지)</summary>
-    public const int MaxHosts = 1000;
+    public const int MaxHosts = 5000;
+    /// <summary>group_vars · host_vars 변수 파일 한 개 최대 크기 / 읽을 최대 파일 수</summary>
+    private const long MaxVarsFileBytes = 1024 * 1024;
+    private const int MaxVarsFiles = 2000;
 
     private const string AllGroup = "all";
     private const string UngroupedGroup = "ungrouped";
@@ -46,17 +49,25 @@ public static class AnsibleInventoryImport
     private static readonly Regex YamlKeyLine = new(@"^[^\s#\[\]{},=]+:\s*(#.*)?$", RegexOptions.CultureInvariant);
     private static readonly Regex YamlSectionLine = new(@"^\s+(hosts|children|vars):\s*(#.*)?$", RegexOptions.CultureInvariant);
 
-    /// <summary>파일을 읽어 파싱한다. 파일을 못 읽으면 예외를 그대로 던진다 (호출하는 화면이 표시)</summary>
-    public static ImportResult ParseFile(string path) => Parse(File.ReadAllText(path, Encoding.UTF8));
+    /// <summary>
+    /// 파일을 읽어 파싱한다. 인벤토리 옆의 group_vars/ · host_vars/ 변수 파일도 읽는다 (Ansible 과 같이 인벤토리 안 변수보다 우선).
+    /// 파일을 못 읽으면 예외를 그대로 던진다 (호출하는 화면이 표시)
+    /// </summary>
+    public static ImportResult ParseFile(string path) =>
+        Parse(ImportText.ReadFile(path), Path.GetDirectoryName(Path.GetFullPath(path)));
 
-    /// <summary>INI / YAML 을 자동 판별해 파싱한다</summary>
-    public static ImportResult Parse(string text)
+    /// <summary>
+    /// INI / YAML 을 자동 판별해 파싱한다. varsDir 를 주면 그 폴더의 group_vars/ · host_vars/ 를 읽는다.
+    /// blockPath: 변수 파일 검사 (막을 이유를 돌려주면 건너뜀 — MCP 에서 데이터 폴더 등 차단용)
+    /// </summary>
+    public static ImportResult Parse(string text, string? varsDir = null, Func<string, string?>? blockPath = null)
     {
         text ??= "";
         if (text.Length > 0 && text[0] == '﻿') text = text.Substring(1);
         var inv = new Inventory();
         if (LooksLikeYaml(text)) ParseYaml(text, inv);
         else ParseIni(text, inv);
+        if (!string.IsNullOrEmpty(varsDir)) LoadVarsDirs(inv, varsDir, blockPath);
         return inv.Build();
     }
 
@@ -451,6 +462,13 @@ public static class AnsibleInventoryImport
             return g;
         }
 
+        /// <summary>지금까지 나온 그룹 이름 (사본)</summary>
+        public List<string> GroupNames() => _groups.Keys.ToList();
+
+        /// <summary>호스트 이름과 그 호스트 변수 사전 (host_vars 를 덮어쓸 곳)</summary>
+        public List<(string Name, Dictionary<string, VarValue> Vars)> HostVarTargets() =>
+            _hostOrder.Select(h => (h.Name, h.Vars)).ToList();
+
         public void AddChild(string parent, string child)
         {
             GetGroup(parent);
@@ -620,11 +638,19 @@ public static class AnsibleInventoryImport
             }
 
             // 점프 서버가 인벤토리의 다른 호스트(이름 · 주소)를 가리키면 그 항목 이름으로 바꾼다 (사용자 · 포트 지정이 없을 때만)
+            // 이름 · 주소 → 첫 항목 (호스트 수천 대에서 줄마다 목록을 훑지 않게)
+            var byName = new Dictionary<string, ImportedHost>(StringComparer.Ordinal);
+            var byAddress = new Dictionary<string, ImportedHost>(StringComparer.Ordinal);
+            foreach (var x in result.Hosts)
+            {
+                byName.TryAdd(x.Name, x);
+                byAddress.TryAdd(x.Address, x);
+            }
             for (int i = 0; i < result.Hosts.Count; i++)
             {
                 var jh = result.Hosts[i].JumpHost;
                 if (jh == null || jh.Contains('@') || jh.Contains(':')) continue;
-                var target = result.Hosts.FirstOrDefault(x => x.Name == jh) ?? result.Hosts.FirstOrDefault(x => x.Address == jh);
+                var target = byName.TryGetValue(jh, out var n) ? n : byAddress.TryGetValue(jh, out var ad) ? ad : null;
                 if (target != null && !ReferenceEquals(target, result.Hosts[i])) result.Hosts[i] = result.Hosts[i] with { JumpHost = target.Name };
             }
 

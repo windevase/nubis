@@ -102,32 +102,42 @@ public partial class MainWindow
             _ => L.T("Ansible 인벤토리"),
         };
         var name = McpImport.SourceName(args.Source);
+        // Include · group_vars 로 따라 읽는 파일도 path 와 같은 규칙으로 막는다 (Claude 가 넘긴 text 의 Include 포함)
+        var sshDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        Func<string, string?> includeGuard = p => McpImport.BlockedFollowPathReason(p, AppPaths.DataDir, AppPaths.RootDir, sshDir,
+            allowSshDir: args.Source == McpImportSource.SshConfig);
         try
         {
-            if (args.Text != null)
+            // 파서는 파일 읽기 · 큰 입력 처리로 오래 걸릴 수 있어 백그라운드에서
+            return await Task.Run(() =>
             {
-                var r = args.Source switch
+                if (args.Text != null)
                 {
-                    McpImportSource.Table => TableImport.Parse(args.Text),
-                    McpImportSource.SshConfig => SshConfigImport.Parse(args.Text),
-                    McpImportSource.MRemoteNg => MRemoteNgImport.Parse(args.Text),
-                    _ => AnsibleInventoryImport.Parse(args.Text),
-                };
-                return (r, label, $"{name} (붙여 넣은 내용)");
-            }
+                    var r = args.Source switch
+                    {
+                        McpImportSource.Table => TableImport.Parse(args.Text),
+                        McpImportSource.SshConfig => SshConfigImport.Parse(args.Text, null, includeGuard),
+                        McpImportSource.MRemoteNg => MRemoteNgImport.Parse(args.Text),
+                        _ => AnsibleInventoryImport.Parse(args.Text),
+                    };
+                    return (r, label, $"{name} (붙여 넣은 내용)");
+                }
 
-            var path = args.Path ?? (args.Source == McpImportSource.SshConfig ? SshConfigImport.DefaultPath : MRemoteNgImport.DefaultPath);
-            var (full, text) = ReadImportFile(path, args.Source);
-            var result = args.Source switch
-            {
-                McpImportSource.Table => TableImport.Parse(text),
-                // Include 의 상대 경로는 이 파일이 있는 폴더 기준 (ParseFile 과 같음)
-                McpImportSource.SshConfig => SshConfigImport.Parse(text, Path.GetDirectoryName(full)),
-                // XML 선언의 인코딩을 따르도록 파일 스트림으로 연다
-                McpImportSource.MRemoteNg => MRemoteNgImport.ParseFile(full),
-                _ => AnsibleInventoryImport.Parse(text),
-            };
-            return (result, $"{label} ({full})", $"{name} ({full})");
+                var path = args.Path ?? (args.Source == McpImportSource.SshConfig ? SshConfigImport.DefaultPath : MRemoteNgImport.DefaultPath);
+                var (full, text) = ReadImportFile(path, args.Source);
+                var dir = Path.GetDirectoryName(full);
+                var result = args.Source switch
+                {
+                    McpImportSource.Table => TableImport.Parse(text),
+                    // Include 의 상대 경로는 이 파일이 있는 폴더 기준 (ParseFile 과 같음)
+                    McpImportSource.SshConfig => SshConfigImport.Parse(text, dir, includeGuard),
+                    // XML 선언의 인코딩을 따르도록 파일 스트림으로 연다
+                    McpImportSource.MRemoteNg => MRemoteNgImport.ParseFile(full),
+                    // 인벤토리 옆의 group_vars · host_vars 도 (화면의 파일 불러오기와 같음)
+                    _ => AnsibleInventoryImport.Parse(text, dir, includeGuard),
+                };
+                return (result, $"{label} ({full})", $"{name} ({full})");
+            });
         }
         catch (Exception ex) when (ex is not McpToolException and not OperationCanceledException)
         {
@@ -147,7 +157,8 @@ public partial class MainWindow
         var info = new FileInfo(full);
         if (info.Length > McpImport.MaxFileBytes) throw new McpToolException($"파일이 너무 큽니다 ({info.Length:N0} 바이트, 최대 {McpImport.MaxFileBytes:N0}).");
         string text;
-        try { text = File.ReadAllText(full, new UTF8Encoding(false)); }
+        // BOM · UTF-8 · 시스템 ANSI(한국어 엑셀 CSV 는 CP949) 순으로 판별
+        try { text = ImportText.ReadFile(full); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             throw new McpToolException($"파일을 읽을 수 없습니다: {full} ({ex.Message})");

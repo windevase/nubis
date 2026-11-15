@@ -34,6 +34,8 @@ public partial class MainWindow
         var switched = !tab.IsSelected;
         // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다
         var previous = _tabs.FirstOrDefault(t => t.IsSelected);
+        // 사용자가 그 탭에 입력하던 중이었는지 — 되돌릴 때만 그 탭에 키보드 포커스를 돌려준다
+        var previousHadFocus = previous?.View.IsKeyboardFocusWithin == true;
         try
         {
             return await CaptureCoreAsync(tab, maxWidth, switched);
@@ -44,18 +46,40 @@ public partial class MainWindow
             // 캡처가 바꿔 놓은 탭이 아직 선택돼 있을 때만 원래 화면으로 돌아간다
             if (switched && tab.IsSelected && _tabs.Contains(tab))
             {
-                if (previous != null && _tabs.Contains(previous)) SelectTab(previous);
+                if (previous != null && _tabs.Contains(previous))
+                {
+                    ShowTabWithoutFocus(previous);
+                    if (previousHadFocus) previous.Session.FocusSession();
+                }
                 else SelectHome();
             }
         }
+    }
+
+    /// <summary>
+    /// 캡처용 탭 전환: SelectTab 과 같지만 키보드 포커스를 옮기지 않는다.
+    /// SelectTab 은 고른 탭에 포커스를 주므로, 사용자가 Claude 패널이나 다른 탭에 입력하던 중이면
+    /// 그 0.7초 사이의 키 입력(명령·비밀번호)이 캡처 대상 서버의 터미널·RDP 로 들어갔다
+    /// </summary>
+    private void ShowTabWithoutFocus(SessionTab tab)
+    {
+        foreach (var t in _tabs)
+        {
+            t.IsSelected = t == tab;
+            t.View.Visibility = t == tab ? Visibility.Visible : Visibility.Collapsed;
+        }
+        HomeView.Visibility = Visibility.Collapsed;
+        SessionsHost.Visibility = Visibility.Visible;
+        HomeTab.Background = Brushes.Transparent;
+        UpdateActiveContext();
     }
 
     private async Task<McpImage> CaptureCoreAsync(SessionTab tab, int maxWidth, bool switched)
     {
         if (switched)
         {
-            // 가려진 RDP 화면은 갱신되지 않으므로 보이게 한 뒤 그려질 시간을 준다
-            SelectTab(tab);
+            // 가려진 RDP 화면은 갱신되지 않으므로 보이게 한 뒤 그려질 시간을 준다 (포커스는 옮기지 않음)
+            ShowTabWithoutFocus(tab);
             await Task.Delay(700);
         }
 

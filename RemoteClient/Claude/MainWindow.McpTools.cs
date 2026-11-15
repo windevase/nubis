@@ -295,29 +295,59 @@ public partial class MainWindow
 
         var lines = plan.Select(p => p.Text).ToList();
         var command = string.Join("\n", lines);
-        if (plan.Any(p => p.Def.Security) &&
-            !await AskApprovalAsync("update_settings", L.T("Claude 가 보안 설정 변경을 요청합니다"),
-                L.T("아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다."), new[] { "Nubis 설정" }, command))
-        {
-            AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
-            throw new McpToolException("사용자가 설정 변경을 거부했습니다.");
-        }
-
         // 기본 포트는 클라우드 호스트 포트도 함께 바꾸는 경로로, 나머지는 한 번에 저장
         var ports = plan.Where(p => SettingsCatalog.PortKeys.Contains(p.Def.Key)).ToList();
+        int Port(string key, Protocol proto) => ports.FirstOrDefault(p => p.Def.Key == key)?.New as int? ?? HostEntry.PreferredPort(proto);
+        var (newSsh, newRdp) = (Port(nameof(AppSettings.DefaultSshPort), Protocol.Ssh), Port(nameof(AppSettings.DefaultRdpPort), Protocol.Rdp));
+        // 기본 포트 변경이 클라우드 호스트 포트를 한꺼번에 바꾸면(다음 접속이 다른 포트로 감) 보안 설정처럼 승인을 받는다
+        var portMoves = ports.Count > 0 ? CountDefaultPortMoves(newSsh, newRdp) : 0;
+        var security = plan.Any(p => p.Def.Security);
+        if (security || portMoves > 0)
+        {
+            // 승인 창은 사용자 화면이므로 번역한다 (감사 로그는 한국어 원문)
+            var shown = string.Join("\n", plan.Select(p => L.IsEnglish ? p.NeutralText : p.Text));
+            var desc = security
+                ? L.T("아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다.")
+                : L.T("아래 Nubis 설정을 바꿉니다.");
+            if (portMoves > 0) desc += "\n" + L.F("포트를 따로 지정하지 않은 클라우드 호스트 {0}개의 접속 포트도 함께 바뀝니다.", portMoves);
+            if (!await AskApprovalAsync("update_settings",
+                    security ? L.T("Claude 가 보안 설정 변경을 요청합니다") : L.T("Claude 가 설정 변경을 요청합니다"),
+                    desc, new[] { L.T("Nubis 설정") }, shown))
+            {
+                AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
+                throw new McpToolException("사용자가 설정 변경을 거부했습니다.");
+            }
+        }
+
         var others = plan.Except(ports).ToList();
         if (others.Count > 0) SettingsStore.Update(s => { foreach (var p in others) p.Def.Set(s, p.New); });
         var note = "";
         if (ports.Count > 0)
         {
-            int Port(string key, Protocol proto) => ports.FirstOrDefault(p => p.Def.Key == key)?.New as int? ?? HostEntry.PreferredPort(proto);
-            var moved = ApplyDefaultPorts(Port(nameof(AppSettings.DefaultSshPort), Protocol.Ssh), Port(nameof(AppSettings.DefaultRdpPort), Protocol.Rdp));
+            var moved = ApplyDefaultPorts(newSsh, newRdp);
             if (moved > 0) note = $"\n클라우드 호스트 {moved}개의 포트도 새 기본 포트로 바꿨습니다.";
         }
         if (SettingsPage.Visibility == Visibility.Visible) RefreshSettingsPage();
-        AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, plan.Any(p => p.Def.Security) ? "승인·변경" : "변경");
+        AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, security || portMoves > 0 ? "승인·변경" : "변경");
         if (plan.Any(p => p.Def.Key == nameof(AppSettings.TerminalGpu))) note += "\nGPU 가속은 앱을 다시 시작해야 적용됩니다.";
         return "설정을 바꿨습니다:\n" + command + note;
+    }
+
+    /// <summary>
+    /// 기본 포트를 (ssh, rdp) 로 바꾸면 ApplyDefaultPorts 가 함께 바꿀 클라우드 호스트 수 (바꾸지 않고 세기만).
+    /// 판단 기준은 ApplyDefaultPorts 와 같다: 프로필에 포트 지정이 없고, 이전 기본 포트를 쓰던 호스트.
+    /// </summary>
+    private int CountDefaultPortMoves(int ssh, int rdp)
+    {
+        var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
+        var n = 0;
+        foreach (var p in _profiles)
+            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
+            {
+                if (ssh != oldSsh && p.SshPort == null && h.Protocol == Protocol.Ssh && h.Port == oldSsh) n++;
+                if (rdp != oldRdp && p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp) n++;
+            }
+        return n;
     }
 
     // =================== MCP 도구 (2차) ===================

@@ -35,20 +35,41 @@ public partial class SftpPanel
         {
             Debounce?.Stop();
             if (Watcher != null) { Watcher.EnableRaisingEvents = false; Watcher.Dispose(); }
+            ReleaseEditDir(Path.GetDirectoryName(Local));
         }
     }
 
     private readonly Dictionary<string, EditSession> _edits = new(StringComparer.Ordinal);
     private static string EditTempRoot => Path.Combine(Path.GetTempPath(), "Nubis", "sftp-edit");
 
+    /// <summary>
+    /// 이 프로세스의 모든 패널(탭)이 지금 편집 중인 임시 폴더 — CleanupEditTemp 가 다른 탭의 편집 폴더를 지우지 않게.
+    /// (패널마다 자기 _edits 만 보면 하루 넘게 열어 둔 다른 탭의 편집 파일이 지워졌다)
+    /// </summary>
+    private static readonly HashSet<string> ActiveEditDirs = new(StringComparer.OrdinalIgnoreCase);
+    private static void HoldEditDir(string dir) { lock (ActiveEditDirs) ActiveEditDirs.Add(Path.GetFullPath(dir)); }
+    private static void ReleaseEditDir(string? dir)
+    {
+        if (string.IsNullOrEmpty(dir)) return;
+        lock (ActiveEditDirs) ActiveEditDirs.Remove(Path.GetFullPath(dir));
+    }
+    private static bool IsEditDirHeld(string dir) { lock (ActiveEditDirs) return ActiveEditDirs.Contains(Path.GetFullPath(dir)); }
+
     /// <summary>편집 중인 파일 수</summary>
     public int EditingCount => _edits.Count;
 
     private async Task EditFileAsync(SftpItem item)
     {
-        // 이미 편집 중이면 받은 파일을 그대로 다시 연다 (편집기에서 고친 내용을 덮어쓰지 않게)
-        if (_edits.TryGetValue(item.FullName, out var existing) && File.Exists(existing.Local)) { OpenInEditor(existing.Local); return; }
-        if (_busy) return;
+        if (_edits.TryGetValue(item.FullName, out var existing))
+        {
+            // 이미 편집 중이면 받은 파일을 그대로 다시 연다 (편집기에서 고친 내용을 덮어쓰지 않게)
+            if (File.Exists(existing.Local)) { OpenInEditor(existing.Local); return; }
+            // 임시 파일이 지워짐 → 옛 감시·디바운스를 정리하고 새로 받는다 (감시가 새지 않게)
+            existing.Dispose();
+            _edits.Remove(item.FullName);
+        }
+        if (item.IsSpecial) { ShowStatus(L.F("장치·FIFO·소켓 같은 특수 파일은 열 수 없습니다: {0}", item.Name)); return; }
+        if (_busy) { ShowBusyHint(); return; }
         if (item.Size > 50L * 1024 * 1024 &&
             Dialog.Show(Window.GetWindow(this)!, L.F("{0} 파일입니다. 받아서 편집할까요?", HumanSize(item.Size)), L.T("편집"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -59,6 +80,12 @@ public partial class SftpPanel
         try
         {
             var c = await ClientAsync();
+            // 충돌 확인 기준(시각·크기)은 받기 "전"에 잡는다 — 받는 동안 서버 파일이 바뀌면 첫 저장 때 충돌로 묻게
+            // (받은 뒤에 잡으면 받은 내용보다 새 서버 파일을 기준으로 삼아, 그 변경을 말없이 덮어쓴다)
+            var attr = await Task.Run(() => c.GetAttributes(item.FullName), ct);
+            // 목록을 읽은 뒤 바뀌었거나 링크 대상이 장치 파일인 경우 — /dev/zero 등은 끝없이 받게 된다
+            if (attr.IsDirectory || IsSpecialFile(attr.IsSocket, attr.IsNamedPipe, attr.IsCharacterDevice, attr.IsBlockDevice))
+                throw new InvalidOperationException(L.F("장치·FIFO·소켓 같은 특수 파일은 열 수 없습니다: {0}", item.Name));
             CleanupEditTemp();
             var host = SafeLocalName(_getAuth()?.Host.DisplayName ?? "sftp");
             dir = Path.Combine(EditTempRoot, host, Guid.NewGuid().ToString("N")[..8]);
@@ -66,15 +93,15 @@ public partial class SftpPanel
             var local = Path.Combine(dir, SafeLocalName(item.Name));
 
             // 받는 중에는 .part 로 — 취소·실패 때 반쯤 받은 파일이 편집 파일로 남지 않게
-            var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress((long)r.TotalBytesDownloaded, item.Size));
+            var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress((long)r.TotalBytesDownloaded, attr.Size));
             var part = local + ".part";
             await using (var fs = File.Create(part))
                 await c.DownloadFileAsync(item.FullName, fs, progress, ct);
             File.Move(part, local);
             MarkFromInternet(local);
-            var attr = await Task.Run(() => c.GetAttributes(item.FullName), ct);
 
             var s = new EditSession { Remote = item.FullName, Local = local, RemoteMtime = attr.LastWriteTimeUtc, RemoteSize = attr.Size, Hash = HashFile(local) };
+            HoldEditDir(dir);
             Watch(s);
             _edits[item.FullName] = s;
             TrackTempDir(dir);
@@ -129,7 +156,7 @@ public partial class SftpPanel
         try
         {
             // 1) 충돌 확인 — 연결 잠금은 서버에 묻는 동안만 잡는다 (확인 창을 띄운 채로 잡고 있지 않게)
-            var attr = await WithClientLockAsync(c => Task.Run(() => c.Exists(s.Remote) ? c.GetAttributes(s.Remote) : null));
+            var attr = await WithClientLockAsync(c => Task.Run(() => TryGetAttributes(c, s.Remote)));
             if (attr != null && (attr.LastWriteTimeUtc != s.RemoteMtime || attr.Size != s.RemoteSize) &&
                 Dialog.Show(Window.GetWindow(this)!,
                     L.F("편집을 시작한 뒤 서버의 파일이 바뀌었습니다.\n\n{0}\n서버: {1:yyyy-MM-dd HH:mm:ss} · {2}\n\n내가 편집한 내용으로 덮어쓸까요? (아니요를 누르면 이번 저장은 올리지 않습니다)",
@@ -137,28 +164,71 @@ public partial class SftpPanel
                     L.T("편집 충돌"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 s.Hash = hash;   // 같은 내용으로 다시 묻지 않음
-                ShowStatus(L.F("올리지 않음: {0} (서버 파일이 바뀌어 있음)", name));
+                ShowStatus(L.F("올리지 않음: {0} (서버 파일이 바뀌어 있음)", name), keepIfBusy: true);
                 return;
             }
             // 2) 임시 이름으로 올린 뒤 바꿔치기 (UploadOneAsync) — 중간에 끊겨도 원래 파일(/etc 설정 등)은 그대로.
             //    올리는 동안 연결 잠금을 잡아, 사용자 전환(RunAsAsync)·재연결·패널 닫기가 쓰는 중인 연결을 닫지 않게 한다
             //    채널이 멈추면 잠금을 영원히 잡고 있지 않게 시간 제한 (2분 + 크기 비례) — 목록·사용자 전환·연결 열기가 막히지 않게
             using var timeout = new CancellationTokenSource(EditUploadTimeout(data.Length));
-            var after = await WithClientLockAsync(async c =>
+            await WithClientLockAsync(async c =>
             {
                 await UploadOneAsync(c, () => new MemoryStream(data, writable: false), s.Remote,
                     new Progress<Renci.SshNet.UploadFileProgressReport>(_ => { }), timeout.Token);
-                return await Task.Run(() => c.GetAttributes(s.Remote));
+                var a = await Task.Run(() => c.GetAttributes(s.Remote));
+                // 기준값은 잠금을 놓기 전에 바꾼다 — 그 사이 탭을 닫으면 Close 가 옛 기준으로 "서버 파일이 바뀜"이라 잘못 판단하지 않게
+                s.RemoteMtime = a.LastWriteTimeUtc;
+                s.RemoteSize = a.Size;
+                s.Hash = hash;
+                return a;
             });
-            s.RemoteMtime = after.LastWriteTimeUtc;
-            s.RemoteSize = after.Size;
-            s.Hash = hash;
             ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)));
             if (ParentPath(s.Remote) == _cwd && !_busy) await NavigateAsync(_cwd);   // 목록의 크기·시각 갱신
         }
-        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name)); }
-        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message)); }
+        // 실패는 전송 중이어도 버리지 않는다 — 전송이 끝날 때 결과 문구에 붙여 보인다 (저장이 서버에 안 갔는데 모르는 일이 없게)
+        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name), keepIfBusy: true); }
+        catch (Exception) when (_closed) { /* 탭이 닫힘 — Close 가 마지막으로 올리고 실패하면 알린다 */ }
+        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message), keepIfBusy: true); }
         finally { s.Uploading = false; }
+    }
+
+    /// <summary>
+    /// 탭을 닫을 때(연결 잠금을 잡은 백그라운드에서): 저장했지만 아직 올리지 않은 편집을 올린다.
+    /// 서버 파일이 바뀌었으면 묻지 못하므로 올리지 않는다. 올리지 못했으면 사용자에게 보일 사유(로컬 파일 위치 포함), 아니면 null
+    /// </summary>
+    private static async Task<string?> FlushEditOnCloseAsync(SftpClient? c, EditSession s)
+    {
+        try
+        {
+            if (!File.Exists(s.Local)) return null;
+            byte[] data;
+            using (var fs = new FileStream(s.Local, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var ms = new MemoryStream())
+            {
+                fs.CopyTo(ms);
+                data = ms.ToArray();
+            }
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
+            if (hash == s.Hash) return null;   // 이미 올렸거나 바뀐 것 없음
+            if (c is not { IsConnected: true })
+                return L.F("{0}\n→ 연결이 끊겨 올리지 못했습니다. ({1})", s.Remote, s.Local);
+            var attr = await Task.Run(() => TryGetAttributes(c, s.Remote));
+            if (attr != null && (attr.LastWriteTimeUtc != s.RemoteMtime || attr.Size != s.RemoteSize))
+                return L.F("{0}\n→ 편집을 시작한 뒤 서버 파일이 바뀌어 올리지 않았습니다. ({1})", s.Remote, s.Local);
+            using var timeout = new CancellationTokenSource(EditUploadTimeout(data.Length));
+            await UploadOneAsync(c, () => new MemoryStream(data, writable: false), s.Remote,
+                new Progress<Renci.SshNet.UploadFileProgressReport>(_ => { }), timeout.Token);
+            s.Hash = hash;
+            return null;
+        }
+        catch (Exception ex) { return $"{s.Remote}\n→ {ex.Message} ({s.Local})"; }
+    }
+
+    /// <summary>속성 읽기 — 없으면 null. Exists + GetAttributes 를 따로 부르면 서버 왕복이 두 배라 한 번에</summary>
+    private static SftpFileAttributes? TryGetAttributes(SftpClient c, string path)
+    {
+        try { return c.GetAttributes(path); }
+        catch (Renci.SshNet.Common.SftpPathNotFoundException) { return null; }
     }
 
     /// <summary>편집 자동 업로드의 시간 제한 — 2분 + 64KB/s 로 올리는 데 걸리는 시간 (큰 파일도 느린 회선에서 잘리지 않게)</summary>
@@ -249,6 +319,11 @@ public partial class SftpPanel
         ".lnk", ".url", ".website", ".scf", ".shb", ".shs", ".settingcontent-ms", ".library-ms", ".search-ms", ".searchconnector-ms",
         ".reg", ".inf", ".chm", ".hlp", ".jar", ".gadget", ".diagcab", ".xll", ".iso", ".img", ".vhd", ".vhdx",
         ".py", ".pyw", ".pyz", ".sh", ".bash", ".pl", ".rb", ".theme", ".themepack",
+        // 빠져 있던 것: 원격 데스크톱 연결 파일(임의 서버로 드라이브 공유 연결)·Windows Sandbox 설정·MSH/PS2 스크립트·
+        // 스크립틀릿·앱 설치 파일·Access DB(매크로)·바이트코드 등
+        ".rdp", ".wsb", ".ws", ".sct", ".msh", ".msh1", ".msh2", ".mshxml", ".msh1xml", ".msh2xml", ".ps2", ".ps2xml", ".psc2",
+        ".appinstaller", ".jnlp", ".ade", ".adp", ".mda", ".mdb", ".mde", ".accde", ".ins", ".isp", ".job", ".pyc", ".pyo", ".mof",
+        ".mht", ".mhtml",
     };
 
     /// <summary>받은 파일에 "인터넷에서 받음" 표시(Zone.Identifier, ZoneId=3) — Office 보호된 보기·SmartScreen 이 적용되게. 실패해도 무시</summary>
@@ -288,8 +363,24 @@ public partial class SftpPanel
     private static void DeleteTempDirs(IEnumerable<string?> dirs)
     {
         foreach (var d in dirs)
-            if (!string.IsNullOrEmpty(d))
-                try { if (Directory.Exists(d)) Directory.Delete(d, true); } catch { /* 다른 프로그램이 열고 있음 — 하루 뒤 정리 */ }
+            if (!string.IsNullOrEmpty(d)) ForceDeleteDir(d);
+    }
+
+    /// <summary>폴더 삭제 — 읽기 전용 사본(읽기 전용 속성)이 있으면 속성을 풀고 다시. 다른 프로그램이 열고 있으면 하루 뒤 정리</summary>
+    private static void ForceDeleteDir(string d)
+    {
+        try { if (Directory.Exists(d)) Directory.Delete(d, true); }
+        catch (UnauthorizedAccessException)
+        {
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories))
+                    try { File.SetAttributes(f, FileAttributes.Normal); } catch { }
+                Directory.Delete(d, true);
+            }
+            catch { }
+        }
+        catch { }
     }
 
     private static string OpenTempRoot => Path.Combine(Path.GetTempPath(), "Nubis", "sftp");
@@ -304,7 +395,7 @@ public partial class SftpPanel
             {
                 foreach (var d in Directory.GetDirectories(hostDir))
                     if (Directory.GetLastWriteTimeUtc(d) < DateTime.UtcNow.AddDays(-1))
-                        try { Directory.Delete(d, true); } catch { }
+                        ForceDeleteDir(d);   // 읽기 전용 사본이 들어 있다
                 try { if (!Directory.EnumerateFileSystemEntries(hostDir).Any()) Directory.Delete(hostDir); } catch { }
             }
         }
@@ -322,25 +413,47 @@ public partial class SftpPanel
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    /// <summary>하루 지난 편집 임시 폴더 정리 (지금 편집 중인 것은 남김)</summary>
-    private void CleanupEditTemp()
+    /// <summary>
+    /// 하루 지난 편집 임시 폴더 정리. 이 프로세스의 어느 탭이든 편집 중인 폴더(ActiveEditDirs)와
+    /// 하루 안에 저장된 파일이 있는 폴더(다른 Nubis 창·편집기에 열린 채 저장한 것 — 파일을 직접 쓰면 폴더 시각은 안 바뀐다)는 남긴다
+    /// </summary>
+    private static void CleanupEditTemp()
     {
         try
         {
             if (!Directory.Exists(EditTempRoot)) return;
-            var inUse = _edits.Values.Select(e => Path.GetDirectoryName(e.Local)!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var cutoff = DateTime.UtcNow.AddDays(-1);
             foreach (var hostDir in Directory.GetDirectories(EditTempRoot))
             foreach (var d in Directory.GetDirectories(hostDir))
-                if (!inUse.Contains(d) && Directory.GetLastWriteTimeUtc(d) < DateTime.UtcNow.AddDays(-1))
-                    try { Directory.Delete(d, true); } catch { }
+                if (!IsEditDirHeld(d) && Directory.GetLastWriteTimeUtc(d) < cutoff && LatestFileWriteUtc(d) < cutoff)
+                    ForceDeleteDir(d);
         }
         catch { }
     }
 
-    /// <summary>전송 중이 아닐 때 아래 상태 줄에 잠깐 알림</summary>
-    private async void ShowStatus(string text)
+    private static DateTime LatestFileWriteUtc(string dir)
     {
-        if (_busy) return;
+        try
+        {
+            return Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+                .Select(File.GetLastWriteTimeUtc).DefaultIfEmpty(DateTime.MinValue).Max();
+        }
+        catch { return DateTime.MaxValue; }   // 못 읽으면 지우지 않는다
+    }
+
+    /// <summary>
+    /// 아래 상태 줄에 잠깐 알림. 전송 중이면 기본은 버리고(진행 표시를 가리지 않게),
+    /// keepIfBusy 면 전송이 끝날 때 결과 문구에 붙인다 (자동 업로드 실패처럼 놓치면 안 되는 알림)
+    /// </summary>
+    private async void ShowStatus(string text, bool keepIfBusy = false)
+    {
+        if (_busy)
+        {
+            if (keepIfBusy && !(_pendingNotice?.Contains(text, StringComparison.Ordinal) ?? false))
+                _pendingNotice = AppendNotice(_pendingNotice, text);
+            return;
+        }
+        var seq = ++_statusSeq;
         TransferBar.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Collapsed;
         TransferProgress.IsIndeterminate = false;
@@ -348,6 +461,6 @@ public partial class SftpPanel
         TransferText.Text = text;
         TransferText.ToolTip = text;
         await Task.Delay(7000);
-        if (!_busy && TransferText.Text == text) TransferBar.Visibility = Visibility.Collapsed;
+        if (!_busy && seq == _statusSeq) TransferBar.Visibility = Visibility.Collapsed;
     }
 }

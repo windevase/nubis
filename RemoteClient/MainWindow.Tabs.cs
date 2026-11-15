@@ -21,6 +21,11 @@ public partial class MainWindow
 
     private int _nextSessionId = 1;
 
+    // 탭을 열 때 고른 공인/사설 IP ("같은 호스트로 새 탭" 이 같은 주소로 열리게). 탭이 사라지면 함께 사라진다
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<SessionTab, object> _tabUsePublic = new();
+
+    private bool? TabUsePublic(SessionTab tab) => _tabUsePublic.TryGetValue(tab, out var v) ? (bool)v : null;
+
     /// <param name="usePublic">null = 호스트 설정대로, true/false = 이번만 공인/사설 IP 로</param>
     private SessionTab Connect(HostEntry saved, bool? usePublic = null)
     {
@@ -57,6 +62,7 @@ public partial class MainWindow
             : host.DisplayName;
         if (viaPublic) title = L.F("{0} (공인)", title);
         var tab = AddTab(new SessionTab { Id = _nextSessionId++, Title = title, Protocol = host.Protocol, View = view, Host = saved });
+        if (usePublic is { } pub) _tabUsePublic.AddOrUpdate(tab, pub);
 
         if (_hosts.Contains(saved))
         {
@@ -415,20 +421,39 @@ public partial class MainWindow
         var idx = _tabs.IndexOf(tab);
         var disconnected = _tabs.Where(t => t.Status == SessionStatus.Disconnected).ToList();
         Add(L.T("다시 연결"), () => { SelectTab(tab); tab.Session.Reconnect(); }, tab.Status == SessionStatus.Disconnected);
-        if (tab.Host != null) Add(L.T("같은 호스트로 새 탭"), () => Connect(tab.Host));
+        if (tab.Host != null) Add(L.T("같은 호스트로 새 탭"), () => Connect(tab.Host, TabUsePublic(tab)));
         if (tab.Protocol == Protocol.Local) Add(L.T("새 PowerShell 탭"), OpenLocalTerminal);
         if (tab.View is RdpSessionView rdp) Add(L.T("전체 화면"), () => { SelectTab(tab); rdp.EnterFullScreen(); }, rdp.IsConnected);
         Add(L.T("탭 이름 바꾸기..."), () =>
         {
-            if (PromptDialog.Ask(this, L.T("탭 이름 바꾸기"), L.T("새 이름"), tab.Title) is { Length: > 0 } name) tab.Title = name;
+            if (PromptDialog.Ask(this, L.T("탭 이름 바꾸기"), L.T("새 이름"), tab.Title) is { Length: > 0 } name)
+            {
+                tab.Title = name;
+                if (tab.IsSelected) UpdateActiveContext();   // Claude 에게 알려 주는 현재 탭 정보(active-session.txt)도 새 이름으로
+            }
         });
         if (tab.Host != null && _hosts.Contains(tab.Host)) Add(L.T("호스트 편집"), () => { SelectHome(); OpenEditor(tab.Host); });
         menu.Items.Add(new Separator());
         Add(L.T("닫기"), () => CloseTabs(new[] { tab }));
         Add(L.T("다른 탭 모두 닫기"), () => CloseTabs(_tabs.Where(t => t != tab).ToList()), _tabs.Count > 1);
         Add(L.T("오른쪽 탭 모두 닫기"), () => CloseTabs(_tabs.Skip(idx + 1).ToList()), idx < _tabs.Count - 1);
-        Add(L.T("끊긴 탭 모두 다시 연결"), () => { foreach (var t in disconnected) t.Session.Reconnect(); }, disconnected.Count > 0);
+        Add(L.T("끊긴 탭 모두 다시 연결"), () => ReconnectAll(disconnected), disconnected.Count > 0);
         Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
+    }
+
+    /// <summary>
+    /// 끊긴 탭 여러 개 다시 연결. RDP 는 계정 입력 창을 탭마다 차례로 띄우므로, 사용자가 한 번 취소하면
+    /// 나머지 탭은 묻지 않고 멈춘다 (취소해도 다음 창이 계속 뜨던 문제).
+    /// </summary>
+    private void ReconnectAll(IReadOnlyList<SessionTab> tabs)
+    {
+        foreach (var t in tabs.ToList())
+        {
+            // 앞 탭의 계정 입력 창(중첩 메시지 루프)이 떠 있는 동안 닫혔거나 이미 다시 연결된 탭은 건너뛴다
+            if (!_tabs.Contains(t) || t.Status != SessionStatus.Disconnected) continue;
+            t.Session.Reconnect();
+            if (t.View is RdpSessionView { LastConnectCancelled: true }) break;
+        }
     }
 
     // ---------- 탭 끌어서 순서 바꾸기 ----------
@@ -442,9 +467,14 @@ public partial class MainWindow
         _tabDragging = (sender as FrameworkElement)?.DataContext as SessionTab;
     }
 
+    /// <summary>버튼을 떼면 끌기 준비를 푼다 (그냥 클릭한 탭이 나중에 다른 곳에서 누른 채 지나갈 때 끌려가지 않게)</summary>
+    private void OnTabDragEnd(object sender, MouseButtonEventArgs e) => _tabDragging = null;
+
     private void OnTabDragMove(object sender, MouseEventArgs e)
     {
         if (_tabDragging == null || e.LeftButton != MouseButtonState.Pressed) return;
+        // 누른 탭 위에서 움직일 때만 끌기 시작
+        if (!ReferenceEquals((sender as FrameworkElement)?.DataContext, _tabDragging)) { _tabDragging = null; return; }
         var d = e.GetPosition(this) - _tabDragStart;
         if (Math.Abs(d.X) < SystemParameters.MinimumHorizontalDragDistance * 2) return;
         var tab = _tabDragging;
@@ -459,10 +489,34 @@ public partial class MainWindow
         {
             var from = _tabs.IndexOf(dragged);
             var to = _tabs.IndexOf(over);
-            if (from >= 0 && to >= 0) _tabs.Move(from, to);
+            // 폭이 다른 탭끼리 바꾸면 자리를 바꾼 직후 커서가 다시 상대 탭 위에 놓여 왔다 갔다 하던 문제 —
+            // 바꾼 뒤에도 커서가 끄는 탭 위에 있게 될 만큼 들어왔을 때만 옮긴다
+            var overBox = TabsList.ItemContainerGenerator.ContainerFromItem(over) as FrameworkElement;
+            var dragBox = TabsList.ItemContainerGenerator.ContainerFromItem(dragged) as FrameworkElement;
+            if (from >= 0 && to >= 0 &&
+                (overBox == null || dragBox == null ||
+                 ShouldReorderTab(from, to, e.GetPosition(overBox).X, overBox.ActualWidth, dragBox.ActualWidth)))
+                _tabs.Move(from, to);
         }
         e.Handled = true;
     }
+
+    /// <summary>
+    /// 끄는 탭(폭 draggedWidth)을 over 탭(폭 overWidth, 커서 x 는 over 기준) 자리로 옮길지.
+    /// 오른쪽으로 옮기면 over 탭이 왼쪽으로 draggedWidth 만큼 밀리므로 x ≥ overWidth − draggedWidth 여야
+    /// 옮긴 뒤 커서가 끄는 탭 위에 남는다 (왼쪽도 대칭). 탭 절반은 넘어야 옮겨 살짝 걸친 것만으로 바뀌지 않게 한다.
+    /// </summary>
+    internal static bool ShouldReorderTab(int from, int to, double x, double overWidth, double draggedWidth)
+    {
+        if (from == to || overWidth <= 0) return false;
+        return from < to
+            ? x >= Math.Max(overWidth / 2, overWidth - draggedWidth)
+            : x <= Math.Min(overWidth / 2, draggedWidth);
+    }
+
+    /// <summary>창을 닫을 때 확인할 세션 수: 로컬 PowerShell 을 뺀, 끊기지 않은(연결됨·연결 중) 원격 세션</summary>
+    internal static int LiveRemoteSessionCount(IEnumerable<(Protocol protocol, SessionStatus status)> tabs) =>
+        tabs.Count(t => t.protocol != Protocol.Local && t.status != SessionStatus.Disconnected);
 
     private void OnTabDrop(object sender, DragEventArgs e) => e.Handled = true;
 }

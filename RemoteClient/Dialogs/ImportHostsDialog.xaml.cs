@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -43,6 +44,9 @@ public partial class ImportHostsDialog : Window
     private string _sshPath = SshConfigImport.DefaultPath;
     private string _mrngPath = MRemoteNgImport.DefaultPath;
     private bool _fileIsSsh = true;
+    /// <summary>불러오기 순번 — 늦게 끝난 앞 요청의 결과를 버린다</summary>
+    private int _loadSeq;
+    private bool _closed;
 
     private ImportHostsDialog(IReadOnlyList<HostEntry> existing)
     {
@@ -61,7 +65,7 @@ public partial class ImportHostsDialog : Window
         UpdateSummary();
 
         Loaded += (_, _) => PasteBox.Focus();
-        Closed += (_, _) => { _adCts?.Cancel(); _replanTimer.Stop(); };
+        Closed += (_, _) => { _closed = true; _adCts?.Cancel(); _replanTimer.Stop(); };
         _ready = true;
     }
 
@@ -190,11 +194,29 @@ public partial class ImportHostsDialog : Window
         return dlg.ShowDialog(this) == true ? dlg.FileName : null;
     }
 
-    /// <summary>파서 실행 (파일 읽기 오류 등은 상태 줄에 표시)</summary>
-    private void Load(Func<ImportResult> parse, string sourceName)
+    /// <summary>
+    /// 파서 실행 — 큰 파일(수천 대 · Include · group_vars)에서 창이 멈추지 않게 백그라운드에서 읽는다.
+    /// 읽는 중에 다른 출처를 다시 불러오면 앞의 결과는 버린다. 파일 읽기 오류 등은 상태 줄에 표시
+    /// </summary>
+    private async void Load(Func<ImportResult> parse, string sourceName)
     {
-        try { SetSource(parse(), sourceName); }
-        catch (Exception ex) { ShowStatus(L.F("읽지 못했습니다: {0}", ex.Message), true); }
+        var seq = ++_loadSeq;
+        ShowStatus(L.T("읽는 중..."), false);
+        Cursor = Cursors.AppStarting;
+        try
+        {
+            var result = await Task.Run(parse);
+            if (seq != _loadSeq || _closed) return;
+            SetSource(result, sourceName);
+        }
+        catch (Exception ex)
+        {
+            if (seq == _loadSeq && !_closed) ShowStatus(L.F("읽지 못했습니다: {0}", ex.Message), true);
+        }
+        finally
+        {
+            ClearValue(CursorProperty);
+        }
     }
 
     // ===================== Active Directory =====================
@@ -235,6 +257,7 @@ public partial class ImportHostsDialog : Window
 
         using var cts = new CancellationTokenSource();
         _adCts = cts;
+        _loadSeq++;   // 읽는 중이던 파일 결과가 나중에 와도 AD 결과를 덮지 않게
         AdFetchButton.Content = L.T("조회 취소");
         ShowStatus(L.F("{0} 에서 컴퓨터 목록을 가져오는 중...", domain), false);
         try
@@ -313,10 +336,13 @@ public partial class ImportHostsDialog : Window
     private bool FilterRow(object o)
     {
         if (o is not ImportRow r) return false;
-        if (FilterNew.IsChecked == true) return r.Status == ImportStatus.New;
-        if (FilterExisting.IsChecked == true) return r.Status == ImportStatus.Existing;
-        if (FilterProblem.IsChecked == true) return r.Status is ImportStatus.Duplicate or ImportStatus.Invalid;
-        return true;
+        if (FilterNew.IsChecked == true && r.Status != ImportStatus.New) return false;
+        if (FilterExisting.IsChecked == true && r.Status != ImportStatus.Existing) return false;
+        if (FilterProblem.IsChecked == true && r.Status is not (ImportStatus.Duplicate or ImportStatus.Invalid)) return false;
+        var q = SearchBox.Text.Trim();
+        if (q.Length == 0) return true;
+        return Has(r.NameText) || Has(r.AddressText) || Has(r.GroupText) || Has(r.UserText) || Has(r.DetailText);
+        bool Has(string s) => s.Contains(q, StringComparison.CurrentCultureIgnoreCase);
     }
 
     private void OnFilterChanged(object sender, RoutedEventArgs e)

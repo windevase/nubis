@@ -88,8 +88,14 @@ public partial class MainWindow
     {
         if (_claudeView != null) return;
 
-        _mcp ??= new McpServer(BuildTools(), McpInstructions);
-        var configPath = _mcp.WriteClientConfig(Path.Combine(ClaudeWorkDir, "mcp-config.json"));
+        try { _mcp ??= new McpServer(BuildTools(), McpInstructions); }
+        catch (Exception ex)
+        {
+            // 로컬 포트를 열지 못함 (보안 프로그램·URL ACL 등) — 패널만 쓸 수 없고 앱은 계속 동작
+            Dialog.Show(this, L.F("Claude 패널용 MCP 서버를 시작하지 못했습니다: {0}", ex.Message), "Nubis", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var configPath = _mcp.WriteClientConfig(McpConfigPath);
         WriteClaudeMd();
         // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
         var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
@@ -127,6 +133,8 @@ public partial class MainWindow
     // Claude 패널의 UserPromptSubmit hook 이 메시지를 보낼 때마다 그 내용을 질문에 붙인다.
 
     private static string ActiveContextPath => Path.Combine(ClaudeWorkDir, ClaudeGuard.ActiveContextFile);
+    /// <summary>claude --mcp-config 파일 (MCP 토큰이 들어 있어 앱 종료 때 지운다)</summary>
+    private static string McpConfigPath => Path.Combine(ClaudeWorkDir, "mcp-config.json");
     private string? _lastActiveContext;
 
     /// <summary>현재 탭 정보를 파일에 쓴다 (탭 선택·닫기·연결 상태 변경 때 호출)</summary>
@@ -171,11 +179,37 @@ public partial class MainWindow
         };
         var host = address != null ? $" · {address}:{port}" : "";
         var how = protocol == Protocol.Rdp ? "capture_screen" : "get_terminal_info(현재 폴더·사용자) / read_terminal / get_selection / capture_screen";
-        // 탭 제목은 호스트 이름에서 오므로 줄바꿈·따옴표를 정리해 한 줄을 유지
-        var safeTitle = title.Replace('\r', ' ').Replace('\n', ' ').Replace('"', '\'');
+        var safeTitle = SafeContextTitle(title);
         return $"[Nubis 현재 화면] 사용자가 지금 보고 있는 탭: session_id={id} · \"{safeTitle}\" · {kind}{host} · {StatusText(status)}. " +
                $"'이 화면 / 지금 터미널 / 이 에러' 는 이 탭을 뜻합니다. 화면 내용은 {how} 를 session_id={id} 로 호출해 확인하세요 " +
                $"(이전 대화의 session_id 를 그대로 쓰지 마세요). 열린 세션 탭 {openTabs}개.";
+    }
+
+    /// <summary>탭 제목에 허용하는 최대 글자 수 (현재 화면 문구)</summary>
+    internal const int ContextTitleMax = 80;
+
+    /// <summary>
+    /// 현재 화면 문구에 넣을 탭 제목 정리. 탭 제목은 호스트 이름·클라우드 태그·사용자 입력(탭 이름 바꾸기)에서 오므로
+    /// 질문에 붙는 지시문처럼 보이지 않게 한 줄로 만들고(제어 문자·줄바꿈 제거), 큰따옴표를 바꾸고,
+    /// '[Nubis 현재 화면]' 같은 머리글을 흉내 내지 못하게 대괄호를 괄호로 바꾸고, 길이를 자른다.
+    /// </summary>
+    internal static string SafeContextTitle(string title)
+    {
+        var sb = new StringBuilder(Math.Min(title.Length, ContextTitleMax + 1));
+        foreach (var ch in title)
+        {
+            if (sb.Length > ContextTitleMax) break;
+            sb.Append(ch switch
+            {
+                '"' => '\'',
+                '[' => '(',
+                ']' => ')',
+                _ when char.IsControl(ch) || ch is '\u2028' or '\u2029' => ' ',
+                _ => ch,
+            });
+        }
+        var s = sb.ToString();
+        return s.Length > ContextTitleMax ? s[..ContextTitleMax] + "…" : s;
     }
 
     private void ShutdownClaude()
@@ -183,6 +217,8 @@ public partial class MainWindow
         try { _mcp?.CancelAll(); } catch { }
         try { _claudeView?.CloseSession(); } catch { }
         try { _mcp?.Dispose(); } catch { }
+        // 서버가 닫히면 토큰은 쓸모없지만, 디스크에 남겨 두지 않는다
+        if (_mcp != null) McpServer.DeleteClientConfig(McpConfigPath);
     }
 
     /// <summary>PATH 와 일반 설치 위치에서 claude 실행 파일 찾기</summary>
@@ -220,7 +256,10 @@ public partial class MainWindow
         "- 터미널의 현재 폴더·로그인 사용자·sudo 전환 여부는 get_terminal_info 로 바로 확인하세요(명령을 보내지 않아 빠르고 승인도 없음). pwd·whoami 를 send_to_terminal 로 보내지 마세요.\n" +
         "- send_to_terminal 은 명령이 끝나 셸 프롬프트가 돌아올 때까지(기본 10초) 기다려 출력을 함께 돌려줍니다. 그 결과로 바로 답하고, '아직 실행 중' 일 때만 wait_for_output 으로 이어서 기다리세요.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
+        "- OTP·Push 인증을 요구하는 서버는 먼저 open_session(wait_connected_sec) 으로 탭을 열어 사용자가 인증을 마치게 한 뒤 run_command 를 쓰세요(열린 탭의 로그인된 연결로 실행됩니다).\n" +
         "- 클라우드 서버 목록이 오래됐으면 cloud_sync 로 다시 가져오세요.\n" +
+        "- '서버 가져와 줘' 같은 요청은 discover_sources 로 이 PC 에 있는 출처(클라우드 CLI 프로필·~/.ssh/config·mRemoteNG·AD)를 먼저 확인하세요. " +
+        "클라우드는 cloud_add_profile(로그인이 필요하면 cloud_login 후 사용자가 마치면 다시 시도), 온프레미스·엑셀 표는 import_hosts 를 apply=false 로 미리보기 → 사용자 확인 → apply=true 순서로 등록합니다.\n" +
         "- 설정 안내를 부탁받으면 get_setup_status 로 상태를 먼저 보고, open_app_page 로 해당 화면을 열어 사용자와 같은 화면을 보며 한 단계씩 안내하세요. 시작 화면 로그인(SSO) 값은 Claude 가 바꿀 수 없으니 사용자가 직접 입력·저장하도록 안내합니다.\n" +
         "- 앱 설정(테마·글꼴·구문 강조·기본 포트 등)을 바꿔 달라고 하면 get_settings 로 확인한 뒤 update_settings 로 바꾸세요. settings.json 을 직접 고치지 마세요(앱이 덮어씁니다).\n" +
         "- 비밀번호는 앱이 관리하므로 묻거나 다루지 마세요. 계정이 없다는 오류가 나면 앱의 호스트/클라우드 프로필 설정에서 계정을 저장하도록 안내하세요.\n" +

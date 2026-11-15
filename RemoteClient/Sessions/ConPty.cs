@@ -81,14 +81,22 @@ public sealed class PseudoConsoleProcess : IDisposable
 
     public void Start(string commandLine, string workingDir, short cols, short rows)
     {
-        if (!CreatePipe(out var inputRead, out _inputWrite, IntPtr.Zero, 0)) throw new Win32Exception();
-        if (!CreatePipe(out _outputRead, out var outputWrite, IntPtr.Zero, 0)) throw new Win32Exception();
+        // 실패하면 만든 파이프 끝을 바로 닫는다 (Dispose 가 _inputWrite·_outputRead 를 닫고, 의사 콘솔 쪽 끝은 여기서)
+        SafeFileHandle? inputRead = null, outputWrite = null;
+        try
+        {
+            if (!CreatePipe(out inputRead, out _inputWrite, IntPtr.Zero, 0)) throw new Win32Exception();
+            if (!CreatePipe(out _outputRead, out outputWrite, IntPtr.Zero, 0)) throw new Win32Exception();
 
-        var hr = CreatePseudoConsole(new COORD { X = cols, Y = rows }, inputRead, outputWrite, 0, out _hpc);
-        if (hr != 0) throw new Win32Exception(hr, L.T("CreatePseudoConsole 실패"));
-        // 의사 콘솔이 복제해 가졌으므로 이쪽 끝은 닫는다
-        inputRead.Dispose();
-        outputWrite.Dispose();
+            var hr = CreatePseudoConsole(new COORD { X = Math.Max((short)1, cols), Y = Math.Max((short)1, rows) }, inputRead, outputWrite, 0, out _hpc);
+            if (hr != 0) throw new Win32Exception(hr, L.T("CreatePseudoConsole 실패"));
+        }
+        finally
+        {
+            // 의사 콘솔이 복제해 가졌으므로(또는 실패) 이쪽 끝은 닫는다
+            inputRead?.Dispose();
+            outputWrite?.Dispose();
+        }
 
         var si = new STARTUPINFOEX();
         si.StartupInfo.cb = Marshal.SizeOf<STARTUPINFOEX>();
@@ -204,14 +212,28 @@ public sealed class PseudoConsoleProcess : IDisposable
         catch { }
     }
 
+    /// <summary>
+    /// Resize(UI 스레드)와 ClosePc(프로세스 종료 대기 스레드)가 겹치면 이미 닫힌(해제된) 의사 콘솔 핸들로
+    /// ResizePseudoConsole 을 불러 앱이 죽을 수 있다 — 같은 잠금으로 묶는다
+    /// </summary>
+    private readonly object _pcLock = new();
+
     public void Resize(short cols, short rows)
     {
-        if (_hpc != IntPtr.Zero) ResizePseudoConsole(_hpc, new COORD { X = cols, Y = rows });
+        if (cols <= 0 || rows <= 0) return;
+        lock (_pcLock)
+            if (_hpc != IntPtr.Zero) ResizePseudoConsole(_hpc, new COORD { X = cols, Y = rows });
     }
 
     private void ClosePc()
     {
-        var h = Interlocked.Exchange(ref _hpc, IntPtr.Zero);
+        IntPtr h;
+        lock (_pcLock)
+        {
+            h = _hpc;
+            _hpc = IntPtr.Zero;
+        }
+        // ClosePseudoConsole 은 남은 출력이 다 읽힐 때까지 기다릴 수 있어 잠금 밖에서
         if (h != IntPtr.Zero) ClosePseudoConsole(h);
     }
 
@@ -232,6 +254,8 @@ public sealed class PseudoConsoleProcess : IDisposable
         if (job != IntPtr.Zero) CloseHandle(job);
         ClosePc();
         try { _input?.Dispose(); } catch { }
+        // Start 가 FileStream 을 만들기 전에 실패했으면 _input 이 없어 입력 파이프 핸들을 직접 닫는다
+        try { _inputWrite?.Dispose(); } catch { }
         try { _outputRead?.Dispose(); } catch { }
         // _hProcess 는 WaitExitAsync 가 종료 확인 후 닫는다
         if (_hThread != IntPtr.Zero) CloseHandle(_hThread);

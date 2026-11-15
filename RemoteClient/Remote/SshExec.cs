@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Renci.SshNet;
@@ -19,17 +20,20 @@ public static class SshExec
 
     /// <summary>
     /// 긴 출력은 앞부분 1/4 과 뒷부분 3/4 만 남긴다 (오류·결과는 보통 끝에 있으므로).
-    /// 가운데 생략한 글자 수를 표시한다.
+    /// 가운데 생략한 글자 수를 표시한다. 서로게이트 쌍(이모지 등)은 반으로 자르지 않는다.
     /// </summary>
     public static string ClipOutput(string s, int max)
     {
         if (s.Length <= max) return s;
         var head = max / 4;
-        var tail = max - head;
-        return s[..head] + $"\n... (출력이 길어 가운데 {s.Length - max}자 생략) ...\n" + s[^tail..];
+        var tailStart = s.Length - (max - head);
+        if (head > 0 && char.IsHighSurrogate(s[head - 1])) head--;
+        if (tailStart < s.Length && char.IsLowSurrogate(s[tailStart])) tailStart++;
+        return s[..head] + $"\n... (출력이 길어 가운데 {tailStart - head}자 생략) ...\n" + s[tailStart..];
     }
 
     /// <param name="shared">호스트 Id → 열린 터미널 탭의 로그인된 연결. 있으면 새로 접속하지 않고 그 연결에 명령 채널만 연다 (OTP 서버도 다시 인증 없이)</param>
+    /// <param name="ct">취소하면 아직 시작하지 않은 서버에는 명령을 보내지 않고, 실행 중인 명령에는 중단 신호(SIGTERM)를 보낸다</param>
     public static async Task<List<ExecResult>> RunAsync(IEnumerable<HostEntry> hosts, string command, int timeoutSec, CancellationToken ct,
         IReadOnlyDictionary<Guid, (SshClient Client, string User)>? shared = null)
     {
@@ -40,8 +44,8 @@ public static class SshExec
             try
             {
                 return await Task.Run(() =>
-                    shared != null && shared.TryGetValue(h.Id, out var s) && RunShared(h, s.Client, s.User, command, timeoutSec) is { } r
-                        ? r : RunOne(h, command, timeoutSec), ct);
+                    shared != null && shared.TryGetValue(h.Id, out var s) && RunShared(h, s.Client, s.User, command, timeoutSec, ct) is { } r
+                        ? r : RunOne(h, command, timeoutSec, ct), ct);
             }
             finally { gate.Release(); }
         });
@@ -53,7 +57,7 @@ public static class SshExec
     /// 탭 연결이 그사이 끊겼으면 null — 호출하는 쪽이 새 연결로 넘어간다 (명령은 아직 실행되지 않았음).
     /// 채널 열기 실패(서버의 세션 수 제한 등)를 포함해 Execute 이후의 오류는 결과로 돌려주고 다시 실행하지 않는다
     /// </summary>
-    private static ExecResult? RunShared(HostEntry h, SshClient client, string user, string command, int timeoutSec)
+    private static ExecResult? RunShared(HostEntry h, SshClient client, string user, string command, int timeoutSec, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         SshCommand cmd;
@@ -66,22 +70,22 @@ public static class SshExec
         using (cmd)
         {
             var note = $"열린 터미널 탭의 연결로 실행 — 계정 {user}";
-            cmd.CommandTimeout = TimeSpan.FromSeconds(timeoutSec);
-            try { cmd.Execute(); }
-            catch (SshOperationTimeoutException)
+            if (ct.IsCancellationRequested) return new ExecResult(h, false, null, "", "취소되어 실행하지 않았습니다.", sw.ElapsedMilliseconds, note);
+            try
             {
-                return new ExecResult(h, false, null, Trim(cmd.Result), $"{timeoutSec}초 안에 끝나지 않아 중단했습니다.", sw.ElapsedMilliseconds, note);
+                var r = ExecCapped(cmd, timeoutSec, ct);
+                return new ExecResult(h, r.Failure == null && r.Exit == 0, r.Failure == null ? r.Exit : null, r.Output,
+                    JoinError(r.Failure, r.Error), sw.ElapsedMilliseconds, note);
             }
             catch (Exception ex)
             {
                 // 채널을 열기 전에 실패했을 수도, 실행 중에 끊겼을 수도 있어 새 연결로 다시 실행하지 않는다 (중복 실행 방지)
-                return new ExecResult(h, false, null, Trim(cmd.Result), "실행 중 오류 — " + ex.Message, sw.ElapsedMilliseconds, note);
+                return new ExecResult(h, false, null, "", "실행 중 오류 — " + ex.Message, sw.ElapsedMilliseconds, note);
             }
-            return new ExecResult(h, cmd.ExitStatus == 0, cmd.ExitStatus, Trim(cmd.Result), Trim(cmd.Error).Trim(), sw.ElapsedMilliseconds, note);
         }
     }
 
-    private static ExecResult RunOne(HostEntry h, string command, int timeoutSec)
+    private static ExecResult RunOne(HostEntry h, string command, int timeoutSec, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         try
@@ -98,6 +102,8 @@ public static class SshExec
             string usedAddress = "";
             foreach (var addr in tunnel != null ? [h.Address] : h.AddressCandidates())
             {
+                // 취소됐으면 다음 주소로 접속하지 않는다
+                if (ct.IsCancellationRequested) return new ExecResult(h, false, null, "", "취소되어 실행하지 않았습니다.", sw.ElapsedMilliseconds);
                 var target = h.Clone();
                 target.Address = addr;
                 var c = new SshClient(SshAuth.Build(target, h.Username, h.Password, tunnel: tunnel));
@@ -129,21 +135,77 @@ public static class SshExec
             if (client == null) return new ExecResult(h, false, null, "", "SSH 연결 실패 — " + string.Join(" / ", errors), sw.ElapsedMilliseconds);
             using var _ = client;
             var note = errors.Count > 0 ? $"[{usedAddress} 로 실행 — 앞선 시도 실패: {string.Join(" / ", errors)}]\n" : "";
+            // 접속하는 동안 취소됐으면 명령을 보내지 않는다
+            if (ct.IsCancellationRequested) return new ExecResult(h, false, null, "", "취소되어 실행하지 않았습니다.", sw.ElapsedMilliseconds);
 
             using var cmd = client.CreateCommand(command);
-            cmd.CommandTimeout = TimeSpan.FromSeconds(timeoutSec);
-            try { cmd.Execute(); }
-            catch (SshOperationTimeoutException)
-            {
-                return new ExecResult(h, false, null, Trim(cmd.Result), $"{timeoutSec}초 안에 끝나지 않아 중단했습니다.", sw.ElapsedMilliseconds);
-            }
-            client.Disconnect();
-            return new ExecResult(h, cmd.ExitStatus == 0, cmd.ExitStatus, Trim(cmd.Result), Trim(note + cmd.Error).Trim(), sw.ElapsedMilliseconds);
+            var r = ExecCapped(cmd, timeoutSec, ct);
+            try { client.Disconnect(); } catch { }
+            return new ExecResult(h, r.Failure == null && r.Exit == 0, r.Failure == null ? r.Exit : null, r.Output,
+                Trim(note + JoinError(r.Failure, r.Error)).Trim(), sw.ElapsedMilliseconds);
         }
         catch (Exception ex)
         {
             return new ExecResult(h, false, null, "", ex.Message, sw.ElapsedMilliseconds);
         }
+    }
+
+    private static string JoinError(string? failure, string error) =>
+        (failure == null ? error : error.Trim().Length > 0 ? failure + "\n" + error : failure).Trim();
+
+    /// <summary>출력(stdout+stderr)이 이만큼을 넘으면 명령을 중단한다 — 결과로는 앞뒤 일부만 돌려주므로 더 받아도 쓸모가 없다</summary>
+    internal const long HardCapBytes = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// 명령을 실행하며 stdout/stderr 를 흘려 읽는다 (앞·뒷부분만 메모리에 남김 — 큰 출력도 메모리가 일정).
+    /// 시간 초과·취소·출력 한도 초과·신호 종료면 Failure 에 사유를 담는다 (앞의 셋은 원격 명령에 중단 신호(SIGTERM)를 보냄).
+    /// 그 밖의 오류(연결 끊김 등)는 예외로 던진다
+    /// </summary>
+    private static (int? Exit, string Output, string Error, string? Failure) ExecCapped(SshCommand cmd, int timeoutSec, CancellationToken ct)
+    {
+        cmd.CommandTimeout = TimeSpan.FromSeconds(timeoutSec);
+        var stdout = new OutputCollector();
+        var stderr = new OutputCollector();
+        var exceeded = 0;
+        // 취소 토큰을 넘기면 SSH.NET 이 취소·시간 초과 때 원격 명령에 SIGTERM 을 보낸다
+        var exec = cmd.ExecuteAsync(ct);
+        Task Pump(System.IO.Stream s, OutputCollector c) => Task.Factory.StartNew(() =>
+        {
+            var buf = new byte[16384];
+            try
+            {
+                int n;
+                while ((n = s.Read(buf, 0, buf.Length)) > 0)
+                {
+                    c.Add(buf.AsSpan(0, n));
+                    if (stdout.Total + stderr.Total > HardCapBytes && Interlocked.Exchange(ref exceeded, 1) == 0)
+                        try { cmd.CancelAsync(); } catch { }
+                }
+            }
+            catch (ObjectDisposedException) { }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        var pumps = new[] { Pump(cmd.OutputStream, stdout), Pump(cmd.ExtendedOutputStream, stderr) };
+        string? failure = null;
+        int? exit = null;
+        try
+        {
+            exec.GetAwaiter().GetResult();
+            exit = cmd.ExitStatus;
+            // 신호로 끝나 종료 코드가 없으면 실패로 본다
+            if (exit == null) failure = cmd.ExitSignal is { Length: > 0 } sig ? $"신호 {sig} 로 종료됐습니다." : "종료 코드를 받지 못했습니다.";
+        }
+        catch (SshOperationTimeoutException) { failure = $"{timeoutSec}초 안에 끝나지 않아 중단했습니다 (원격 명령에 중단 신호를 보냄)."; }
+        catch (OperationCanceledException) when (Volatile.Read(ref exceeded) == 1)
+        {
+            failure = $"출력이 {HardCapBytes / 1024 / 1024}MB 를 넘어 중단했습니다 (원격 명령에 중단 신호를 보냄). 출력을 줄이는 명령으로 다시 실행하세요.";
+        }
+        catch (OperationCanceledException) { failure = "사용자가 취소해 중단했습니다 (원격 명령에 중단 신호를 보냄)."; }
+        finally
+        {
+            // 명령이 끝나면(어떤 경로든) SSH.NET 이 출력 스트림을 닫아 읽기가 끝난다
+            try { Task.WaitAll(pumps, TimeSpan.FromSeconds(5)); } catch { }
+        }
+        return (exit, stdout.Text(MaxOutput), stderr.Text(MaxOutput), failure);
     }
 
     /// <summary>
@@ -201,5 +263,88 @@ public static class SshExec
     {
         s ??= "";
         return ClipOutput(s, MaxOutput);
+    }
+}
+
+/// <summary>
+/// 명령 출력 수집: 앞부분과 뒷부분만 메모리에 두고 가운데는 버린다 (몇 GB 출력도 메모리 일정).
+/// 여러 스레드에서 Add · Text 를 불러도 된다
+/// </summary>
+internal sealed class OutputCollector(int headBytes = 8 * 1024, int tailBytes = 24 * 1024)
+{
+    private readonly object _gate = new();
+    private readonly byte[] _head = new byte[headBytes];
+    private int _headLen;
+    private readonly byte[] _tail = new byte[tailBytes];
+    private int _tailStart, _tailLen;
+    private long _total;
+
+    /// <summary>지금까지 받은 전체 바이트 수</summary>
+    public long Total { get { lock (_gate) return _total; } }
+
+    public void Add(ReadOnlySpan<byte> data)
+    {
+        lock (_gate)
+        {
+            _total += data.Length;
+            var n = Math.Min(data.Length, _head.Length - _headLen);
+            if (n > 0) { data[..n].CopyTo(_head.AsSpan(_headLen)); _headLen += n; data = data[n..]; }
+            if (data.Length == 0 || _tail.Length == 0) return;
+            if (data.Length >= _tail.Length)
+            {
+                data[^_tail.Length..].CopyTo(_tail);
+                _tailStart = 0;
+                _tailLen = _tail.Length;
+                return;
+            }
+            // 링 버퍼: 끝 위치부터 쓰고 넘치면 앞으로 감는다. 꽉 차면 가장 오래된 바이트부터 밀려난다
+            var end = (_tailStart + _tailLen) % _tail.Length;
+            var first = Math.Min(data.Length, _tail.Length - end);
+            data[..first].CopyTo(_tail.AsSpan(end));
+            data[first..].CopyTo(_tail);
+            var len = _tailLen + data.Length;
+            if (len > _tail.Length) { _tailStart = (_tailStart + len - _tail.Length) % _tail.Length; len = _tail.Length; }
+            _tailLen = len;
+        }
+    }
+
+    /// <summary>UTF-8 텍스트로 (maxChars 자 근처. 넘치면 앞 1/4 · 뒤 3/4 와 생략 표시)</summary>
+    public string Text(int maxChars)
+    {
+        lock (_gate)
+        {
+            var tail = new byte[_tailLen];
+            var first = Math.Min(_tailLen, _tail.Length - _tailStart);
+            Array.Copy(_tail, _tailStart, tail, 0, first);
+            Array.Copy(_tail, 0, tail, first, _tailLen - first);
+            var skipped = _total - _headLen - _tailLen;
+            if (skipped <= 0)
+            {
+                var all = new byte[_headLen + _tailLen];
+                Array.Copy(_head, all, _headLen);
+                Array.Copy(tail, 0, all, _headLen, tail.Length);
+                return SshExec.ClipOutput(Encoding.UTF8.GetString(all), maxChars);
+            }
+            // 가운데를 버렸으면 경계에서 잘린 UTF-8 글자를 버린다 (앞부분 끝의 미완성 글자, 뒷부분 맨 앞의 이어지는 바이트)
+            var head = Encoding.UTF8.GetString(_head, 0, _headLen).TrimEnd('�');
+            var skip = 0;
+            while (skip < tail.Length && skip < 3 && (tail[skip] & 0xC0) == 0x80) skip++;
+            var tailText = Encoding.UTF8.GetString(tail, skip, tail.Length - skip);
+            var headChars = maxChars / 4;
+            var tailChars = maxChars - headChars;
+            if (head.Length > headChars)
+            {
+                var k = headChars;
+                if (k > 0 && char.IsHighSurrogate(head[k - 1])) k--;
+                head = head[..k];
+            }
+            if (tailText.Length > tailChars)
+            {
+                var k = tailText.Length - tailChars;
+                if (char.IsLowSurrogate(tailText[k])) k++;
+                tailText = tailText[k..];
+            }
+            return head + $"\n... (출력이 길어 가운데 생략 — 전체 {_total:N0}바이트) ...\n" + tailText;
+        }
     }
 }

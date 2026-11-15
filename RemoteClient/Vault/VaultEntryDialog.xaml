@@ -39,7 +39,7 @@
             </Grid>
             <TextBox x:Name="KeyBox" Height="110" AcceptsReturn="True" TextWrapping="NoWrap" Padding="10,8"
                      VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                     FontFamily="Cascadia Mono, Consolas" FontSize="11"
+                     FontFamily="Cascadia Mono, Consolas" FontSize="11" TextChanged="OnKeyTextChanged"
                      Tag="{l:Tr '-----BEGIN OPENSSH PRIVATE KEY----- 또는 PuTTY(.ppk) 내용 붙여넣기'}"/>
             <TextBlock Text="{l:Tr '키 암호 (키에 암호가 걸려 있을 때)'}" Style="{StaticResource FieldLabel}"/>
             <PasswordBox x:Name="PassphraseBox"/>

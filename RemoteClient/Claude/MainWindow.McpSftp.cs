@@ -25,15 +25,21 @@ public partial class MainWindow
         return (h, WithProfileDefaults(h));
     });
 
-    /// <summary>원격 읽기: run_command 의 읽기 전용 자동 승인 설정을 따른다</summary>
-    private async Task ApproveRemoteRead(string tool, HostEntry h, string what)
+    /// <summary>
+    /// 원격 읽기: run_command 의 읽기 전용 자동 승인 설정을 따른다. 단 sensitive(개인키·/etc/shadow·.env 등 비밀이 든 경로)면 항상 승인 창.
+    /// 승인 창을 띄웠으면 true, 자동 승인이면 false (거부면 McpToolException)
+    /// </summary>
+    private async Task<bool> ApproveRemoteRead(string tool, HostEntry h, string what, bool sensitive = false)
     {
-        var target = $"[SFTP]  {h.DisplayName}  ({string.Join(" → ", h.AddressCandidates())})";
-        if (SettingsStore.Current.AutoApproveReadOnly) { AuditLog.Write(tool, new[] { target }, what, "자동 승인(읽기 전용)"); return; }
+        var target = $"[SFTP]  {McpHelpers.VisibleControlChars(h.DisplayName)}  ({string.Join(" → ", h.AddressCandidates())})";
+        if (SettingsStore.Current.AutoApproveReadOnly && !sensitive) { AuditLog.Write(tool, new[] { target }, what, "자동 승인(읽기 전용)"); return false; }
         var ok = await OnUiAsync(() => AskApprovalAsync(tool, L.T("Claude 가 원격 파일 읽기를 요청합니다"),
-            L.T("승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음)."), new[] { target }, what));
+            L.T("승인하면 서버에 SFTP 로 접속해 아래 내용을 읽어 Claude 에게 돌려줍니다 (서버는 바꾸지 않음).") +
+            (sensitive ? L.T("\n⚠ 개인키·비밀번호 해시·환경 변수 파일처럼 비밀 정보가 들어 있을 수 있는 경로입니다. 읽은 내용은 Claude 에게 전달됩니다.") : ""),
+            new[] { target }, what));
         AuditLog.Write(tool, new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
+        return true;
     }
 
     /// <summary>SFTP 작업 하나(요청)의 응답 제한 시간 — 서버가 멈춰도 MCP 요청이 끝없이 걸려 있지 않게</summary>
@@ -100,23 +106,43 @@ public partial class MainWindow
         var path = Arg(a, "path");
         var max = Math.Clamp(IntArg(a, "max_bytes") ?? 65536, 1024, 1048576);
         var tail = BoolArg(a, "tail") == true;
-        await ApproveRemoteRead("sftp_read", h, $"파일 읽기: {path} ({(tail ? "끝 " : "앞 ")}{SftpPanel.HumanSize(max)})");
+        var what = $"파일 읽기: {path} ({(tail ? "끝 " : "앞 ")}{SftpPanel.HumanSize(max)})";
+        // 개인키·/etc/shadow·.env 처럼 비밀이 든 경로는 자동 승인 설정이 켜져 있어도 승인 창
+        var asked = await ApproveRemoteRead("sftp_read", h, what, McpHelpers.IsSensitiveRemotePath(path));
         return await WithSftp(conn, c =>
         {
+            // 자동 승인됐으면 심볼릭 링크를 따라간 실제 경로로 한 번 더 본다 (/tmp/x → /etc/shadow 같은 우회 방지).
+            // Get 은 서버의 realpath 로 경로를 풀어 준다 (OpenSSH). 비밀 경로면 이제라도 승인을 받는다
+            if (!asked && c.Get(path).FullName is { } real && real != path && McpHelpers.IsSensitiveRemotePath(real))
+                ApproveRemoteRead("sftp_read", h, $"{what}\n실제 경로: {real}", sensitive: true).GetAwaiter().GetResult();
             var attr = c.GetAttributes(path);
             if (attr.IsDirectory) throw new McpToolException("폴더입니다. sftp_list 를 쓰세요.");
             using var s = c.OpenRead(path);
             var size = attr.Size;
-            if (tail && size > max) s.Seek(size - max, SeekOrigin.Begin);
+            var fromMiddle = tail && size > max;
+            if (fromMiddle) s.Seek(size - max, SeekOrigin.Begin);
             var buf = new byte[Math.Min(max, size > 0 ? size : max)];
             var read = 0;
             while (read < buf.Length) { var n = s.Read(buf, read, buf.Length - read); if (n <= 0) break; read += n; }
             var data = buf.AsSpan(0, read);
             if (McpHelpers.LooksBinary(data)) throw new McpToolException($"바이너리 파일로 보입니다 ({SftpPanel.HumanSize(size)}). 필요하면 sftp_download 로 받으세요.");
-            var text = Encoding.UTF8.GetString(data);
+            // 파일 중간에서 시작하거나(끝 읽기) 중간에서 끊겼으면(앞 읽기) 경계에서 잘린 UTF-8 글자를 버린다
+            var text = McpHelpers.DecodeUtf8Slice(data, cutStart: fromMiddle, cutEnd: !tail && size > read);
             var cut = size > read ? (tail ? $" (끝 {SftpPanel.HumanSize(read)}만)" : $" (앞 {SftpPanel.HumanSize(read)}만)") : "";
             return $"[{h.DisplayName}] {path} — {SftpPanel.HumanSize(size)}{cut}\n{text}";
         });
+    }
+
+    /// <summary>sftp_download 한 번에 받을 수 있는 전체 크기</summary>
+    private const long MaxDownloadBytes = 20L * 1024 * 1024 * 1024;
+    /// <summary>받은 뒤에도 남겨 둘 디스크 여유 공간</summary>
+    private const long DownloadDiskReserve = 1L * 1024 * 1024 * 1024;
+
+    /// <summary>폴더가 있는 드라이브의 여유 공간 (알 수 없으면 null)</summary>
+    private static long? FreeSpace(string dir)
+    {
+        try { return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(dir))!).AvailableFreeSpace; }
+        catch { return null; }
     }
 
     private async Task<string> SftpDownloadAsync(JsonElement a)
@@ -164,7 +190,8 @@ public partial class MainWindow
             var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
             var full = Path.GetFullPath(root).TrimEnd('\\') + "\\";
             var skipped = new List<string>();
-            void Get(string remote, bool isDir, string local)
+            var renamed = new List<string>();
+            void Get(string remote, bool isDir, string local, long size)
             {
                 if (!Path.GetFullPath(local).StartsWith(full, StringComparison.OrdinalIgnoreCase)) throw new McpToolException("허용되지 않는 파일 이름이 있어 중단했습니다.");
                 if (isDir)
@@ -172,8 +199,12 @@ public partial class MainWindow
                     Directory.CreateDirectory(local);
                     foreach (var f in c.ListDirectory(remote).Where(f => f.Name is not "." and not ".."))
                     {
-                        var childLocal = Path.Combine(local, SftpPanel.SafeLocalName(f.Name));
-                        if (!f.IsSymbolicLink) { Get(f.FullName, f.IsDirectory, childLocal); continue; }
+                        // Windows 는 대소문자를 구분하지 않고 SafeLocalName 이 다른 이름을 같게 만들 수 있다 (A 와 a, a:b 와 a_b) —
+                        // 먼저 받은 파일을 덮어쓰지 않게 이미 있으면 번호를 붙인다 (받는 최상위 폴더는 새로 만든 빈 폴더라 있는 것은 이번에 받은 것)
+                        var wanted = Path.Combine(local, SftpPanel.SafeLocalName(f.Name));
+                        var childLocal = SftpPanel.UniquePath(wanted, f.IsDirectory);
+                        if (childLocal != wanted) renamed.Add($"{f.FullName} → {Path.GetFileName(childLocal)}");
+                        if (!f.IsSymbolicLink) { Get(f.FullName, f.IsDirectory, childLocal, f.Length); continue; }
                         // 심볼릭 링크: 대상을 stat 해서 일반 파일이면 내용을 받고, 폴더 링크는 따라가지 않는다
                         // (순환·받는 폴더 밖(/ 등)으로 이어져 끝없이 받는 일을 막음). 깨진 링크도 건너뛰고 결과에 적는다
                         ct.ThrowIfCancellationRequested();
@@ -184,11 +215,16 @@ public partial class MainWindow
                         if (linkTarget == null) skipped.Add($"{f.FullName} (깨진 링크 또는 대상 권한 없음)");
                         else if (linkTarget.IsDirectory) skipped.Add($"{f.FullName} (폴더 링크 — 따라가지 않음)");
                         else if (!linkTarget.IsRegularFile) skipped.Add($"{f.FullName} (일반 파일이 아닌 링크 대상)");
-                        else Get(f.FullName, false, childLocal);
+                        else Get(f.FullName, false, childLocal, linkTarget.Size);
                     }
                     return;
                 }
                 if (count >= 5000) throw new McpToolException("파일이 5000개를 넘어 중단했습니다.");
+                // 전체 크기 상한과 디스크 여유 공간 (서버의 큰 폴더·로그를 통째로 받아 이 PC 디스크를 채우지 않게)
+                if (bytes + size > MaxDownloadBytes)
+                    throw new McpToolException($"받을 전체 크기가 {SftpPanel.HumanSize(MaxDownloadBytes)} 를 넘어 중단했습니다. 필요한 파일만 골라 받으세요.");
+                if (FreeSpace(root) is { } free && free < size + DownloadDiskReserve)
+                    throw new McpToolException($"이 PC 디스크 여유 공간이 부족해 중단했습니다 (여유 {SftpPanel.HumanSize(free)}, 받을 파일 {SftpPanel.HumanSize(size)}).");
                 ct.ThrowIfCancellationRequested();
                 using (var fs = File.Create(local))
                 {
@@ -197,12 +233,14 @@ public partial class MainWindow
                 }
                 count++;   // 다 받은 파일만 센다 (실패 메시지의 진행 상황)
             }
-            Get(path, attr.IsDirectory, top);
+            Get(path, attr.IsDirectory, top, attr.Size);
             var note = skipped.Count == 0 ? "" : $", 심볼릭 링크 {skipped.Count}개 건너뜀";
             AuditLog.Write("sftp_download", new[] { target }, path, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}{note}");
             return $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {top}" +
                    (skipped.Count == 0 ? "" : $"\n건너뛴 심볼릭 링크 {skipped.Count}개:\n" + string.Join("\n", skipped.Take(50)) +
-                                              (skipped.Count > 50 ? $"\n… 외 {skipped.Count - 50}개" : ""));
+                                              (skipped.Count > 50 ? $"\n… 외 {skipped.Count - 50}개" : "")) +
+                   (renamed.Count == 0 ? "" : $"\n이 PC 에서 이름이 겹쳐(대소문자·쓸 수 없는 글자) 번호를 붙인 {renamed.Count}개:\n" + string.Join("\n", renamed.Take(50)) +
+                                              (renamed.Count > 50 ? $"\n… 외 {renamed.Count - 50}개" : ""));
         }
     }
 

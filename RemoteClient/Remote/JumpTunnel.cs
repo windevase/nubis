@@ -83,6 +83,9 @@ public sealed class JumpTunnel : IDisposable
         try
         {
             var forward = new ForwardedPortLocal("127.0.0.1", 0, targetHost, (uint)targetPort);
+            // 터널마다 연결은 하나(대상 서버로 가는 SSH 연결)뿐 — 첫 연결을 받으면 바로 리스너를 닫는다.
+            // 열어 두면 세션 내내 다른 로컬 프로세스도 이 포트로 점프 서버를 거쳐 대상 서버에 붙을 수 있다
+            forward.RequestReceived += (_, _) => CloseListener(forward);
             client.AddForwardedPort(forward);
             forward.Start();
             return new JumpTunnel(client, forward, jump.DisplayName);
@@ -92,6 +95,20 @@ public sealed class JumpTunnel : IDisposable
             client.Dispose();
             throw;
         }
+    }
+
+    /// <summary>ForwardedPortLocal 의 리스너 소켓 필드 (SSH.NET 내부, 업그레이드 시 Review2SshAuthTests 가 확인)</summary>
+    internal static readonly System.Reflection.FieldInfo? ListenerField =
+        typeof(ForwardedPortLocal).GetField("_listener", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+    /// <summary>
+    /// 리스너만 닫는다 — 이미 받은 연결(채널)은 그대로 둔다. Stop() 은 열린 채널까지 닫으므로 쓰지 않는다.
+    /// 대기 중인 Accept 는 OperationAborted 로 끝나고 SSH.NET 이 조용히 멈춘다. 필드를 못 찾으면 예전처럼 열어 둔다
+    /// </summary>
+    internal static void CloseListener(ForwardedPortLocal forward)
+    {
+        try { (ListenerField?.GetValue(forward) as System.Net.Sockets.Socket)?.Dispose(); }
+        catch { }
     }
 
     public bool IsAlive => _client.IsConnected && _forward.IsStarted;

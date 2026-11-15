@@ -81,6 +81,9 @@ public partial class App : Application
             SettingsStore.UseProfile(inheritGlobal: owner);
         }
 
+        // vault.json 을 미리 읽는다 — 처음 쓸 때 읽으면 읽기 실패 경고가 시작 경고 창(메인 창 Loaded)에 실리지 않는다
+        try { VaultStore.Preload(); } catch { }
+
         var main = new MainWindow();
         MainWindow = main;
         ShutdownMode = ShutdownMode.OnMainWindowClose;
@@ -240,15 +243,24 @@ internal static class SingleInstance
         }
     }
 
-    private static bool ReadExactly(Stream s, byte[] buf, int count)
+    /// <summary>받는 쪽: 연결한 클라이언트가 명령줄을 다 보낼 때까지 기다리는 최대 시간</summary>
+    private const int ReadTimeoutMs = 5000;
+
+    /// <summary>count 바이트를 다 읽으면 true. 시간 초과·연결 끊김이면 false (연결만 하고 보내지 않는 클라이언트가 서버를 붙잡지 못하게)</summary>
+    private static bool ReadExactly(Stream s, byte[] buf, int count, System.Threading.CancellationToken ct)
     {
         var read = 0;
-        while (read < count)
+        try
         {
-            var n = s.Read(buf, read, count - read);
-            if (n <= 0) return false;
-            read += n;
+            while (read < count)
+            {
+                var n = s.ReadAsync(buf.AsMemory(read, count - read), ct).AsTask().GetAwaiter().GetResult();
+                if (n <= 0) return false;
+                read += n;
+            }
         }
+        catch (OperationCanceledException) { return false; }
+        catch (IOException) { return false; }
         return true;
     }
 
@@ -266,14 +278,16 @@ internal static class SingleInstance
                 try
                 {
                     using var server = new System.IO.Pipes.NamedPipeServerStream(name, System.IO.Pipes.PipeDirection.InOut, 1,
-                        System.IO.Pipes.PipeTransmissionMode.Byte, System.IO.Pipes.PipeOptions.CurrentUserOnly);
+                        System.IO.Pipes.PipeTransmissionMode.Byte,
+                        System.IO.Pipes.PipeOptions.CurrentUserOnly | System.IO.Pipes.PipeOptions.Asynchronous);   // 읽기 시간 제한(취소)을 쓰려고 비동기 핸들
                     server.WaitForConnection();
+                    using var readCts = new System.Threading.CancellationTokenSource(ReadTimeoutMs);
                     var head = new byte[4];
-                    if (!ReadExactly(server, head, 4)) continue;
+                    if (!ReadExactly(server, head, 4, readCts.Token)) continue;
                     var len = BitConverter.ToInt32(head, 0);
                     if (len < 0 || len > MaxMessage) continue;
                     var body = new byte[len];
-                    if (!ReadExactly(server, body, len)) continue;
+                    if (!ReadExactly(server, body, len, readCts.Token)) continue;
                     var text = System.Text.Encoding.UTF8.GetString(body);
                     var ok = false;
                     try { ok = onArgs(text.Length == 0 ? Array.Empty<string>() : text.Split('\0')); } catch { }

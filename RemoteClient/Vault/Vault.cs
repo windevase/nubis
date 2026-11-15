@@ -110,6 +110,12 @@ public sealed class VaultEntry
     [JsonIgnore] public string DefaultBadge { get; set; } = "";
     [JsonIgnore] public Visibility DefaultBadgeVisibility => DefaultBadge.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
     [JsonIgnore] public Visibility CopyVisibility => HasKey && !string.IsNullOrEmpty(PublicKey) ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// 수정용 사본 (모든 필드가 문자열·값 형식이라 얕은 복사로 충분). 수정 창은 사본을 고친 뒤 <see cref="VaultStore.Upsert"/> 로
+    /// 바꿔 넣는다 — 저장된 개체를 직접 고치면 비대화형 실행 스레드가 반쯤 바뀐 값을 읽거나, 저장 실패 때 되돌릴 수 없다.
+    /// </summary>
+    public VaultEntry Clone() => (VaultEntry)MemberwiseClone();
 }
 
 /// <summary>vault.json 저장소. 앱 전체에서 하나의 목록을 공유한다 (비대화형 실행 스레드에서도 읽으므로 잠금)</summary>
@@ -127,6 +133,9 @@ public static class VaultStore
         Converters = { new JsonStringEnumConverter() },
     };
 
+    /// <summary>vault.json 을 읽지 못해(.bak 복구도 실패) 빈 목록으로 시작했는지</summary>
+    public static bool LoadFailed { get; private set; }
+
     private static List<VaultEntry> Entries
     {
         get
@@ -134,13 +143,23 @@ public static class VaultStore
             lock (Gate)
             {
                 if (_entries != null) return _entries;
-                _entries = SafeFile.LoadProtected(FilePath, s => JsonSerializer.Deserialize<List<VaultEntry>>(s, Options), () => new List<VaultEntry>());
+                _entries = SafeFile.LoadProtected(FilePath, s => JsonSerializer.Deserialize<List<VaultEntry>>(s, Options), () => new List<VaultEntry>(), out var failed);
+                LoadFailed = failed;
                 var migrated = false;
                 foreach (var e in _entries) migrated |= e.MigrateLegacy();
                 if (migrated) { try { Save(); } catch { } }
                 return _entries;
             }
         }
+    }
+
+    /// <summary>
+    /// 미리 읽어 둔다 (앱 시작 때 데이터 폴더를 정한 뒤). 처음 쓸 때 읽으면 시작 경고 창이 이미 지나가
+    /// 읽기 실패 경고가 보이지 않는다.
+    /// </summary>
+    public static void Preload()
+    {
+        lock (Gate) _ = Entries;
     }
 
     public static List<VaultEntry> All()
@@ -154,26 +173,64 @@ public static class VaultStore
         lock (Gate) return Entries.FirstOrDefault(e => e.Id == id);
     }
 
+    /// <summary>
+    /// 추가하거나, 같은 Id 의 항목을 이 개체로 바꾼다 (수정 창의 사본). 저장에 실패하면 메모리 목록도 되돌리고 예외를 다시 던진다
+    /// (같은 개체를 직접 고친 경우는 필드까지 되돌리지는 못한다 — 사본을 고쳐 넘기는 것이 원칙).
+    /// </summary>
     public static void Upsert(VaultEntry entry)
     {
         lock (Gate)
         {
+            var list = Entries;
+            var index = list.FindIndex(e => e.Id == entry.Id);
+            var old = index >= 0 ? list[index] : null;
+            var oldUpdated = entry.Updated;
             entry.Updated = DateTime.Now;
-            if (!Entries.Contains(entry)) Entries.Add(entry);
-            Save();
+            if (index >= 0) list[index] = entry;
+            else list.Add(entry);
+            try { Save(); }
+            catch
+            {
+                if (index >= 0) list[index] = old!;
+                else list.Remove(entry);
+                entry.Updated = oldUpdated;
+                throw;
+            }
         }
     }
 
+    /// <summary>지운다. 저장에 실패하면 메모리 목록도 되돌리고 예외를 다시 던진다</summary>
     public static void Remove(Guid id)
     {
         lock (Gate)
         {
-            Entries.RemoveAll(e => e.Id == id);
-            Save();
+            var list = Entries;
+            var removed = list.Select((e, i) => (e, i)).Where(x => x.e.Id == id).ToList();
+            if (removed.Count == 0) return;
+            list.RemoveAll(e => e.Id == id);
+            try { Save(); }
+            catch
+            {
+                foreach (var (e, i) in removed) list.Insert(Math.Min(i, list.Count), e);
+                throw;
+            }
         }
     }
 
-    private static void Save() => SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(Entries, Options));
+    /// <summary>같은 이름(대소문자 무시)의 다른 계정이 있는지</summary>
+    public static bool NameTaken(string name, Guid exceptId)
+    {
+        lock (Gate)
+            return Entries.Any(e => e.Id != exceptId && string.Equals(e.Name.Trim(), name.Trim(), StringComparison.CurrentCultureIgnoreCase));
+    }
+
+    private static void Save()
+    {
+        // 읽지 못한 vault.json 의 원본 사본도 만들지 못했으면 덮어쓰지 않는다 (새 계정 하나짜리 목록으로 계정들이 사라지지 않게)
+        if (!SafeFile.OriginalPreserved(FilePath))
+            throw new IOException(L.T("vault.json 을 읽지 못했고 원본 사본도 만들지 못해, 덮어쓰지 않도록 저장하지 않았습니다. 파일을 복구하거나 다른 곳으로 옮긴 뒤 Nubis 를 다시 시작하세요."));
+        SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(Entries, Options));
+    }
 
     /// <summary>
     /// 접속용 사본에 Vault 계정 값을 채운다 (사본을 직접 바꾼다). 호스트에 직접 적은 값이 우선한다:

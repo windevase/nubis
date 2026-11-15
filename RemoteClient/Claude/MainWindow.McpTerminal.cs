@@ -113,7 +113,8 @@ public partial class MainWindow
                     throw new McpToolException($"session {tab.Id} 은 아직 연결 중입니다. open_session 의 wait_connected_sec 로 기다리거나 list_sessions 로 Connected 를 확인한 뒤 보내세요.");
                 if (tab.Status != SessionStatus.Connected)
                     throw new McpToolException($"session {tab.Id} 은 연결이 끊겨 있어 입력할 수 없습니다.");
-                var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
+                // 탭 이름의 보이지 않는 제어·양방향 문자는 승인 창에서 드러낸다 (다른 서버처럼 보이게 꾸민 이름)
+                var target = McpHelpers.VisibleControlChars($"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : ""));
                 var shell = tab.Protocol == Protocol.Local ? CommandShell.PowerShell : CommandShell.Sh;
                 // 감사 로그에는 제어 문자를 \xNN 으로 드러낸 형태로 남긴다 (승인 창 표시와 같은 형태)
                 var logged = McpHelpers.VisibleControlChars(text);

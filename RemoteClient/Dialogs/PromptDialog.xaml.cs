@@ -12,7 +12,12 @@ public partial class PromptDialog : Window
     {
         var dlg = new PromptDialog();
         if (owner != null && owner.IsLoaded) dlg.Owner = owner;
-        else dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        else
+        {
+            // 주인 창이 없으면 작업 표시줄에 보이게 (다른 창 뒤에 숨지 않게)
+            dlg.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            dlg.ShowInTaskbar = true;
+        }
         dlg.TitleText.Text = title;
         dlg.LabelText.Text = label;
         dlg.InputBox.Text = initial;

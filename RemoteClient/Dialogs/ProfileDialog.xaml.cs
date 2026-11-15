@@ -43,8 +43,10 @@ public partial class ProfileDialog : Window
 
     private void OnOk(object sender, RoutedEventArgs e)
     {
-        if (!TryPort(SshPortBox.Text, out var ssh)) { SshPortBox.Focus(); return; }
-        if (!TryPort(RdpPortBox.Text, out var rdp)) { RdpPortBox.Focus(); return; }
+        // 잘못된 포트는 이유를 보여 주고 그 칸으로 이동 (전에는 아무 안내 없이 저장만 안 됐다)
+        if (!TryPort(SshPortBox.Text, out var ssh)) { ShowError(SshPortBox); return; }
+        if (!TryPort(RdpPortBox.Text, out var rdp)) { ShowError(RdpPortBox); return; }
+        ErrorText.Visibility = Visibility.Collapsed;
 
         _p.DisplayName = NameBox.Text.Trim();
         _p.DefaultUsername = UserBox.Text.Trim();
@@ -57,8 +59,16 @@ public partial class ProfileDialog : Window
         DialogResult = true;
     }
 
+    private void ShowError(System.Windows.Controls.TextBox box)
+    {
+        ErrorText.Text = L.T("포트는 1~65535 사이 숫자로 입력하세요.");
+        ErrorText.Visibility = Visibility.Visible;
+        box.Focus();
+        box.SelectAll();
+    }
+
     /// <summary>빈 칸 = null(기본 포트 따름), 1~65535 = 지정 포트</summary>
-    private static bool TryPort(string text, out int? port)
+    internal static bool TryPort(string text, out int? port)
     {
         port = null;
         text = text.Trim();

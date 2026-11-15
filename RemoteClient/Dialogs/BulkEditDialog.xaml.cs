@@ -67,7 +67,9 @@ public partial class BulkEditDialog : Window
     private BulkEdit? _result;
 
     private void UpdateVaultButton() =>
-        VaultPickButton.Content = VaultStore.Get(_vaultId) is { } v ? $"{v.Name}  ({v.Username})" : L.T("계정 선택...");
+        VaultPickButton.Content = VaultStore.Get(_vaultId) is { } v
+            ? (string.IsNullOrWhiteSpace(v.Username) ? v.Name : $"{v.Name}  ({v.Username})")
+            : L.T("계정 선택...");
 
     private void OnPickVault(object sender, RoutedEventArgs e)
     {
@@ -84,7 +86,7 @@ public partial class BulkEditDialog : Window
         var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
         foreach (var g in _groups.Prepend(""))
         {
-            var item = new MenuItem { Header = g.Length == 0 ? L.T("(그룹 없음)") : g };
+            var item = new MenuItem { Header = g.Length == 0 ? L.T("(그룹 없음)") : MainWindow.MenuText(g) };
             item.Click += (_, _) => { GroupBox.Text = g; GroupCheck.IsChecked = true; };
             menu.Items.Add(item);
         }
@@ -120,8 +122,24 @@ public partial class BulkEditDialog : Window
         if (IpCheck.IsChecked == true && IpCheck.IsEnabled) r.UsePublicIp = IpPublic.IsChecked == true;
         if (FavCheck.IsChecked == true) r.Favorite = FavOn.IsChecked == true;
         if (r.IsEmpty) { ShowError(L.T("바꿀 항목을 하나 이상 체크하세요.")); return; }
+        if (r.ClearOwnCredentials && !ConfirmClearOwn(r)) return;
         _result = r;
         DialogResult = true;
+    }
+
+    /// <summary>
+    /// 직접 적은 사용자명·비밀번호·키 파일 지우기는 되돌릴 수 없으므로 지워질 호스트를 보여 주고 확인한다.
+    /// 이 호스트들이 로그인할 계정이 남지 않으면(Vault 해제·미지정) 그 점도 알린다
+    /// </summary>
+    private bool ConfirmClearOwn(BulkEdit r)
+    {
+        var own = _hosts.Where(h => h.Protocol != Protocol.Local && BulkEdit.HasOwnCredentials(h)).ToList();
+        if (own.Count == 0) return true;
+        var msg = L.F("호스트 {0}개에 직접 적은 사용자명·비밀번호·키 파일을 지웁니다. 지운 비밀번호는 되돌릴 수 없습니다.", own.Count);
+        var noVault = own.Count(h => (r.SetVault ? r.VaultId : h.VaultId) == null);
+        if (noVault > 0) msg += "\n" + L.F("이 중 {0}개는 Vault 계정을 직접 고르지 않아, 기본 계정이 없으면 접속할 때 계정을 묻습니다.", noVault);
+        return Dialog.Show(this, msg, L.T("일괄 편집"), MessageBoxButton.YesNo, MessageBoxImage.Warning,
+            string.Join("\n", own.Take(15).Select(h => h.DisplayName)) + (own.Count > 15 ? "\n..." : "")) == MessageBoxResult.Yes;
     }
 
     private void ShowError(string msg)
