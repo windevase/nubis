@@ -161,7 +161,10 @@ public static class CloudSync
         var denied = protectedRegions is { Count: > 0 }
             ? new HashSet<string>(protectedRegions, StringComparer.OrdinalIgnoreCase)
             : null;
-        bool IsProtected(HostEntry h) => denied != null && (string.IsNullOrEmpty(h.CloudRegion) || denied.Contains(h.CloudRegion));
+        // 호스트 위치가 가용 영역인 클라우드(Tencent: 리전 ap-seoul → 영역 ap-seoul-1)는 "리전-" 접두어로도 맞춘다.
+        // 넓게 맞으면 지우지 않는 쪽이라 안전하다
+        bool IsProtected(HostEntry h) => denied != null && (string.IsNullOrEmpty(h.CloudRegion) || denied.Contains(h.CloudRegion) ||
+                                                            denied.Any(r => h.CloudRegion.StartsWith(r + "-", StringComparison.OrdinalIgnoreCase)));
         var removed = removeMissing
             ? hosts.RemoveAll(h =>
             {

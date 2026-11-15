@@ -100,11 +100,23 @@ public static partial class TableImport
             if (port == null && ParsePort(c) != null) { port = c; continue; }
             if (proto == null && IsProtocolWord(c)) { proto = c; continue; }
             if (os == null && OsWordRx.IsMatch(c)) { os = c; continue; }
-            if (name == null && ParsePort(c) == null) name = c;
+            // 이름: 주소 앞 칸을 먼저 쓴다. 주소 뒤 칸은 비밀번호처럼 보이면 쓰지 않는다 —
+            // "IP · 비밀번호" 처럼 이름 열이 없는 표에서 비밀번호가 호스트 이름으로 저장 · 표시되지 않게
+            if (name == null && ParsePort(c) == null && (i < addrIdx || !LooksLikeSecret(c))) name = c;
             // 나머지 칸은 버린다 (머리글이 없으면 비밀번호 칸인지 알 수 없으므로 메모에도 넣지 않는다)
         }
         bool ignored = false;
         return Build(name, cells[addrIdx], port, proto, null, null, os, null, null, ref ignored);
+    }
+
+    /// <summary>
+    /// 머리글 없는 칸이 비밀번호로 보이는가: 글자 · 숫자 · 공백 · '-' '_' '.' 밖의 기호가 있거나,
+    /// 공백 없이 대문자 · 소문자 · 숫자가 모두 섞였으면 (web01 · WEB-01 · 웹서버 1 은 이름, P@ss · Passw0rd 는 비밀번호)
+    /// </summary>
+    internal static bool LooksLikeSecret(string c)
+    {
+        if (c.Any(ch => !char.IsLetterOrDigit(ch) && !char.IsWhiteSpace(ch) && ch is not ('-' or '_' or '.'))) return true;
+        return !c.Any(char.IsWhiteSpace) && c.Any(char.IsUpper) && c.Any(char.IsLower) && c.Any(char.IsDigit);
     }
 
     private static ImportedHost? Build(string? name, string? addressRaw, string? portRaw, string? protoRaw, string? group,

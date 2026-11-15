@@ -72,6 +72,10 @@ public sealed class AzureProvider : ICloudProvider
             ProcessTimeout = TimeSpan.FromSeconds(60),
         });
         var t = await cred.GetTokenAsync(new TokenRequestContext(new[] { Arm + "/.default" }), ct);
+        // 로그인할 때마다 키(azureProfile.json 수정 시각)가 바뀌어 이전 키의 토큰이 남으므로, 만료된 항목은 넣을 때 정리한다
+        var now = DateTimeOffset.UtcNow;
+        foreach (var old in TokenCache)
+            if (old.Value.ExpiresOn <= now) TokenCache.TryRemove(old.Key, out _);
         TokenCache[key] = t;
         return t.Token;
     }

@@ -24,6 +24,8 @@ public partial class AuthPromptDialog : Window
         {
             FieldsPanel.Children.Add(new TextBlock { Text = f.Label, Style = (Style)FindResource("FieldLabel"), TextWrapping = TextWrapping.Wrap });
             Control input = f.Secret ? new PasswordBox() : new TextBox();
+            // 화면 낭독기가 칸마다 서버의 질문 문구를 읽게 (위 TextBlock 은 칸과 연결되어 있지 않다)
+            System.Windows.Automation.AutomationProperties.SetName(input, f.Label);
             _inputs.Add(input);
             FieldsPanel.Children.Add(input);
 

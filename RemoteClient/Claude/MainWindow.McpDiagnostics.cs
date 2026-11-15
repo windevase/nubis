@@ -18,6 +18,7 @@ public partial class MainWindow
 
     private async Task<string> TestConnectionAsync(JsonElement a)
     {
+        var ct = McpRequest.Token;
         var (h, conn) = await OnUi(() => { var x = ResolveOneHost(Arg(a, "host")); return (x, WithProfileDefaults(x)); });
         var timeout = TimeSpan.FromSeconds(Math.Clamp(IntArg(a, "timeout_sec") ?? 4, 1, 20));
         var custom = a.ValueKind == JsonValueKind.Object && a.TryGetProperty("ports", out var pe) && pe.ValueKind == JsonValueKind.Array
@@ -28,24 +29,33 @@ public partial class MainWindow
 
         var sb = new StringBuilder($"[{h.DisplayName}] {h.ProtocolText}, 시도 순서: {string.Join(" → ", h.AddressCandidates())}" +
                                    (h.IsStopped ? $"  ⚠ 클라우드 상태: {h.CloudState}" : "") + "\n");
+        // 주소 2개 × 포트 10개 × 최대 20초라 길어질 수 있다 — Claude 가 요청을 취소하면 다음 시도 전에 멈춘다
+        void StopIfCancelled()
+        {
+            if (ct.IsCancellationRequested) throw new McpToolException("Claude 쪽에서 요청이 취소되어 진단을 멈췄습니다.");
+        }
         foreach (var addr in h.AddressCandidates())
         {
+            StopIfCancelled();
             sb.AppendLine($"\n## {addr}");
             IPAddress[] ips;
             try
             {
-                ips = IPAddress.TryParse(addr, out var ip) ? new[] { ip } : await Dns.GetHostAddressesAsync(addr).WaitAsync(timeout);
+                ips = IPAddress.TryParse(addr, out var ip) ? new[] { ip } : await Dns.GetHostAddressesAsync(addr, ct).WaitAsync(timeout, ct);
                 if (!IPAddress.TryParse(addr, out _)) sb.AppendLine($"DNS: {string.Join(", ", ips.Select(i => i.ToString()))}");
             }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { StopIfCancelled(); throw; }
             catch (Exception ex) { sb.AppendLine($"DNS 실패: {ex.Message}"); continue; }
 
             foreach (var port in ports)
             {
+                StopIfCancelled();
                 var sw = Stopwatch.StartNew();
                 using var tcp = new TcpClient();
                 try
                 {
-                    using var cts = new CancellationTokenSource(timeout);
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(timeout);
                     await tcp.ConnectAsync(ips, port, cts.Token);
                     var line = $"  {port}/tcp 열림 ({sw.ElapsedMilliseconds}ms)";
                     if (h.Protocol == Protocol.Ssh && port == h.Port)
@@ -64,12 +74,17 @@ public partial class MainWindow
                     }
                     sb.AppendLine(line);
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { StopIfCancelled(); throw; }
                 catch (OperationCanceledException) { sb.AppendLine($"  {port}/tcp 응답 없음 ({timeout.TotalSeconds:0}초 초과 — 방화벽·보안 그룹에서 막혔거나 서버 꺼짐)"); }
                 catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionRefused) { sb.AppendLine($"  {port}/tcp 거부됨 (서버는 살아 있으나 이 포트에서 서비스가 안 떠 있음)"); }
                 catch (Exception ex) { sb.AppendLine($"  {port}/tcp 실패: {ex.Message}"); }
             }
         }
-        if (string.IsNullOrWhiteSpace(conn.Username) || (string.IsNullOrEmpty(conn.Password) && !conn.HasKey))
+        // run_command 와 같은 기준: SSH 는 비밀번호·키·기본 키 파일(~/.ssh/id_*) 중 하나, WinRM(RDP 호스트)은 비밀번호만
+        var noAccount = string.IsNullOrWhiteSpace(conn.Username) || (h.Protocol == Protocol.Ssh
+            ? string.IsNullOrEmpty(conn.Password) && !conn.HasKey && !SshAuth.HasDefaultKeyFiles()
+            : string.IsNullOrEmpty(conn.Password));
+        if (noAccount)
             sb.AppendLine("\n참고: 이 호스트에는 저장된 계정이 없어 run_command 등 비대화형 접속은 실패합니다 (호스트·Vault 에 계정 저장 필요).");
         var result = sb.ToString();
         AuditLog.Write("test_connection", new[] { h.DisplayName }, string.Join(",", ports), "조회");

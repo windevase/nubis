@@ -70,6 +70,10 @@ public sealed class TencentProvider : ICloudProvider
         if (regions.Count == 0)
             throw new InvalidOperationException(L.T("사용 가능한 리전 목록이 비어 있습니다 (DescribeRegions) — 이번 동기화는 건너뜁니다."));
 
+        // CAM 정책으로 막힌 리전은 오류와 따로 모은다 (AWS 와 같은 이유 — 막힌 리전 하나 때문에 매번 "부분 실패" 가 되어
+        // 다른 리전의 삭제가 영영 반영되지 않는 것을 피한다). 호스트의 CloudRegion 은 가용 영역(ap-seoul-1)이라
+        // CloudSync 가 "리전-" 접두어로도 보호한다
+        var denied = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         var (items, errors) = await CloudProviders.ParallelCollect(regions, 8, async region =>
         {
             var result = new List<CloudInstance>();
@@ -80,7 +84,14 @@ public sealed class TencentProvider : ICloudProvider
             var inconsistent = false;
             for (var offset = 0; ; offset += 100)
             {
-                var resp = await CallAsync(id, key, token, "DescribeInstances", region, $"{{\"Offset\":{offset},\"Limit\":100}}", ct);
+                JsonElement resp;
+                try { resp = await CallAsync(id, key, token, "DescribeInstances", region, $"{{\"Offset\":{offset},\"Limit\":100}}", ct); }
+                catch (TencentApiException ex) when (offset == 0 && IsAccessDenied(ex.Code))
+                {
+                    // 첫 페이지부터 거부 = 이 리전 전체가 정책으로 막힘. 중간 페이지 거부는 일반 오류로 둔다
+                    denied[region] = CloudProviders.FirstLine(ex.Message);
+                    return Enumerable.Empty<CloudInstance>();
+                }
                 foreach (var inst in resp.Arr("InstanceSet"))
                 {
                     rawCount++;
@@ -108,7 +119,24 @@ public sealed class TencentProvider : ICloudProvider
         }, r => r, ct);
 
         if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
-        return new CloudFetchResult(items, errors);
+        if (items.Count == 0 && denied.Count == regions.Count)
+            throw new InvalidOperationException(L.F("모든 리전에서 인스턴스 조회 권한이 없습니다 (cvm:DescribeInstances) — {0}", denied.Values.First()));
+        // 거부 리전 사유는 실제 오류 뒤에 붙인다 (화면은 첫 오류를 보여 주므로 실제 오류가 먼저 보이게)
+        var deniedRegions = denied.Keys.OrderBy(r => r, StringComparer.Ordinal).ToList();
+        foreach (var r in deniedRegions)
+            errors.Add(L.F("{0}: 권한 없음 (CAM 정책으로 거부 — 이 리전 호스트는 유지) — {1}", r, denied[r]));
+        return new CloudFetchResult(items, errors) { DeniedRegions = deniedRegions };
+    }
+
+    /// <summary>CAM 정책으로 거부됐다는 오류 코드인지. 서명·키 자체의 문제(AuthFailure.SignatureFailure 등)는 포함하지 않는다</summary>
+    internal static bool IsAccessDenied(string? code) =>
+        code is "UnauthorizedOperation" or "AuthFailure.UnauthorizedOperation" ||
+        (code?.StartsWith("UnauthorizedOperation.", StringComparison.Ordinal) ?? false);
+
+    /// <summary>Tencent API 오류 (오류 코드 보존 — 권한 거부 리전 판별용)</summary>
+    private sealed class TencentApiException(string code, string message) : InvalidOperationException(message)
+    {
+        public string Code { get; } = code;
     }
 
     /// <summary>
@@ -168,7 +196,7 @@ public sealed class TencentProvider : ICloudProvider
         }
         var err = root.Obj("Error");
         if (err.ValueKind == JsonValueKind.Object)
-            throw new InvalidOperationException($"{err.Str("Code")}: {err.Str("Message")}");
+            throw new TencentApiException(err.Str("Code"), $"{err.Str("Code")}: {err.Str("Message")}");
         // 성공 상태인데 Response 가 없으면 빈 결과로 오인하지 않게 실패로 (리전 0개 · 서버 0개로 보여 삭제되는 것 방지)
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidOperationException($"HTTP {(int)resp.StatusCode}: unexpected response (no Response object)");

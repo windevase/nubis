@@ -61,6 +61,7 @@ public partial class SftpPanel
     private async void OnUploadClick(object sender, RoutedEventArgs e)
     {
         if (_busy) { ShowBusyHint(); return; }   // 파일을 다 고른 뒤에 말없이 무시되지 않게
+        if (_cwd.Length == 0) return;   // 아직 목록을 못 열었음 — 파일을 다 고른 뒤 말없이 무시되지 않게 창을 띄우지 않는다
         var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = L.F("{0} 에 업로드할 파일", _cwd) };
         if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
         if (_busy) { ShowBusyHint(); return; }   // 고르는 사이 다른 전송이 시작됨
@@ -317,18 +318,33 @@ public partial class SftpPanel
             var skipped = new List<string>();
             await Task.Run(() =>
             {
-                foreach (var (i, local) in plan) Plan(c, i.FullName, i.IsDir, local, files, dirs, skipped, ct);
-            }, ct);
+                // 직접 고른 파일의 속성 확인은 병렬로 — 하나씩 물으면 수천 개를 골랐을 때(Ctrl+A) 받기 전 왕복만 수 분 걸렸다.
+                // 못 읽은 것은 Plan 이 다시 물어 원래 오류(없음·권한)를 보인다
+                var known = new System.Collections.Concurrent.ConcurrentDictionary<string, SftpFileAttributes>(StringComparer.Ordinal);
+                var top = plan.Where(p => !p.Item.IsDir).Select(p => p.Item.FullName).ToList();
+                if (top.Count > 1)
+                    Parallel.ForEach(top, new ParallelOptions { MaxDegreeOfParallelism = 8, CancellationToken = ct }, f =>
+                    {
+                        try { known[f] = c.GetAttributes(f); } catch { }
+                    });
+                foreach (var (i, local) in plan)
+                    Plan(c, i.FullName, i.IsDir, local, files, dirs, skipped, ct, known.GetValueOrDefault(i.FullName));
 
-            // 원격 이름에서 만든 경로가 선택한 폴더 밖으로 나가지 않는지 확인
-            var root = Path.GetFullPath(localDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-            if (files.Any(f => !Path.GetFullPath(f.Local).StartsWith(root, StringComparison.OrdinalIgnoreCase)) ||
-                dirs.Any(d => !Path.GetFullPath(d).StartsWith(root, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidOperationException(L.T("허용되지 않는 파일 이름이 있어 다운로드를 중단했습니다."));
+                // 원격 이름에서 만든 경로가 선택한 폴더 밖으로 나가지 않는지 확인
+                var root = Path.GetFullPath(localDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (files.Any(f => !Path.GetFullPath(f.Local).StartsWith(root, StringComparison.OrdinalIgnoreCase)) ||
+                    dirs.Any(d => !Path.GetFullPath(d).StartsWith(root, StringComparison.OrdinalIgnoreCase)))
+                    throw new InvalidOperationException(L.T("허용되지 않는 파일 이름이 있어 다운로드를 중단했습니다."));
+                // 폴더 만들기도 여기서 — 하위 폴더가 수천 개면 UI 스레드가 멈췄다
+                foreach (var d in dirs)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    Directory.CreateDirectory(d);
+                }
+            }, ct);
 
             var total = files.Sum(f => f.Size);
             long done = 0;
-            foreach (var d in dirs) Directory.CreateDirectory(d);
             var meter = new TransferMeter(total);
             for (var n = 0; n < files.Count; n++)
             {

@@ -102,7 +102,8 @@ public partial class VaultEntryDialog : Window
     private void OnOk(object sender, RoutedEventArgs e)
     {
         var name = NameBox.Text.Trim();
-        if (name.Length == 0) { NameBox.Focus(); return; }
+        // 이름이 비었으면 이유를 보여 준다 (포커스만 옮기면 저장이 왜 안 되는지 알 수 없다)
+        if (name.Length == 0) { NameBox.Focus(); ShowError(L.T("이름을 입력하세요.")); return; }
         // 같은 이름의 계정이 둘이면 고르는 창·호스트 카드에서 구분할 수 없다 (예전부터 같은 이름이던 계정은 이름을 바꿀 때만 검사)
         if ((_isNew || !string.Equals(name, _entry.Name.Trim(), StringComparison.CurrentCultureIgnoreCase)) && VaultStore.NameTaken(name, _entry.Id))
         {
@@ -123,13 +124,20 @@ public partial class VaultEntryDialog : Window
         if (!willHavePassword && !willHaveKey) { PasswordBox.Focus(); ShowError(L.T("비밀번호나 SSH 키 중 하나는 있어야 합니다.")); return; }
 
         string? publicKey = _entry.PublicKey;
+        // 암호가 걸리지 않은 키에 키 암호를 넣었으면 저장하지 않는다 (쓰이지 않는 값이 남아 목록에 "키 암호 저장" 으로 보이지 않게)
+        var dropPass = false;
         if (willHaveKey && (keyText.Length > 0 || newPass.Length > 0))
         {
             // 키를 바꾸지 않고 키 암호만 바꾸는 경우도 기존 키로 검사.
             // 새 키를 넣었으면 예전 키의 암호를 이어 쓰지 않는다 (새 키에는 맞지 않거나, 암호 없는 키에 남아 "키 암호 저장" 으로 보임)
             var material = keyText.Length > 0 ? keyText + "\n" : _entry.Key;
             var pass = newPass.Length > 0 || keyText.Length > 0 ? newPass : _entry.Passphrase;
-            try { publicKey = VaultStore.ReadPublicKey(material, pass); }
+            if (pass.Length > 0 && VaultStore.TryReadUnencryptedPublicKey(material) is { } plainPub)
+            {
+                publicKey = plainPub;
+                dropPass = true;
+            }
+            else try { publicKey = VaultStore.ReadPublicKey(material, pass); }
             catch (Exception ex)
             {
                 ShowError(ex is Renci.SshNet.Common.SshPassPhraseNullOrEmptyException
@@ -141,8 +149,8 @@ public partial class VaultEntryDialog : Window
 
         if (newPassword.Length > 0) _entry.Password = newPassword;
         else if (clearPassword) _entry.ProtectedPassword = null;
-        if (keyText.Length > 0) { _entry.Key = keyText + "\n"; _entry.Passphrase = newPass; }   // 새 키: 키 암호도 새로 (비우면 지움)
-        else if (newPass.Length > 0) _entry.Passphrase = newPass;
+        if (keyText.Length > 0) { _entry.Key = keyText + "\n"; _entry.Passphrase = dropPass ? "" : newPass; }   // 새 키: 키 암호도 새로 (비우면 지움)
+        else if (newPass.Length > 0) _entry.Passphrase = dropPass ? "" : newPass;
         if (clearKey) { _entry.ProtectedKey = null; _entry.ProtectedPassphrase = null; publicKey = null; }
         _entry.PublicKey = willHaveKey ? publicKey : null;
 

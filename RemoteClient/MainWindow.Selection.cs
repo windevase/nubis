@@ -51,6 +51,17 @@ public partial class MainWindow
     private bool HandleCardSelectClick(HostEntry h, int screenIndex = -1)
     {
         var mods = Keyboard.Modifiers;
+        // 클릭한 적 없이 Shift+클릭하면 범위의 시작은 키보드로 고른 카드 — 그것도 없으면 이 카드 하나만 고른다
+        // (예전에는 아무 표시 없이 시작점만 기억해 첫 Shift+클릭이 무시된 것처럼 보였다)
+        if (mods.HasFlag(ModifierKeys.Shift) && _selectAnchor == null && _highlighted != null && _hosts.Contains(_highlighted))
+            (_selectAnchor, _selectAnchorIndex) = (_highlighted, -1);
+        if (mods.HasFlag(ModifierKeys.Shift) && _selectAnchor == null)
+        {
+            SetSelected(h, true);
+            (_selectAnchor, _selectAnchorIndex) = (h, screenIndex);
+            UpdateSelectionBar();
+            return true;
+        }
         if (mods.HasFlag(ModifierKeys.Shift) && _selectAnchor != null)
         {
             var order = ScreenOrder();

@@ -123,6 +123,9 @@ public static class ClaudeGuard
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
             rules.Add($"Edit({b}/settings.json*)");
         }
+        // 사용자 전역 Claude Code 설정도 고치지 못하게 한다 — 작업 폴더의 .claude\ 를 막아도 ~/.claude/settings*.json 에 hook·allow 규칙을,
+        // ~/.claude.json 에 프로젝트별 allowedTools · mcpServers 를 써 넣으면 같은 우회가 된다 (Edit 도구만 해당, claude 자체 저장은 영향 없음)
+        foreach (var f in GlobalClaudeSettings) rules.Add($"Edit({f})");
         // 셸로 앱 settings.json 을 고치는 것도 막는다 — Nubis 경로가 들어간 명령 · 작업 폴더(<data>\claude)에서 본 상위 폴더만 (2차 안전장치)
         foreach (var pat in new[] { "*Nubis*settings.json*", "*../settings.json*", @"*..\settings.json*" })
         {
@@ -137,6 +140,9 @@ public static class ClaudeGuard
         }
         return rules;
     }
+
+    /// <summary>사용자 전역 Claude Code 설정 파일 (권한 규칙의 ~/ 표기 — 홈 폴더 기준)</summary>
+    internal static readonly string[] GlobalClaudeSettings = { "~/.claude/settings.json", "~/.claude/settings.local.json", "~/.claude.json" };
 
     /// <summary>앱이 현재 탭 정보를 써 두는 파일 (claude 작업 폴더 안)</summary>
     public const string ActiveContextFile = "active-session.txt";

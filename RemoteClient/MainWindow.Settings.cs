@@ -71,7 +71,12 @@ public partial class MainWindow
                     MinWidth = 150,
                     Padding = new Thickness(14, 0, 14, 0),
                 };
-                rb.Checked += (_, _) => SettingsStore.Update(x => x.FontFamily = name);
+                // 페이지를 그릴 때 저장된 글꼴을 체크하는 것도 Checked 를 일으킨다 — 값이 같으면 settings.json 쓰기·터미널 재적용을 하지 않는다
+                rb.Checked += (_, _) =>
+                {
+                    if (!string.Equals(SettingsStore.Current.FontFamily, name, StringComparison.Ordinal))
+                        SettingsStore.Update(x => x.FontFamily = name);
+                };
                 FontPanel.Children.Add(new Border
                 {
                     Background = (Brush)FindResource("InputBg"),
@@ -523,7 +528,12 @@ public partial class MainWindow
             // 지우면 다음 접속 때 그 서버의 키를 처음 보는 키로 받아들인다 — 그 사이 키가 바뀌었어도 경고가 없으므로 확인
             if (Dialog.Show(this, L.F("'{0}' 의 저장된 호스트키를 지울까요?\n다음 접속 때 서버가 보내는 키를 새로 신뢰합니다. 서버를 다시 설치해 키가 바뀐 경우에만 지우세요.", kv.Key),
                     L.T("호스트키 삭제"), MessageBoxButton.YesNo, MessageBoxImage.Warning, kv.Value) != MessageBoxResult.Yes) return;
-            KnownHostStore.Remove(kv.Key);
+            // 파일을 쓰지 못하면(다른 프로그램이 잠금 등) 앱 오류 창 대신 이유를 알리고 목록은 실제 상태로 다시 그린다
+            try { KnownHostStore.Remove(kv.Key); }
+            catch (Exception ex)
+            {
+                Dialog.Show(this, L.F("호스트키를 지우지 못했습니다: {0}", ex.Message), L.T("호스트키 삭제"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
             RefreshKnownHosts();
         }
     }

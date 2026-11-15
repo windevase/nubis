@@ -1,0 +1,6 @@
+{
+  "검색어나 필터에 맞는 줄이 없습니다.": "No rows match the search or filter.",
+  "이름 · 주소 · 그룹 · 사용자 · 메모에서 찾습니다 (Ctrl+F)": "Searches name · address · group · user · notes (Ctrl+F)",
+  "Include 가 자기 자신을 다시 포함해 건너뛰었습니다: {0}": "Skipped an Include that includes itself again: {0}",
+  "Include 로 읽을 파일이 {0}개를 넘어 나머지는 건너뛰었습니다.": "Include read more than {0} files; skipped the rest."
+}

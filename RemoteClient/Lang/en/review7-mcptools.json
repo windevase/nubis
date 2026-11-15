@@ -1,0 +1,6 @@
+{
+  ", 클라우드 — 다음 동기화에서도 숨김": ", cloud - also hidden on future syncs",
+  "Claude 가 현재 Windows 로그인으로 Active Directory 조회를 요청합니다": "Claude requests an Active Directory query with your current Windows sign-in",
+  "이 PC 의 도메인이 아니거나 서버를 직접 지정한 조회입니다. 현재 Windows 로그인 정보로 아래 서버에 인증해 컴퓨터 목록을 읽습니다. 사내 도메인 컨트롤러가 아니면 그 서버가 Windows 인증(NTLM)을 받게 되니 주소를 확인하세요.": "This query targets a domain other than this PC's or a server specified directly. It signs in to the server below with your current Windows credentials and reads the computer list. If it is not your organization's domain controller, that server will receive your Windows authentication (NTLM), so check the address.",
+  "도메인: {0}": "Domain: {0}"
+}

@@ -4,7 +4,7 @@
         xmlns:l="clr-namespace:Nubis"
         Title="{l:Tr '호스트 가져오기'}" Width="960" Height="700" MinWidth="780" MinHeight="560"
         WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="True" Background="#01000000" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+        WindowStartupLocation="CenterOwner" PreviewKeyDown="OnWindowPreviewKeyDown" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="0" ResizeBorderThickness="10" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
@@ -224,7 +224,8 @@
                         <!-- 검색 (돋보기 아이콘은 입력란 안 왼쪽 — 글자·placeholder 는 Padding 만큼 오른쪽에서 시작) -->
                         <Grid Grid.Column="1" Margin="10,0,0,0" MinWidth="120">
                             <TextBox x:Name="SearchBox" Height="30" Padding="30,0,10,0" AutomationProperties.Name="{l:Tr '검색 (이름 · 주소 · 그룹)'}"
-                                     Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"/>
+                                     Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"
+                                     ToolTip="{l:Tr '이름 · 주소 · 그룹 · 사용자 · 메모에서 찾습니다 (Ctrl+F)'}"/>
                             <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}"
                                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="11,0,0,0" IsHitTestVisible="False"/>
                         </Grid>

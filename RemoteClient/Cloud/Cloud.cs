@@ -226,7 +226,13 @@ public static class CloudProviders
         return b;
     }
 
-    internal static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(60) };
+    // 앱 수명 동안 하나를 재사용한다. 오래 켜 두는 앱이라 연결을 주기적으로 새로 맺어 DNS 변경(엔드포인트 교체)을 따라가고,
+    // 큰 목록 응답(GCP aggregated · Azure · OCI)은 gzip 으로 받아 전송량을 줄인다 (서명 대상 헤더가 아니라 서명과 무관)
+    internal static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate,
+    }) { Timeout = TimeSpan.FromSeconds(60) };
 
     /// <summary>
     /// 여러 항목을 동시성 제한을 두고 병렬 처리하며, 실패는 모아서 반환 (오류는 표시가 매번 같도록 정렬).

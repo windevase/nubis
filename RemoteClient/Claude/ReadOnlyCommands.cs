@@ -111,8 +111,9 @@ public static class ReadOnlyCommands
     /// <summary>
     /// UNC·장치 경로로 보이는 글자열(\\, //, \/, /\ — Windows 는 / 를 \ 로 바꿔 해석)이 따옴표 안 포함 어디든 있다.
     /// \\서버\공유 는 읽기만 해도 그 서버로 NTLM 인증(해시)을 보낸다 (Get-ChildItem \\1.2.3.4\s, dir \\x\s, reg query \\x\HKLM)
+    /// NT 경로 접두어 \??\ 도 포함 — Win32 파일 API 는 \??\UNC\서버\공유 를 그대로 받아 같은 SMB 접속이 된다 (dir \??\UNC\x\s)
     /// </summary>
-    private static bool HasUncPath(string s) => Regex.IsMatch(s, @"[\\/]{2}");
+    private static bool HasUncPath(string s) => Regex.IsMatch(s, @"[\\/]{2}|[\\/]\?\?[\\/]");
 
     /// <summary>
     /// PowerShell 에서 토큰을 이어 붙여 문자열을 만드는 형태 (따옴표 문자열은 \u0001 하나로 바꿔 본다):
@@ -305,8 +306,16 @@ public static class ReadOnlyCommands
         "add", "del", "delete", "set", "flush", "change", "replace", "append", "prepend", "restore", "save", "exec", "deleteall", "update",
     };
 
+    /// <summary>
+    /// systemd 도구(systemctl·hostnamectl·timedatectl·localectl·loginctl)의 원격 대상 지정: -H/--host 는 이 서버의 ssh 키로
+    /// 다른 서버에 접속하고, -M/--machine 은 다른 컨테이너를 대상으로 한다. getopt 라 하위 명령 뒤에 와도 적용되므로 위치와 관계없이 거부
+    /// </summary>
+    private static bool SystemdRemote(List<string> a) =>
+        a.Any(x => ShortHas(x, "HM") || LongPrefix(x, "host", "machine"));
+
     private static bool ShArgsOk(string cmd, List<string> a)
     {
+        if (cmd is "systemctl" or "hostnamectl" or "timedatectl" or "localectl" or "loginctl" && SystemdRemote(a)) return false;
         switch (cmd)
         {
             case "systemctl":
@@ -324,6 +333,10 @@ public static class ReadOnlyCommands
                 // -H/--host 로 데몬 주소를 바꾸지 않는다: ssh://사용자@서버 면 이 서버의 ssh 키로 다른 서버에 접속하고,
                 // tcp:// 면 다른 데몬에 접속한다 (어디에 붙는지 알 수 없음). 위치와 관계없이 거부 (환경 변수 DOCKER_HOST= 는 앞에서 거부됨)
                 if (a.Any(x => x.StartsWith("-H", StringComparison.Ordinal) || LongPrefix(x, "host"))) return false;
+                // podman 의 전역 옵션은 하위 명령 뒤에도 쓸 수 있다 (podman ps --url ssh://사용자@다른서버 → 이 서버의 키로 접속,
+                // --identity 키 파일 지정, --root·--runroot·--tmpdir 등은 그 경로에 저장소를 만든다)
+                if (a.Any(x => LongPrefix(x, "url", "identity", "remote", "root", "runroot", "tmpdir", "storage-driver", "storage-opt",
+                                   "hooks-dir", "module", "config", "conmon", "network-cmd-path", "volumepath", "imagestore"))) return false;
                 if (!SubStart(a, out var i, new[] { "-D", "--debug" }, new[] { "--context", "-c", "--connection" })) return false;
                 var sub = At(a, i);
                 var ok = sub is "" or "ps" or "images" or "logs" or "inspect" or "stats" or "version" or "info" or "top" or "port" or "history" or "diff"
@@ -342,6 +355,8 @@ public static class ReadOnlyCommands
                 if (sub == "config") return At(a, i + 1) is "view" or "get-contexts" or "current-context" && NoMutating(a, i + 2);
                 if (sub == "auth") return At(a, i + 1) == "can-i";   // can-i 는 권한 확인만 (뒤에 delete 등이 와도 실행 아님)
                 if (a.Any(x => x == "dump" || x.StartsWith("--raw", StringComparison.Ordinal) || x.StartsWith("--output-directory", StringComparison.Ordinal))) return false;
+                // --cache-dir 는 그 경로에 discovery 캐시 파일을 쓴다 (sudo 면 아무 폴더에나)
+                if (a.Any(x => x.StartsWith("--cache-dir", StringComparison.Ordinal))) return false;
                 return sub is "get" or "describe" or "logs" or "top" or "version" or "explain" or "api-resources" or "api-versions" or "cluster-info" or "events"
                        && NoMutating(a, i + 1);
             }
@@ -657,6 +672,14 @@ public static class ReadOnlyCommands
         // -ComputerName · -CimSession · -Session 은 원격 컴퓨터에 접속(인증)한다 (gwmi -ComputerName 공격자 서버 → NTLM 해시 전송)
         if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:cn|co(?:m(?:p(?:u(?:t(?:e(?:r(?:n(?:a(?:m(?:e)?)?)?)?)?)?)?)?)?)?|cims\w*|pssession\w*|session\w*)(?![\w-])", RegexOptions.IgnoreCase))
         { reason = "원격 컴퓨터 지정(-ComputerName·-CimSession·-Session)"; return false; }
+        // ComputerName 이 위치 인자인 cmdlet 도 있다: Test-WSMan 공격자 -Authentication Negotiate 는 그 서버로 인증을 보낸다.
+        // AD cmdlet 의 -Server(Get-ADUser -Server 공격자)는 LDAP 로 현재 계정 인증을 보낸다. 접두어 약어(-ser · -auth)도 같이
+        if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:ser(?:v(?:e(?:r)?)?)?|au(?:t(?:h\w*)?)?|certificatet\w*)(?![\w-])", RegexOptions.IgnoreCase))
+        { reason = "다른 서버로 인증 전송(-Server·-Authentication·-CertificateThumbprint)"; return false; }
+        // Test-Connection(5.1) 의 -Source 는 그 컴퓨터의 WMI 에 접속(인증)해 거기서 ping 한다
+        if (Regex.IsMatch(bare, @"(?<![\w$-])Test-Connection(?![\w-])", RegexOptions.IgnoreCase) &&
+            Regex.IsMatch(bare, @"(?<![\w$-])-so\w*(?![\w-])", RegexOptions.IgnoreCase))
+        { reason = "Test-Connection -Source (원격 WMI 접속)"; return false; }
         // .Method( ) 와 .'Method'( ) · ."Method"( ) · .$name( ) 같은 동적 멤버 호출
         if (Regex.IsMatch(bare, @"\.\s*[A-Za-z_]\w*\s*\(") || Regex.IsMatch(bare, @"\.\s*['$(]")) { reason = "메서드 호출"; return false; }
         var noAmp = Regex.Replace(bare, @"\d?>&\d", " ").Replace("&&", "  ");

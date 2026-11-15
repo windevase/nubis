@@ -173,7 +173,8 @@ public partial class MainWindow
         using var cts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancel);
         _syncCancels[p] = cts;
         p.IsSyncing = true;
-        p.StatusText = "";
+        // 리전·영역을 모두 도는 조회는 수 초~수십 초 걸리므로 진행 중임을 상태 줄(프로필 행 · 그룹 헤더)에 보여 준다
+        p.StatusText = L.T("서버 목록을 조회하는 중...");
         try
         {
             var provider = CloudProviders.Get(p.Provider);
@@ -298,13 +299,18 @@ public partial class MainWindow
     private async Task<List<CloudProfile>> AddProfilesAsync(CloudSection section, List<CloudCandidate> candidates)
     {
         var added = new List<CloudProfile>();
+        // 메뉴를 띄워 둔 사이 같은 프로필이 다른 경로(MCP cloud_add_profile · 다시 연 메뉴)로 이미 추가됐을 수 있다 —
+        // 같은 이름을 또 추가하면 같은 서버가 두 그룹에 겹쳐 동기화되므로 건너뛴다
+        var names = section.Profiles.Select(p => p.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var c in candidates)
         {
+            if (!names.Add(c.Name)) continue;
             var p = new CloudProfile { Provider = section.Provider, Name = c.Name, DisplayName = c.DisplayName, TenantId = c.TenantId };
             _profiles.Add(p);
             section.Profiles.Add(p);
             added.Add(p);
         }
+        if (added.Count == 0) return added;
         SaveProfiles();
         RefreshHosts();
 
@@ -325,7 +331,7 @@ public partial class MainWindow
 
     private void EditProfile(CloudProfile p)
     {
-        var (oldSsh, oldRdp, oldPublic) = (p.EffectiveSshPort, p.EffectiveRdpPort, p.UsePublicIp);
+        var (oldSsh, oldRdp, oldPublic, oldIncludeStopped) = (p.EffectiveSshPort, p.EffectiveRdpPort, p.UsePublicIp, p.IncludeStopped);
         if (!ProfileDialog.Edit(this, p)) return;
         // 기본 접속 주소(사설/공인)를 바꾸면 기본값을 따르던 서버에 적용. 호스트별로 따로 고른 서버가 있으면 그것도 바꿀지 묻는다
         if (oldPublic != p.UsePublicIp)
@@ -349,14 +355,24 @@ public partial class MainWindow
         SaveHosts();
         RefreshHosts();
         CloudSections.Items.Refresh();
+        // "중지된 서버 포함" 을 켜면 지금까지 빠져 있던 중지 서버는 다음 동기화 때에야 생기므로 바로 동기화한다
+        // (끄는 쪽은 기존 호스트를 지우지 않으므로 동기화할 필요 없음)
+        if (!oldIncludeStopped && p.IncludeStopped && !HostStore.LoadFailed) _ = SyncProfileAsync(p);
     }
 
     private void OnProfileRemove(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not CloudProfile p) return;
         var count = _hosts.Count(h => h.CloudProfileId == p.Id);
-        if (Dialog.Show(this, L.F("[{0}] {1} 프로필과 동기화된 호스트 {2}개를 제거할까요?\n(클라우드의 서버에는 아무 영향이 없습니다)", p.ProviderText, p.GroupName, count),
-                L.T("프로필 제거"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        var message = L.F("[{0}] {1} 프로필과 동기화된 호스트 {2}개를 제거할까요?\n(클라우드의 서버에는 아무 영향이 없습니다)", p.ProviderText, p.GroupName, count);
+        // 다른 그룹 호스트가 이 프로필의 서버를 점프 호스트로 쓰고 있으면, 제거 후 그 호스트들이 "삭제된 점프 서버" 로 접속하지 못하므로 미리 알린다
+        var profileHostIds = _hosts.Where(h => h.CloudProfileId == p.Id).Select(h => h.Id).ToHashSet();
+        var dependents = _hosts.Where(h => h.CloudProfileId != p.Id && h.JumpHostId is { } j && profileHostIds.Contains(j)).ToList();
+        if (dependents.Count > 0)
+            message += "\n\n" + L.F("주의: 이 프로필의 서버를 점프 호스트로 쓰는 다른 호스트 {0}개가 있습니다 — 제거하면 점프 호스트를 다시 지정해야 접속할 수 있습니다: {1}",
+                dependents.Count, NameList(dependents.Select(h => h.DisplayName)));
+        if (Dialog.Show(this, message, L.T("프로필 제거"), MessageBoxButton.YesNo,
+                dependents.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Question) != MessageBoxResult.Yes) return;
 
         if (_syncCancels.TryGetValue(p, out var cts)) cts.Cancel();   // 진행 중인 동기화는 결과를 버린다
         _hosts.RemoveAll(h => h.CloudProfileId == p.Id);

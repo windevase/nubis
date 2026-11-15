@@ -35,12 +35,41 @@ public sealed class GcpProvider : ICloudProvider
     public string AuthHint => "ADC · gcloud auth application-default login";
     public string LoginCommand(CloudProfile? p) => "gcloud auth application-default login";
 
+    // ADC 자격 증명은 재사용한다 — 프로젝트(프로필)마다 ADC 파일을 다시 읽고 토큰을 새로 받지 않게 (전체 동기화 때 프로젝트 수만큼 토큰 요청이 나가던 것).
+    // 토큰 만료·갱신은 GoogleCredential 이 스레드 안전하게 처리한다. ADC 파일 경로나 수정 시각이 바뀌면(로그인 버튼 · 경로 변경) 새로 만든다
+    private static readonly object CredLock = new();
+    private static (string key, GoogleCredential cred)? _cred;
+
+    private static string CredKey()
+    {
+        var path = CloudPaths.Effective(CloudProvider.Gcp);
+        long stamp = 0;
+        try { stamp = File.GetLastWriteTimeUtc(path).Ticks; } catch { }
+        return $"{path}|{stamp}";
+    }
+
     private static async Task<(string token, string? quota)> TokenAsync(CancellationToken ct)
     {
-        var cred = (await GoogleCredential.GetApplicationDefaultAsync(ct))
-            .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
-        var token = await ((ITokenAccess)cred).GetAccessTokenForRequestAsync(null, ct);
-        return (token, cred.QuotaProject);
+        var key = CredKey();
+        GoogleCredential? cred;
+        lock (CredLock) cred = _cred is { } c && c.key == key ? c.cred : null;
+        if (cred == null)
+        {
+            cred = (await GoogleCredential.GetApplicationDefaultAsync(ct))
+                .CreateScoped("https://www.googleapis.com/auth/cloud-platform");
+            lock (CredLock) _cred = (key, cred);
+        }
+        try
+        {
+            var token = await ((ITokenAccess)cred).GetAccessTokenForRequestAsync(null, ct);
+            return (token, cred.QuotaProject);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // 갱신이 거부된 자격 증명(재인증 필요 등)은 버려 다음 동기화가 ADC 를 다시 읽게 한다
+            lock (CredLock) if (_cred is { } stale && ReferenceEquals(stale.cred, cred)) _cred = null;
+            throw;
+        }
     }
 
     public async Task<List<CloudCandidate>> DiscoverAsync(CancellationToken ct)

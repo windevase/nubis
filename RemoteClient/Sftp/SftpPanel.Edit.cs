@@ -105,13 +105,15 @@ public partial class SftpPanel
             var part = local + ".part";
             await using (var fs = File.Create(part))
                 await c.DownloadFileAsync(item.FullName, fs, progress, ct);
+            // 해시는 백그라운드에서 — 큰 파일(수십 MB)이면 UI 스레드가 멈췄다
+            var hash = await Task.Run(() => HashFile(part));
             // 받는 사이 탭이 닫힘(Close 가 _edits 를 비운 뒤) — 여기서 세션을 만들면 감시가 새고(ActiveEditDirs 영구 보유),
             // 닫힌 탭의 파일이 편집기로 열려 저장해도 아무 데도 올라가지 않는다
             if (_closed) throw new OperationCanceledException();
             File.Move(part, local);
             MarkFromInternet(local);
 
-            var s = new EditSession { Remote = item.FullName, Local = local, RemoteMtime = attr.LastWriteTimeUtc, RemoteSize = attr.Size, Hash = HashFile(local) };
+            var s = new EditSession { Remote = item.FullName, Local = local, RemoteMtime = attr.LastWriteTimeUtc, RemoteSize = attr.Size, Hash = hash };
             HoldEditDir(dir);
             // 감시를 걸다 실패하면(감시 한도 등) 만든 감시·디바운스와 ActiveEditDirs 보유를 바로 놓는다 — _edits 에 안 들어가 아무도 정리하지 않게 되므로
             try { Watch(s); }
@@ -159,24 +161,21 @@ public partial class SftpPanel
 
     private async Task SyncEditAsync(EditSession s)
     {
-        if (!_edits.ContainsValue(s) || !File.Exists(s.Local)) return;
+        if (s.Disposed || !_edits.ContainsValue(s)) return;
         if (s.Uploading) { s.Debounce?.Start(); return; }
-        byte[] data;
-        try
-        {
-            using var fs = new FileStream(s.Local, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var ms = new MemoryStream();
-            fs.CopyTo(ms);
-            data = ms.ToArray();
-        }
-        catch (IOException) { s.Debounce?.Start(); return; }   // 편집기가 아직 쓰는 중 → 잠시 뒤 다시
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
-        if (hash == s.Hash) return;   // 내용이 같으면(저장만 누름) 올리지 않음
-
         var name = RemoteName(s.Remote);
+        // 읽기부터 업로드 중으로 — 백그라운드에서 읽는 사이 디바운스가 다시 와도 겹쳐 올리지 않게
         s.Uploading = true;
         try
         {
+            // 읽기·해시는 백그라운드에서 — 큰 파일을 저장할 때마다 UI 스레드가 멈췄다
+            (byte[] Data, string Hash)? read;
+            try { read = await Task.Run(() => ReadEditFile(s.Local)); }
+            catch (IOException) { if (!s.Disposed) s.Debounce?.Start(); return; }   // 편집기가 아직 쓰는 중 → 잠시 뒤 다시
+            if (read is not { } r || s.Disposed) return;   // 파일이 지워졌거나 읽는 사이 탭이 닫힘 (Close 가 마지막으로 올린다)
+            var (data, hash) = r;
+            if (hash == s.Hash) return;   // 내용이 같으면(저장만 누름) 올리지 않음
+
             // 1) 충돌 확인 — 연결 잠금은 서버에 묻는 동안만 잡는다 (확인 창을 띄운 채로 잡고 있지 않게)
             var attr = await WithClientLockAsync(c => Task.Run(() => TryGetAttributes(c, s.Remote)));
             if (attr != null && (attr.LastWriteTimeUtc != s.RemoteMtime || attr.Size != s.RemoteSize) &&
@@ -224,15 +223,8 @@ public partial class SftpPanel
     {
         try
         {
-            if (!File.Exists(s.Local)) return null;
-            byte[] data;
-            using (var fs = new FileStream(s.Local, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            using (var ms = new MemoryStream())
-            {
-                fs.CopyTo(ms);
-                data = ms.ToArray();
-            }
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
+            if (ReadEditFile(s.Local) is not { } read) return null;
+            var (data, hash) = read;
             if (hash == s.Hash) return null;   // 이미 올렸거나 바뀐 것 없음
             if (!locked || ct.IsCancellationRequested)
                 return L.F("{0}\n→ 시간 안에 올리지 못했습니다. ({1})", s.Remote, s.Local);
@@ -276,6 +268,20 @@ public partial class SftpPanel
     {
         var p = remote.TrimEnd('/');
         return p[(p.LastIndexOf('/') + 1)..];
+    }
+
+    /// <summary>편집 파일 내용과 SHA-256 (파일이 없으면 null). 편집기가 쓰는 중이면 IOException — 백그라운드 스레드에서 부른다</summary>
+    private static (byte[] Data, string Hash)? ReadEditFile(string path)
+    {
+        if (!File.Exists(path)) return null;
+        byte[] data;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var ms = new MemoryStream())
+        {
+            fs.CopyTo(ms);
+            data = ms.ToArray();
+        }
+        return (data, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data)));
     }
 
     private static string HashFile(string path)

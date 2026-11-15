@@ -24,22 +24,32 @@ public partial class SftpPanel
     private bool _showHidden = true;
 
     /// <summary>새로 읽은 목록을 보인다. 같은 폴더를 다시 읽은 것이면(새로고침·업로드 뒤) 선택을 유지한다</summary>
-    private void SetItems(List<SftpItem> items, bool keepSelection)
+    /// <param name="select">이 경로의 항목만 골라 보이게 (방금 만든 폴더·이름을 바꾼 항목) — 목록에 없으면 무시</param>
+    private void SetItems(List<SftpItem> items, bool keepSelection, string? select = null)
     {
         _allItems = items;
-        ApplyView(keepSelection);
+        ApplyView(keepSelection, select);
     }
 
-    private void ApplyView(bool keepSelection)
+    private void ApplyView(bool keepSelection, string? select = null)
     {
         var selected = keepSelection
             ? FileList.SelectedItems.Cast<SftpItem>().Select(i => i.FullName).ToHashSet(StringComparer.Ordinal)
             : null;
         var view = SortItems(_allItems.Where(i => _showHidden || !IsHiddenName(i.Name)), _sortKey, _sortDesc);
         FileList.ItemsSource = view;
-        if (selected is { Count: > 0 })
-            foreach (var i in view)
-                if (selected.Contains(i.FullName)) FileList.SelectedItems.Add(i);
+        var pick = select == null ? null : view.FirstOrDefault(i => string.Equals(i.FullName, select, StringComparison.Ordinal));
+        if (pick != null)
+        {
+            FileList.SelectedItem = pick;
+            // 모달 창(이름 입력)이 닫힌 뒤 포커스가 패널에 있으면 그 행으로 — 바로 F2 · Enter 가 먹게. 다른 곳(터미널)에 있으면 뺏지 않는다
+            if (IsKeyboardFocusWithin || Keyboard.FocusedElement == null) FocusListRow();
+            else FileList.ScrollIntoView(pick);
+        }
+        // 한 번에 선택 — SelectedItems.Add 를 항목마다 부르면 추가할 때마다 선택 목록 전체를 다시 맞춰
+        // 수만 개를 모두 선택(Ctrl+A)한 채 새로고침·업로드하면 O(n²) 로 화면이 멈췄다
+        else if (selected is { Count: > 0 })
+            FileList.SelectItems(view.Where(i => selected.Contains(i.FullName)).ToList());
         if (view.Count > 0) ShowMessage(null);
         else if (_allItems.Count > 0) ShowMessage(L.T("숨김 파일만 있습니다.\nCtrl+H 를 누르면 숨김 파일을 표시합니다."), GlyphHiddenOnly);
         else ShowMessage(L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다."), GlyphEmptyFolder);
@@ -167,6 +177,13 @@ public partial class SftpPanel
         try { return c.ListDirectory(dir).Select(f => f.Name).ToList(); }
         catch (Renci.SshNet.Common.SftpPathNotFoundException) { return null; }
     }
+}
+
+/// <summary>SFTP 파일 목록 — 여러 항목을 한 번에 선택하는 공개 진입점만 더한 ListBox (SetSelectedItems 는 protected)</summary>
+public sealed class SftpListBox : ListBox
+{
+    /// <summary>선택을 items 로 한 번에 바꾼다 (선택 변경 이벤트 한 번)</summary>
+    public bool SelectItems(System.Collections.IEnumerable items) => SetSelectedItems(items);
 }
 
 /// <summary>

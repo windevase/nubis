@@ -169,13 +169,23 @@ public partial class MainWindow
             Dialog.Show(this, L.F("Claude 패널용 MCP 서버를 시작하지 못했습니다: {0}", ex.Message), "Nubis", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        var configPath = _mcp.WriteClientConfig(McpConfigPath);
-        WriteClaudeMd();
-        // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
-        var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
-        _lastActiveContext = null;
-        UpdateActiveContext();
-        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath, AppPaths.RootDir, ClaudeGuard.LegacyDataDir), new UTF8Encoding(false));
+        string configPath, guardPath;
+        try
+        {
+            configPath = _mcp.WriteClientConfig(McpConfigPath);
+            WriteClaudeMd();
+            // 저장된 계정 파일 접근 차단 규칙 (실행할 때마다 다시 써서 수정돼도 원래대로)
+            guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
+            _lastActiveContext = null;
+            UpdateActiveContext();
+            File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath, AppPaths.RootDir, ClaudeGuard.LegacyDataDir), new UTF8Encoding(false));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 차단 규칙 파일을 쓰지 못한 채로 claude 를 띄우면 계정 파일 보호 없이 실행된다 — 시작하지 않는다
+            Dialog.Show(this, L.F("Claude 패널 설정 파일을 쓰지 못해 시작하지 않았습니다: {0}", ex.Message), "Nubis", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
 
         _claudeView = new LocalTerminalView(() =>
         {

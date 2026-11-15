@@ -35,10 +35,22 @@ public partial class ImportHostsDialog
 
     // ===================== 검색 · 경고 =====================
 
+    /// <summary>검색어 입력: 지우면 바로, 치는 중이면 잠깐 멈췄을 때 거른다 (수천 줄에서 글자마다 전체를 다시 거르지 않게)</summary>
     private void OnSearchChanged(object sender, TextChangedEventArgs e)
     {
         if (!_ready) return;
-        _view?.Refresh();
+        _searchTimer.Stop();
+        if (SearchBox.Text.Trim().Length == 0) RefreshView();
+        else _searchTimer.Start();
+    }
+
+    /// <summary>창 단축키: Ctrl+F = 미리보기 검색 칸으로</summary>
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.F || Keyboard.Modifiers != ModifierKeys.Control) return;
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+        e.Handled = true;
     }
 
     /// <summary>검색 칸에서 Esc = 검색어 지우기 (비어 있으면 창 닫기로 넘김)</summary>

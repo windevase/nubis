@@ -173,7 +173,8 @@ public partial class MainWindow
     /// </summary>
     private async Task<(ImportResult Result, string Label, string Detail)> FetchAdForImportAsync(McpImportArgs args, CancellationToken ct)
     {
-        var domain = args.Domain ?? ActiveDirectoryImport.CurrentDomain()
+        var ownDomain = ActiveDirectoryImport.CurrentDomain();
+        var domain = args.Domain ?? ownDomain
             ?? throw new McpToolException("이 PC 의 도메인을 알 수 없습니다. domain 을 지정하세요.");
         var target = args.Server != null ? $"{domain} (DC {args.Server})" : domain;
         var command = $"ldap domain={domain}" + (args.Server != null ? $" server={args.Server}" : "") +
@@ -182,6 +183,21 @@ public partial class MainWindow
                       (args.ActiveWithinDays is { } days ? $" active_within_days={days}" : "") + $" resolve_ip={args.ResolveIp}";
 
         string? user = null, password = null;
+        // 현재 Windows 로그인(Negotiate)으로 Claude 가 정한 서버·다른 도메인에 접속하면 그 서버가 이 PC 사용자의 Windows 인증(NTLM)을 받는다
+        // (네트워크 경로(UNC)를 읽지 않는 것과 같은 이유) — 이 PC 의 도메인을 DNS 로 찾는 기본 조회가 아니면 조회 전에 승인
+        if (args.AdVault == null && (args.Server != null || ownDomain == null || !domain.TrimEnd('.').Equals(ownDomain.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)))
+        {
+            var auditTargets = new[] { $"AD {target}", "현재 Windows 로그인" };
+            var ok = await OnUiAsync(() => AskApprovalAsync("import_hosts", L.T("Claude 가 현재 Windows 로그인으로 Active Directory 조회를 요청합니다"),
+                L.T("이 PC 의 도메인이 아니거나 서버를 직접 지정한 조회입니다. 현재 Windows 로그인 정보로 아래 서버에 인증해 컴퓨터 목록을 읽습니다. 사내 도메인 컨트롤러가 아니면 그 서버가 Windows 인증(NTLM)을 받게 되니 주소를 확인하세요."),
+                new[] { L.F("도메인: {0}", domain), L.F("도메인 컨트롤러: {0}", args.Server ?? domain) }, command));
+            if (!ok)
+            {
+                AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 거부");
+                throw new McpToolException("사용자가 현재 Windows 로그인으로 AD 조회하는 것을 거부했습니다.");
+            }
+            AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 승인");
+        }
         if (args.AdVault != null)
         {
             string vaultSpec = args.AdVault;

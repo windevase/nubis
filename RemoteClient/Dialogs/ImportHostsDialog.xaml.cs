@@ -40,6 +40,12 @@ public partial class ImportHostsDialog : Window
     private CancellationTokenSource? _adCts;
     private ImportPlanResult? _final;
     private readonly DispatcherTimer _replanTimer;
+    /// <summary>검색어 입력이 잠깐 멈추면 필터를 다시 적용 (수천 줄에서 글자마다 전체를 다시 거르지 않게)</summary>
+    private readonly DispatcherTimer _searchTimer;
+    /// <summary>지금 적용한 검색어 (필터가 줄마다 TextBox 를 읽지 않게)</summary>
+    private string _query = "";
+    /// <summary>모두 선택 · 해제처럼 여러 줄을 한꺼번에 바꾸는 중 — 줄마다 요약을 다시 세지 않고 끝나고 한 번만</summary>
+    private bool _bulk;
     private bool _ready;
     // 파일 출처별로 마지막에 적은 경로
     private string _sshPath = SshConfigImport.DefaultPath;
@@ -55,6 +61,8 @@ public partial class ImportHostsDialog : Window
         _existing = existing;
         _replanTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _replanTimer.Tick += (_, _) => { _replanTimer.Stop(); Replan(); };
+        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _searchTimer.Tick += (_, _) => RefreshView();
 
         try { AdDomainBox.Text = ActiveDirectoryImport.CurrentDomain() ?? ""; }
         catch { /* 도메인에 가입하지 않은 PC — 직접 입력 */ }
@@ -72,6 +80,7 @@ public partial class ImportHostsDialog : Window
             _closed = true;
             _adCts?.Cancel();
             _replanTimer.Stop();
+            _searchTimer.Stop();
             // 돌려준 계획(ImportPlanResult)의 줄들은 호출한 쪽이 계속 쓰므로, 줄 → 이 창으로 가는 참조(PropertyChanged 구독 ·
             // 기본 컬렉션 뷰의 Filter 대리자)를 끊어 닫힌 창 전체(미리보기 컨트롤 · 수천 줄 결과)가 계획과 함께 남지 않게 한다
             if (_plan != null)
@@ -227,8 +236,8 @@ public partial class ImportHostsDialog : Window
     /// </summary>
     private async void Load(Func<ImportResult> parse, string sourceName)
     {
+        CancelAd(null);   // AD 조회 중이었으면 멈춘다 (순번을 올리므로 아래 seq 보다 먼저)
         var seq = ++_loadSeq;
-        _adCts?.Cancel();   // AD 조회 중이었으면 멈춘다 (결과는 어차피 버려짐)
         ShowStatus(L.T("읽는 중..."), false);
         Cursor = Cursors.AppStarting;
         try
@@ -247,65 +256,6 @@ public partial class ImportHostsDialog : Window
             if (seq == _loadSeq) ClearValue(CursorProperty);
         }
     }
-
-    // ===================== Active Directory =====================
-
-    private void OnAdCurrentUserChanged(object sender, RoutedEventArgs e)
-    {
-        if (AdCredRow != null) AdCredRow.IsEnabled = AdCurrentUser.IsChecked != true;
-    }
-
-    /// <summary>Vault 계정으로 사용자명·비밀번호 칸을 채운다 (이번 조회에만 쓰고 저장하지 않음)</summary>
-    private void OnAdPickVault(object sender, RoutedEventArgs e)
-    {
-        if (VaultPickerDialog.Pick(this, null, Protocol.Rdp, L.T("Active Directory 조회에 쓸 계정을 고르세요. 이번 조회에만 쓰고 저장하지 않습니다.")) is not { } id) return;
-        if (VaultStore.Get(id) is not { } v) return;
-        AdCurrentUser.IsChecked = false;
-        AdUserBox.Text = v.Username;
-        AdPasswordBox.Password = Secret.Unprotect(v.ProtectedPassword);
-    }
-
-    private async void OnFetchAd(object sender, RoutedEventArgs e)
-    {
-        // 조회 중에 다시 누르면 취소
-        if (_adCts != null) { _adCts.Cancel(); return; }
-
-        var domain = AdDomainBox.Text.Trim();
-        if (domain.Length == 0) { ShowStatus(L.T("도메인을 입력하세요."), true); AdDomainBox.Focus(); return; }
-        var current = AdCurrentUser.IsChecked == true;
-        var user = AdUserBox.Text.Trim();
-        if (!current && user.Length == 0) { ShowStatus(L.T("사용자를 입력하거나 '현재 Windows 로그인 사용' 을 켜세요."), true); AdUserBox.Focus(); return; }
-        int? days = null;
-        if (AdRecentCheck.IsChecked == true)
-        {
-            if (!int.TryParse(AdDaysBox.Text.Trim(), out var d) || d is < 1 or > 3650) { ShowStatus(L.T("최근 로그인 일수는 1~3650 사이 숫자로 입력하세요."), true); AdDaysBox.Focus(); return; }
-            days = d;
-        }
-        var options = new AdImportOptions(domain, NullIfEmpty(AdServerBox.Text), current ? null : user, current ? null : AdPasswordBox.Password,
-            current, NullIfEmpty(AdBaseBox.Text), AdServersOnly.IsChecked == true, AdSkipDisabled.IsChecked == true, days, AdResolveIp.IsChecked == true);
-
-        using var cts = new CancellationTokenSource();
-        _adCts = cts;
-        // 읽는 중이던 파일 결과가 나중에 와도 AD 결과를 덮지 않게 — 반대로 조회 중에 파일을 불러오면 늦게 온 AD 결과를 버린다
-        var seq = ++_loadSeq;
-        ClearValue(CursorProperty);   // 버려진 파일 읽기의 대기 커서
-        AdFetchButton.Content = L.T("조회 취소");
-        ShowStatus(L.F("{0} 에서 컴퓨터 목록을 가져오는 중...", domain), false);
-        try
-        {
-            var result = await ActiveDirectoryImport.FetchAsync(options, cts.Token);
-            if (!cts.IsCancellationRequested && seq == _loadSeq && !_closed) SetSource(result, "Active Directory");
-        }
-        catch (OperationCanceledException) { if (seq == _loadSeq && !_closed) ShowStatus(L.T("조회를 취소했습니다."), false); }
-        catch (Exception ex) { if (seq == _loadSeq && !_closed) ShowStatus(L.F("Active Directory 조회 실패: {0}", ex.Message), true); }
-        finally
-        {
-            _adCts = null;
-            AdFetchButton.Content = L.T("가져오기");
-        }
-    }
-
-    private static string? NullIfEmpty(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
     // ===================== 미리보기 =====================
 
@@ -351,17 +301,39 @@ public partial class ImportHostsDialog : Window
             if (_choices.TryGetValue(row.Source, out var chosen)) row.IsSelected = chosen;
             row.PropertyChanged += OnRowChanged;
         }
+        _searchTimer.Stop();
+        _query = SearchBox.Text.Trim();
         RowList.ItemsSource = _plan.Rows;
         _view = CollectionViewSource.GetDefaultView(_plan.Rows);
         _view.Filter = FilterRow;
-        EmptyText.Text = _plan.Rows.Count == 0 ? L.T("가져올 서버가 없습니다.") : "";
-        EmptyText.Visibility = _plan.Rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateEmptyText();
         UpdateSummary();
+    }
+
+    /// <summary>검색어 · 필터를 지금 값으로 다시 적용</summary>
+    private void RefreshView()
+    {
+        _searchTimer.Stop();
+        _query = SearchBox.Text.Trim();
+        if (_view == null) return;
+        _view.Refresh();
+        UpdateEmptyText();
+    }
+
+    /// <summary>빈 목록 안내: 읽은 서버가 없음 / 검색 · 필터에 맞는 줄이 없음 (그냥 빈 칸이면 목록이 고장 난 것처럼 보인다)</summary>
+    private void UpdateEmptyText()
+    {
+        if (_plan == null || _view == null) return;
+        var text = _plan.Rows.Count == 0 ? L.T("가져올 서버가 없습니다.")
+            : _view.IsEmpty ? L.T("검색어나 필터에 맞는 줄이 없습니다.")
+            : null;
+        EmptyText.Text = text ?? "";
+        EmptyText.Visibility = text != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void OnRowChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(ImportRow.IsSelected)) UpdateSummary();
+        if (!_bulk && e.PropertyName == nameof(ImportRow.IsSelected)) UpdateSummary();
     }
 
     private bool FilterRow(object o)
@@ -370,26 +342,30 @@ public partial class ImportHostsDialog : Window
         if (FilterNew.IsChecked == true && r.Status != ImportStatus.New) return false;
         if (FilterExisting.IsChecked == true && r.Status != ImportStatus.Existing) return false;
         if (FilterProblem.IsChecked == true && r.Status is not (ImportStatus.Duplicate or ImportStatus.Invalid)) return false;
-        var q = SearchBox.Text.Trim();
-        if (q.Length == 0) return true;
-        return Has(r.NameText) || Has(r.AddressText) || Has(r.GroupText) || Has(r.UserText) || Has(r.DetailText);
-        bool Has(string s) => s.Contains(q, StringComparison.CurrentCultureIgnoreCase);
+        return _query.Length == 0 || r.SearchText.Contains(_query, StringComparison.CurrentCultureIgnoreCase);
     }
 
     private void OnFilterChanged(object sender, RoutedEventArgs e)
     {
         if (!_ready) return;
-        _view?.Refresh();
+        RefreshView();
     }
 
     private void OnSelectAll(object sender, RoutedEventArgs e) => SetVisibleSelection(true);
     private void OnSelectNone(object sender, RoutedEventArgs e) => SetVisibleSelection(false);
 
-    /// <summary>지금 필터로 보이는 줄만</summary>
+    /// <summary>지금 필터로 보이는 줄만. 아직 반영되지 않은 검색어가 있으면 먼저 반영 (보이는 것과 다른 줄이 바뀌지 않게)</summary>
     private void SetVisibleSelection(bool value)
     {
+        if (_searchTimer.IsEnabled) RefreshView();
         if (_view == null) return;
-        foreach (var row in _view.Cast<ImportRow>().ToList()) row.IsSelected = value;
+        _bulk = true;
+        try
+        {
+            foreach (var row in _view.Cast<ImportRow>().ToList()) row.IsSelected = value;
+        }
+        finally { _bulk = false; }
+        UpdateSummary();
     }
 
     private void UpdateSummary()
@@ -400,11 +376,14 @@ public partial class ImportHostsDialog : Window
             ImportButton.IsEnabled = false;
             return;
         }
-        var rows = _plan.Rows;
-        var newSel = rows.Count(r => r.IsSelected && r.Status == ImportStatus.New);
-        var existSel = rows.Count(r => r.IsSelected && r.Status == ImportStatus.Existing);
+        // 한 번만 훑는다 (체크 하나 바꿀 때마다 불림)
+        int newSel = 0, existSel = 0, problems = 0;
+        foreach (var r in _plan.Rows)
+        {
+            if (r.Status is ImportStatus.Duplicate or ImportStatus.Invalid) problems++;
+            else if (r.IsSelected) { if (r.Status == ImportStatus.New) newSel++; else existSel++; }
+        }
         var update = ExistingUpdate.IsChecked == true;
-        var problems = rows.Count(r => r.Status is ImportStatus.Duplicate or ImportStatus.Invalid);
         var text = L.F("새 호스트 {0}개 추가", newSel);
         if (existSel > 0) text += " · " + (update ? L.F("이미 있는 호스트 {0}개 갱신", existSel) : L.F("이미 있는 호스트 {0}개 건너뜀", existSel));
         if (problems > 0) text += " · " + L.F("중복·오류 {0}개 제외", problems);

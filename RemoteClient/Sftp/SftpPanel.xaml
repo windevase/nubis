@@ -168,7 +168,7 @@
 
         <!-- 파일 목록 (끌어다 놓아 업로드 · 탐색기로 끌어내 다운로드) -->
         <Grid Grid.Row="4">
-            <ListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextPrimary}" SelectionMode="Extended"
+            <l:SftpListBox x:Name="FileList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextPrimary}" SelectionMode="Extended"
                      Padding="0,4,0,4"
                      AllowDrop="True" Drop="OnDrop" DragOver="OnDragOver" DragLeave="OnDragLeave"
                      PreviewMouseLeftButtonDown="OnListMouseDown" PreviewMouseMove="OnListMouseMove" PreviewMouseLeftButtonUp="OnListMouseUp"
@@ -176,7 +176,7 @@
                      IsTextSearchEnabled="True" TextSearch.TextPath="Name"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                      VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
-                <ListBox.ContextMenu>
+                <l:SftpListBox.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="{l:Tr '편집 (저장하면 서버에 반영)'}" Click="OnOpenItem"/>
                         <MenuItem Header="{l:Tr '읽기 전용 사본 열기'}" Click="OnOpenCopy"/>
@@ -188,9 +188,9 @@
                         <Separator/>
                         <MenuItem x:Name="HiddenMenuItem" Header="{l:Tr '숨김 파일 표시'}" InputGestureText="Ctrl+H" IsChecked="True" Click="OnToggleHidden"/>
                     </ContextMenu>
-                </ListBox.ContextMenu>
+                </l:SftpListBox.ContextMenu>
                 <!-- 행 컨테이너: Border 하나 (그림자 · 효과 · 애니메이션 없음 — 1만 행 이상에서도 가볍게). 높이 고정 28 -->
-                <ListBox.ItemContainerStyle>
+                <l:SftpListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
                         <Setter Property="FocusVisualStyle" Value="{StaticResource RowFocusRing}"/>
@@ -219,9 +219,9 @@
                             </Setter.Value>
                         </Setter>
                     </Style>
-                </ListBox.ItemContainerStyle>
+                </l:SftpListBox.ItemContainerStyle>
                 <!-- 행 내용: Grid + TextBlock 4개, 모두 OneTime 바인딩. 숨김 파일 이름은 NameBrush 로 흐리게 (트리거 없이) -->
-                <ListBox.ItemTemplate>
+                <l:SftpListBox.ItemTemplate>
                     <DataTemplate>
                         <Grid ToolTip="{Binding ToolTipText, Mode=OneTime}">
                             <Grid.ColumnDefinitions>
@@ -240,8 +240,8 @@
                                        HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
                     </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
+                </l:SftpListBox.ItemTemplate>
+            </l:SftpListBox>
 
             <!-- 끌어다 놓기 표시 -->
             <Border x:Name="DropHint" Margin="8" CornerRadius="{StaticResource RadiusLg}" BorderThickness="2" BorderBrush="{StaticResource Accent}"

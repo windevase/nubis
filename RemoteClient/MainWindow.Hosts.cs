@@ -104,7 +104,8 @@ public partial class MainWindow
             foreach (var gone in _selected.Where(h => !all.Contains(h)).ToList()) SetSelected(gone, false);
             UpdateSelectionBar();
         }
-        RebuildRows();
+        // 검색어가 바뀌었으면 맨 위부터 (예전 스크롤 위치를 되살리면 첫 그룹 머리글·첫 결과가 가려지거나 엉뚱한 곳이 보였다)
+        RebuildRows(keepScroll: q == _lastSearch);
         // 검색어가 바뀌었으면 첫 결과를 골라 둔다 (Enter = 그 호스트로 연결, ↑↓ 로 이동).
         // 검색어가 그대로인 새로 고침(자동 동기화·편집 저장·창 크기)은 키보드로 고른 카드를 유지한다
         var visible = VisibleHosts();
@@ -209,8 +210,8 @@ public partial class MainWindow
     private int _cardsPerRow = 3;
     private const double CardSlotWidth = 302;   // 카드 290 + 간격 12
 
-    /// <summary>그룹 헤더 + 카드 줄(창 폭에 맞춘 개수)로 행 목록 구성. 스크롤 위치는 유지</summary>
-    private void RebuildRows()
+    /// <summary>그룹 헤더 + 카드 줄(창 폭에 맞춘 개수)로 행 목록 구성. keepScroll 이면 스크롤 위치 유지, 아니면 맨 위로</summary>
+    private void RebuildRows(bool keepScroll = true)
     {
         var rows = new List<object>();
         foreach (var g in _groups)
@@ -223,7 +224,11 @@ public partial class MainWindow
         var sv = FindScrollViewer(HostRows);
         var offset = sv?.VerticalOffset ?? 0;
         HostRows.ItemsSource = rows;
-        if (sv != null && offset > 0) Dispatcher.BeginInvoke(() => sv.ScrollToVerticalOffset(offset), DispatcherPriority.Loaded);
+        // 키보드로 고른 카드의 그룹을 접었으면 고르기도 푼다 — 보이지 않는 카드에 Enter(연결) · Delete(삭제) 가 적용되지 않게
+        if (_highlighted is { } hl && !rows.Any(r => r is CardRow cr && cr.Hosts.Contains(hl))) SetHighlight(null);
+        if (sv == null || offset <= 0) return;
+        if (keepScroll) Dispatcher.BeginInvoke(() => sv.ScrollToVerticalOffset(offset), DispatcherPriority.Loaded);
+        else sv.ScrollToTop();
     }
 
     private void OnHostRowsSizeChanged(object sender, SizeChangedEventArgs e)
@@ -271,6 +276,7 @@ public partial class MainWindow
             // 검색창에 입력 중이면 포커스는 그대로 둔다 (검색창에서도 Enter · F2 · ↑↓ 가 이 카드에 적용됨)
             var clicked = CardRowOf(sender as DependencyObject);
             SetHighlight(h, clicked == null ? -1 : CardRows().IndexOf(clicked), scroll: false);
+            _highlightPicked = true;
             if (Keyboard.FocusedElement is not (TextBox or PasswordBox)) HostRows.Focus();
         }
         if (e.ClickCount == 2 && Keyboard.Modifiers == ModifierKeys.None) { Connect(h); e.Handled = true; }
@@ -344,7 +350,8 @@ public partial class MainWindow
         var note = h.IsCloud ? DetachFromCloud(copy) : null;
         // 저장은 편집 패널에서 "저장" 을 눌렀을 때만 (취소하면 사본이 남지 않음)
         OpenEditor(null, copy);
-        if (note != null) EditorError.Text = note;
+        // 열려 있던 편집 패널의 변경을 버리지 않기로 해 복제 패널이 열리지 않았으면 그 패널에 안내를 쓰지 않는다
+        if (note != null && ReferenceEquals(_template, copy)) EditorError.Text = note;
     }
 
     /// <summary>

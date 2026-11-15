@@ -17,6 +17,9 @@ public partial class MainWindow
     private int _highlightRow = -1;
     // ↑↓ 로 이동할 때 맞출 열 (카드가 적은 줄을 지나도 원래 열로 돌아오게)
     private int _highlightWantCol;
+    // 사용자가 방향키·Tab·클릭으로 직접 고른 카드인지 (검색어가 바뀌어 자동으로 첫 결과를 고른 것과 구분).
+    // 직접 골랐으면 검색어가 주소처럼 보여도 Enter 는 그 카드로 연결한다 (QuickConnect)
+    private bool _highlightPicked;
 
     /// <summary>화면의 카드 줄 (접힌 그룹 제외, RebuildRows 순서)</summary>
     private List<CardRow> CardRows() =>
@@ -25,6 +28,7 @@ public partial class MainWindow
     private void SetHighlight(HostEntry? h, int row = -1, bool scroll = true)
     {
         if (_highlighted != null) _highlighted.IsHighlighted = false;
+        if (!ReferenceEquals(_highlighted, h)) _highlightPicked = false;
         _highlighted = h;
         _highlightRow = -1;
         if (h == null) return;
@@ -52,6 +56,7 @@ public partial class MainWindow
         var (nr, nc) = GridMove(rows.Select(x => x.Hosts.Count).ToList(), cur, dRow, dCol);
         var keepCol = dRow != 0 ? _highlightWantCol : -1;
         SetHighlight(rows[nr].Hosts[nc], nr);
+        _highlightPicked = true;
         if (keepCol >= 0 && cur != null) _highlightWantCol = keepCol;
     }
 
@@ -136,7 +141,14 @@ public partial class MainWindow
     private void OnSearchKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter) { QuickConnect(); e.Handled = true; }
-        else if (e.Key == Key.Escape) { SearchBox.Clear(); SetHighlight(null); e.Handled = true; }
+        else if (e.Key == Key.Escape)
+        {
+            // 검색어가 비어 있으면 Esc 는 여러 개 고른 카드 선택 해제 (검색창에 포커스가 있으면 HandleSelectionKey 가 받지 않는다)
+            if (SearchBox.Text.Length == 0 && _selected.Count > 0) ClearSelection();
+            else SearchBox.Clear();
+            SetHighlight(null);
+            e.Handled = true;
+        }
         else if (e.Key is Key.Down or Key.Up)
         {
             if (_searchTimer?.IsEnabled == true) { _searchTimer.Stop(); RefreshHosts(); }
@@ -173,6 +185,9 @@ public partial class MainWindow
 
         if (_searchTimer?.IsEnabled == true) { _searchTimer.Stop(); RefreshHosts(); }   // 입력 직후 Enter
         var matches = _groups.SelectMany(g => g.Hosts).Distinct().ToList();
+        // 0) 결과에서 ↑↓·Tab·클릭으로 직접 고른 카드 → 그 호스트로. 예전에는 "10.1.2" 처럼 주소로 보이는 검색어면
+        //    고른 카드를 무시하고 입력한 글자(없는 주소)로 접속했다
+        if (_highlightPicked && _highlighted != null && matches.Contains(_highlighted)) { Connect(_highlighted); return; }
         var m = QuickRegex.Match(text);
 
         // 1) 이름·주소가 정확히 일치하는 호스트 → 그 호스트로 (10.0.0.1 을 쳤는데 10.0.0.12 로 붙는 일 방지)

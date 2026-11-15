@@ -27,6 +27,12 @@ public static class WinRm
     public const int HttpPort = 5985;
     private const int MaxOutput = 8000;
 
+    /// <summary>
+    /// 응답 하나를 메모리에 받는 최대 크기. 정상 응답은 MaxEnvelopeSize(512000) 안이다 —
+    /// HttpClient 기본값(2GB)이면 잘못된 서버·중간자가 끝없는 본문으로 메모리를 채울 수 있다
+    /// </summary>
+    private const int MaxResponseBytes = 4 * 1024 * 1024;
+
     private static readonly XNamespace S = "http://www.w3.org/2003/05/soap-envelope";
     private static readonly XNamespace Rsp = "http://schemas.microsoft.com/wbem/wsman/1/windows/shell";
     private static readonly XNamespace Wsman = "http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd";
@@ -339,7 +345,7 @@ public static class WinRm
                         errors == SslPolicyErrors.None || (cert != null && PinCertificate(host, cert)),
                 },
             };
-            _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60) };
+            _http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(60), MaxResponseContentBufferSize = MaxResponseBytes };
         }
 
         private bool PinCertificate(string host, System.Security.Cryptography.X509Certificates.X509Certificate cert)
@@ -404,7 +410,7 @@ public static class WinRm
                 MaxConnectionsPerServer = 1,
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(5),
                 UseCookies = false,
-            }) { Timeout = TimeSpan.FromSeconds(60) };
+            }) { Timeout = TimeSpan.FromSeconds(60), MaxResponseContentBufferSize = MaxResponseBytes };
             _auth = new NegotiateAuthentication(new NegotiateAuthenticationClientOptions
             {
                 Package = "NTLM",
