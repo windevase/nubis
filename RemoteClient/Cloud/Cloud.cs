@@ -50,6 +50,11 @@ public sealed class CloudProfile : INotifyPropertyChanged
     public int? RdpPort { get; set; }
     public bool UsePublicIp { get; set; }
     public bool IncludeStopped { get; set; } = true;
+    /// <summary>
+    /// 이 프로필의 쿠버네티스 클러스터(EKS·GKE·AKS·OKE·TKE)도 함께 동기화할지. Kubernetes 페이지의 "클라우드에서 찾기" 로
+    /// 클러스터를 찾으면 켜진다 — 클러스터를 쓰지 않는 프로필은 동기화 때 추가 API 를 부르지 않게
+    /// </summary>
+    public bool SyncClusters { get; set; }
     public DateTime? LastSync { get; set; }
     /// <summary>사용자가 목록에서 삭제한 인스턴스 (동기화해도 다시 추가하지 않음)</summary>
     public List<string> HiddenInstances { get; set; } = new();
@@ -184,6 +189,34 @@ public sealed record CloudFetchResult(List<CloudInstance> Items, List<string> Er
         Errors.Count > DeniedRegions.Distinct(StringComparer.OrdinalIgnoreCase).Count();
 }
 
+/// <summary>
+/// 클라우드에서 조회한 쿠버네티스 클러스터. Id 는 제공자 접두어를 붙인다 (eks:arn · gke:selfLink · aks:resourceId · oke:ocid · tke:id).
+/// Kubeconfig 는 그 클러스터 하나만 담은 kubeconfig — 보통 exec 플러그인(aws · gke-gcloud-auth-plugin · kubelogin · oci)이라 비밀값이 없고,
+/// TKE 처럼 토큰·인증서가 든 경우도 있어 언제나 암호화해 저장한다 (K8sCluster.ProtectedKubeconfig)
+/// </summary>
+public sealed record CloudCluster(string Id, string Name, string Region, string Endpoint, string Version, string State,
+    K8sAuthKind AuthKind, string Kubeconfig, string ContextName)
+{
+    public bool IsRunning => State.Equals("running", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>제공자마다 다른 정상 상태 이름을 "running" 으로 맞춘다 (EKS·OKE ACTIVE, GKE RUNNING, AKS Succeeded, TKE Running)</summary>
+    public static string NormalizeState(string? state) => (state ?? "").Trim().ToLowerInvariant() switch
+    {
+        "active" or "running" or "succeeded" => "running",
+        "" => "unknown",
+        var s => s,
+    };
+}
+
+/// <summary>클러스터 조회 결과 (CloudFetchResult 와 같은 규칙: Errors 가 있으면 삭제 판단에 쓰지 않는다)</summary>
+public sealed record ClusterFetchResult(List<CloudCluster> Items, List<string> Errors)
+{
+    public bool IsPartial => Errors.Count > 0;
+    public List<string> DeniedRegions { get; init; } = new();
+    public bool HasUnexpectedErrors => Errors.Count > DeniedRegions.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    public static ClusterFetchResult Empty => new(new List<CloudCluster>(), new List<string>());
+}
+
 public interface ICloudProvider
 {
     CloudProvider Kind { get; }
@@ -192,6 +225,8 @@ public interface ICloudProvider
     string LoginCommand(CloudProfile? p);
     Task<List<CloudCandidate>> DiscoverAsync(CancellationToken ct);
     Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct);
+    /// <summary>쿠버네티스 클러스터 (조회 API 만). 지원하지 않는 제공자는 빈 결과</summary>
+    Task<ClusterFetchResult> FetchClustersAsync(CloudProfile p, CancellationToken ct) => Task.FromResult(ClusterFetchResult.Empty);
 }
 
 public static class CloudProviders
@@ -272,11 +307,18 @@ public static class CloudProviders
         e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array
             ? v.EnumerateArray() : Enumerable.Empty<JsonElement>();
 
-    internal static async Task<JsonElement> GetJsonAsync(string url, string bearer, CancellationToken ct, string? quotaProject = null)
+    internal static Task<JsonElement> GetJsonAsync(string url, string bearer, CancellationToken ct, string? quotaProject = null) =>
+        SendJsonAsync(HttpMethod.Get, url, bearer, null, ct, quotaProject);
+
+    /// <summary>
+    /// Bearer 토큰 JSON 요청. POST 는 조회성 동작에만 쓴다 (AKS listClusterUserCredential 처럼 자격 증명을 "읽는" API) — 리소스를 바꾸는 호출 금지
+    /// </summary>
+    internal static async Task<JsonElement> SendJsonAsync(HttpMethod method, string url, string bearer, string? jsonBody, CancellationToken ct, string? quotaProject = null)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        using var req = new HttpRequestMessage(method, url);
         req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         if (!string.IsNullOrEmpty(quotaProject)) req.Headers.Add("x-goog-user-project", quotaProject);
+        if (jsonBody != null) req.Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json");
         using var resp = await Http.SendAsync(req, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)

@@ -44,6 +44,8 @@ public sealed class K8sCluster
     public string? State { get; set; }
     /// <summary>마지막으로 받은 클라우드 이름. Name 이 이것과 다르면 사용자가 바꾼 것 — 동기화가 덮어쓰지 않는다</summary>
     public string? CloudName { get; set; }
+    /// <summary>빠짐없는 동기화에서 연속으로 보이지 않은 횟수 (두 번이면 지운다 — 목록 API 가 잠깐 빠뜨려도 바로 지우지 않게)</summary>
+    public int MissCount { get; set; }
 
     public bool Favorite { get; set; }
     public DateTime? LastConnected { get; set; }
