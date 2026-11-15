@@ -72,7 +72,26 @@ public partial class SftpPanel
         e.Handled = true;
         // 머리글이 버튼이 되면서 마우스로 누르면 포커스를 가져간다 — 목록으로 돌려 Delete · F2 · Enter · Ctrl+H 가 계속 먹게
         // (Tab · Space 로 누른 경우는 머리글에 포커스를 둔다)
-        if (InputManager.Current.MostRecentInputDevice is MouseDevice) FileList.Focus();
+        if (InputManager.Current.MostRecentInputDevice is MouseDevice) FocusListRow();
+    }
+
+    /// <summary>
+    /// 목록을 다시 채운 뒤(ItemsSource 교체로 행 컨테이너가 새로 만들어짐) 키보드 포커스를 선택한 행(없으면 첫 행)에 둔다.
+    /// ListBox 자체에만 포커스가 있으면 ↑↓ 가 선택 위치가 아니라 맨 위 행부터 다시 시작해 선택이 풀린다
+    /// </summary>
+    /// <param name="preferName">포커스가 있던 행의 전체 경로 — 새 목록에 남아 있으면 그 행으로 (Ctrl+방향키로 선택 없이 옮긴 위치)</param>
+    private void FocusListRow(string? preferName = null)
+    {
+        object? target = preferName == null ? null
+            : FileList.Items.Cast<SftpItem>().FirstOrDefault(i => string.Equals(i.FullName, preferName, StringComparison.Ordinal));
+        target ??= FileList.SelectedItem ?? (FileList.Items.Count > 0 ? FileList.Items[0] : null);
+        if (target != null)
+        {
+            FileList.ScrollIntoView(target);
+            FileList.UpdateLayout();   // 가상화 — 화면 밖 행은 컨테이너가 이때 만들어진다
+            if (FileList.ItemContainerGenerator.ContainerFromItem(target) is ListBoxItem row && row.Focus()) return;
+        }
+        FileList.Focus();
     }
 
     /// <summary>머리글: 정렬 중인 열만 글자를 한 단계 밝게 + 방향 화살표(글리프). 나머지는 3차 글자색, 화살표 숨김</summary>
@@ -96,7 +115,11 @@ public partial class SftpPanel
     {
         _showHidden = !_showHidden;
         HiddenMenuItem.IsChecked = _showHidden;
+        // Ctrl+H 를 목록에서 눌렀으면 포커스가 있던 행이 목록 교체로 사라진다 — 선택한 행으로 되돌려 키 입력이 이어지게
+        var hadFocus = FileList.IsKeyboardFocusWithin;
+        var focused = (Keyboard.FocusedElement as ListBoxItem)?.DataContext as SftpItem;
         ApplyView(keepSelection: true);
+        if (hadFocus) FocusListRow(focused?.FullName);
     }
 
     // ===================== 경로 입력 · 이름 검사 =====================

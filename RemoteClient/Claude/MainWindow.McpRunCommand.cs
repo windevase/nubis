@@ -139,18 +139,21 @@ public partial class MainWindow
             // 오류와 취소가 겹쳐도 취소 안내가 나가게)
             try { await all.WaitAsync(cts.Token); }
             catch { }
-            if (!cts.IsCancellationRequested)
+            // 취소가 모든 실행이 끝난 직후에 들어왔으면(실행 중 표시줄의 취소와 완료가 겹침) 실제로 실행된 결과를 '취소' 로 버리지 않고 돌려준다
+            if (all.Status != TaskStatus.RanToCompletion && cts.IsCancellationRequested)
             {
-                try { await all; }
-                catch (OperationCanceledException) { }
-            }
-            else _ = all.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
-            if (cts.IsCancellationRequested)
-            {
+                _ = all.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
                 AuditLog.Write("run_command", auditLabels, command, "승인·실행 후 사용자가 취소");
                 throw new McpToolException($"사용자가 실행을 취소했습니다 ({(DateTime.Now - started).TotalSeconds:0}초 경과). " +
                     "아직 시작하지 않은 서버에는 보내지 않았고, 실행 중이던 명령에는 중단 신호(SSH SIGTERM · WinRM 셸 삭제)를 보냈지만 " +
                     "서버가 신호를 무시하거나 이미 일부를 실행했을 수 있습니다.");
+            }
+            // 실행 오류(서버별 오류는 결과에 담기므로 여기 오는 건 예상 밖 예외)는 감사 로그에 남기고 그대로 올린다
+            try { await all; }
+            catch (Exception ex)
+            {
+                AuditLog.Write("run_command", auditLabels, command, $"승인·실행 중 오류: {CloudProviders.FirstLine(ex.Message)}");
+                throw;
             }
             results = sshTask.Result.Concat(winTask.Result).ToList();
         }

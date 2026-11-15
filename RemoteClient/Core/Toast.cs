@@ -89,7 +89,7 @@ public static class Toast
         if (_owner == null || _anchor == null || !_owner.IsLoaded) return;
         while (Items.Count >= MaxVisible) Remove(Items[0]);
         // 다른 앱을 쓰는 중에 생긴 알림(백그라운드 전송 완료 등)은 그 앱 위에 띄우지 않고, 돌아왔을 때 보여 준다
-        if (!_hidden && !AnyAppWindowActive()) SetHidden(true);
+        if (!_hidden && !AppIsForeground()) SetHidden(true);
 
         var body = Build(text, kind);
         var popup = new Popup
@@ -239,7 +239,7 @@ public static class Toast
     private static void OnOwnerMoved(object? sender, EventArgs e) { if (Items.Count > 0) Reposition(); }
 
     private static void OnOwnerStateChanged(object? sender, EventArgs e) =>
-        SetHidden(_owner?.WindowState == WindowState.Minimized || (_owner?.IsActive == false && !AnyAppWindowActive()));
+        SetHidden(_owner?.WindowState == WindowState.Minimized || (_owner?.IsActive == false && !AppIsForeground()));
 
     private static void OnAppActivated(object? sender, EventArgs e) => SetHidden(_owner?.WindowState == WindowState.Minimized);
 
@@ -248,6 +248,24 @@ public static class Toast
     /// 이 앱 창끼리(메인 ↔ 대화상자) 오가는 것은 Application.Deactivated 가 오지 않으므로 그대로 보인다
     /// </summary>
     private static void OnAppDeactivated(object? sender, EventArgs e) => SetHidden(true);
+
+    /// <summary>
+    /// 이 앱(프로세스)이 앞에 있는지. WPF 창의 IsActive 만 보면 파일 열기 · 저장 같은 기본 대화상자(Win32)가 떠 있을 때 false 가 되어,
+    /// 그 사이에 뜬 토스트가 숨겨진 채 남는다 (같은 스레드의 창끼리는 Application.Activated 가 다시 오지 않음) — 앞 창의 프로세스로 판단한다
+    /// </summary>
+    private static bool AppIsForeground()
+    {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return AnyAppWindowActive();   // 전환 중에는 잠깐 0 일 수 있다
+        GetWindowThreadProcessId(fg, out var pid);
+        return pid == (uint)Environment.ProcessId;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     private static bool AnyAppWindowActive()
     {

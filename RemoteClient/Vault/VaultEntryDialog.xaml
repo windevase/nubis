@@ -14,18 +14,18 @@
             <TextBlock Text="{l:Tr '사용자명과 비밀번호, SSH 키 중 필요한 것을 저장하세요. 비밀번호와 키 중 하나는 있어야 합니다.'}"
                        Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
 
-            <TextBlock Text="{l:Tr '이름'}" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="NameBox" Tag="{l:Tr '예: 운영 서버 root, 배포 계정'}"/>
+            <TextBlock x:Name="NameLabel" Text="{l:Tr '이름'}" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="NameBox" AutomationProperties.LabeledBy="{Binding ElementName=NameLabel}" Tag="{l:Tr '예: 운영 서버 root, 배포 계정'}"/>
 
-            <TextBlock Text="{l:Tr '사용자명'}" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="UserBox" Tag="{l:Tr '예: root  /  ubuntu  /  DOMAIN\\user'}"/>
+            <TextBlock x:Name="UserLabel" Text="{l:Tr '사용자명'}" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="UserBox" AutomationProperties.LabeledBy="{Binding ElementName=UserLabel}" Tag="{l:Tr '예: root  /  ubuntu  /  DOMAIN\\user'}"/>
 
             <Grid Margin="0,16,0,6">
                 <TextBlock x:Name="PasswordLabel" Text="{l:Tr '비밀번호 (선택)'}" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
                 <CheckBox x:Name="ClearPasswordBox" Content="{l:Tr '저장된 비밀번호 지우기'}" HorizontalAlignment="Right" FontSize="12"
                           Visibility="Collapsed"/>
             </Grid>
-            <PasswordBox x:Name="PasswordBox"/>
+            <PasswordBox x:Name="PasswordBox" AutomationProperties.LabeledBy="{Binding ElementName=PasswordLabel}"/>
 
             <!-- 비밀번호 / 키 구획 구분선 -->
             <Border BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0" Margin="0,18,0,0"/>
@@ -43,15 +43,15 @@
                     </Button>
                 </StackPanel>
             </Grid>
-            <TextBox x:Name="KeyBox" Height="110" AcceptsReturn="True" TextWrapping="NoWrap" Padding="10,8"
+            <TextBox x:Name="KeyBox" AutomationProperties.LabeledBy="{Binding ElementName=KeyLabel}" Height="110" AcceptsReturn="True" TextWrapping="NoWrap" Padding="10,8"
                      VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                      FontFamily="{StaticResource MonoFont}" FontSize="11" TextChanged="OnKeyTextChanged"
                      Tag="{l:Tr '-----BEGIN OPENSSH PRIVATE KEY----- 또는 PuTTY(.ppk) 내용 붙여넣기'}"/>
-            <TextBlock Text="{l:Tr '키 암호 (키에 암호가 걸려 있을 때)'}" Style="{StaticResource FieldLabel}"/>
-            <PasswordBox x:Name="PassphraseBox"/>
+            <TextBlock x:Name="PassphraseLabel" Text="{l:Tr '키 암호 (키에 암호가 걸려 있을 때)'}" Style="{StaticResource FieldLabel}"/>
+            <PasswordBox x:Name="PassphraseBox" AutomationProperties.LabeledBy="{Binding ElementName=PassphraseLabel}"/>
 
-            <TextBlock Text="{l:Tr '메모 (선택)'}" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="NoteBox"/>
+            <TextBlock x:Name="NoteLabel" Text="{l:Tr '메모 (선택)'}" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="NoteBox" AutomationProperties.LabeledBy="{Binding ElementName=NoteLabel}"/>
 
             <!-- 보안 안내 (방패 아이콘 + 3차 글자) -->
             <Grid Margin="2,14,0,0">

@@ -47,7 +47,8 @@
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Foreground" Value="{StaticResource Text}"/>
-                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                            <!-- 키보드(Tab · ↑↓)로 옮겨 다닐 때 어느 행에 있는지 보이게 — 마우스 클릭에는 나오지 않는다 -->
+                            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
                             <Setter Property="Template">

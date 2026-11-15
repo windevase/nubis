@@ -59,6 +59,7 @@ public partial class ImportHostsDialog : Window
         try { AdDomainBox.Text = ActiveDirectoryImport.CurrentDomain() ?? ""; }
         catch { /* 도메인에 가입하지 않은 PC — 직접 입력 */ }
         AdPasswordBox.ToolTip = L.T("비밀번호");
+        System.Windows.Automation.AutomationProperties.SetName(AdPasswordBox, L.T("비밀번호"));   // 비밀번호 칸은 placeholder 가 없어 화면 낭독기 이름을 따로
         DataObject.AddPastingHandler(PasteBox, OnPasting);
         UpdateVaultButtons();
         UpdateGroupHint();
@@ -476,14 +477,12 @@ public partial class ImportHostsDialog : Window
 
     private void UpdateVaultButtons()
     {
-        SshVaultButton.Content = VaultLabel(_sshVault);
-        RdpVaultButton.Content = VaultLabel(_rdpVault);
+        // 사용자명이 없는 계정은 "이름  ()" 가 아니라 이름만, 좁은 옵션 칸(250)에서 넘치면 … + 툴팁
+        SshVaultButton.Content = VaultPickerDialog.ButtonContent(_sshVault, L.T("지정 안 함 (기본 계정)"));
+        RdpVaultButton.Content = VaultPickerDialog.ButtonContent(_rdpVault, L.T("지정 안 함 (기본 계정)"));
         SshVaultClear.Visibility = _sshVault != null ? Visibility.Visible : Visibility.Collapsed;
         RdpVaultClear.Visibility = _rdpVault != null ? Visibility.Visible : Visibility.Collapsed;
     }
-
-    private static string VaultLabel(Guid? id) =>
-        VaultStore.Get(id) is { } v ? $"{v.Name}  ({v.Username})" : L.T("지정 안 함 (기본 계정)");
 
     // ===================== 등록 · 공통 =====================
 

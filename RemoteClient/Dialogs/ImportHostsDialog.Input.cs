@@ -5,7 +5,7 @@ using System.Windows.Input;
 
 namespace Nubis;
 
-/// <summary>가져오기 창: 키보드(Enter 로 불러오기 · Esc) · 미리보기 검색 · 경고 펼치기 · 열 머리글 맞춤</summary>
+/// <summary>가져오기 창: 키보드(Enter 로 불러오기 · Esc · 목록 Space 체크) · 미리보기 검색 · 경고 펼치기 · 열 머리글 맞춤</summary>
 public partial class ImportHostsDialog
 {
     // ===================== 키보드 =====================
@@ -49,8 +49,17 @@ public partial class ImportHostsDialog
         e.Handled = true;
     }
 
-    /// <summary>경고 목록 펼치기 · 접기</summary>
-    private void OnToggleWarnings(object sender, MouseButtonEventArgs e)
+    /// <summary>미리보기 목록에서 Space = 고른 줄 체크 켜기 · 끄기 (체크 상자에 포커스가 있으면 체크 상자가 직접 처리)</summary>
+    private void OnRowListKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Space || e.OriginalSource is CheckBox || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (RowList.SelectedItem is not ImportRow row || !row.IsSelectable) return;
+        row.IsSelected = !row.IsSelected;
+        e.Handled = true;
+    }
+
+    /// <summary>경고 목록 펼치기 · 접기 (머리글 버튼 — 마우스 · Enter · Space)</summary>
+    private void OnToggleWarnings(object sender, RoutedEventArgs e)
     {
         WarningsScroll.MaxHeight = WarningsScroll.MaxHeight > 100 ? 74 : 260;
         // 펼친 상태면 위 화살표(접기), 접힌 상태면 아래 화살표(펼치기)
