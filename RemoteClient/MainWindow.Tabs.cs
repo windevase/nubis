@@ -356,9 +356,10 @@ public partial class MainWindow
             SelectTabNumber(e.Key - Key.D0);
             e.Handled = true;
         }
-        else if (ctrl && !shift && e.Key == Key.K)
+        else if (ctrl && e.Key == Key.K)
         {
-            ShowCommandPalette();   // 호스트 · 탭 · 동작 통합 검색 (Ctrl+K)
+            // 호스트 · 탭 · 동작 통합 검색 (Ctrl+K). Ctrl+Shift+K 도 같게 — 터미널 포커스에서 쓰는 키와 맞춘다 (OnTerminalHotkey "search")
+            ShowCommandPalette();
             e.Handled = true;
         }
         else if (ctrl && e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)

@@ -20,6 +20,17 @@
             <Setter Property="l:Ui.CornerRadius" Value="{StaticResource RadiusSm}"/>
             <Setter Property="l:Ui.HoverBrush" Value="{StaticResource SubtleFillHover}"/>
         </Style>
+        <!-- 행 키보드 포커스 표시 (키보드로 옮길 때만 보임 — Ctrl+방향키로 선택 없이 옮기는 위치도 보이게). 행 Border 의 Margin · 모서리와 맞춘다 -->
+        <Style x:Key="RowFocusRing">
+            <Setter Property="Control.Template">
+                <Setter.Value>
+                    <ControlTemplate>
+                        <Border Margin="6,0,6,1" CornerRadius="{StaticResource RadiusMd}" BorderBrush="{StaticResource Accent}"
+                                BorderThickness="1" SnapsToDevicePixels="True"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
         <!-- 머리글 정렬 화살표 글리프 -->
         <Style x:Key="SortArrow" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
@@ -182,7 +193,7 @@
                 <ListBox.ItemContainerStyle>
                     <Style TargetType="ListBoxItem">
                         <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-                        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                        <Setter Property="FocusVisualStyle" Value="{StaticResource RowFocusRing}"/>
                         <Setter Property="Template">
                             <Setter.Value>
                                 <ControlTemplate TargetType="ListBoxItem">

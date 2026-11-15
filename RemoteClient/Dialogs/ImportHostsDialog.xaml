@@ -80,7 +80,7 @@
                                Text="{l:Tr '다른 도구나 목록에서 서버를 읽어 미리 본 뒤 등록합니다. 비밀번호는 가져오지 않으니 계정은 Vault 로 지정하세요.'}"/>
                 </StackPanel>
                 <Button Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE711;" VerticalAlignment="Top" Margin="12,0,0,0"
-                        Click="OnCancel" ToolTip="{l:Tr '닫기'}"/>
+                        Click="OnCancel" ToolTip="{l:Tr '닫기'}" AutomationProperties.Name="{l:Tr '닫기'}"/>
             </Grid>
 
             <!-- 출처 선택 -->
@@ -398,7 +398,7 @@
                             <Button x:Name="SshVaultButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                     Padding="12,0,36,0" Click="OnPickSshVault"/>
                             <Button x:Name="SshVaultClear" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="10" HorizontalAlignment="Right"
-                                    Margin="0,0,4,0" Click="OnClearSshVault" ToolTip="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
+                                    Margin="0,0,4,0" Click="OnClearSshVault" ToolTip="{l:Tr '지정 해제'}" AutomationProperties.Name="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
                         </Grid>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr 'RDP Vault 계정'}"/>
@@ -406,7 +406,7 @@
                             <Button x:Name="RdpVaultButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                     Padding="12,0,36,0" Click="OnPickRdpVault"/>
                             <Button x:Name="RdpVaultClear" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="10" HorizontalAlignment="Right"
-                                    Margin="0,0,4,0" Click="OnClearRdpVault" ToolTip="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
+                                    Margin="0,0,4,0" Click="OnClearRdpVault" ToolTip="{l:Tr '지정 해제'}" AutomationProperties.Name="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
                         </Grid>
                         <TextBlock Style="{StaticResource Hint}" Margin="2,6,0,0"
                                    Text="{l:Tr '고르면 가져온 사용자명 대신 그 계정으로 로그인합니다. 비우면 기본 계정을 따릅니다.'}"/>

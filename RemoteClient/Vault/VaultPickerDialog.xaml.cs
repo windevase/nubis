@@ -29,6 +29,8 @@ public partial class VaultPickerDialog : Window
         // 지금 쓰는 계정만 미리 고른다. 아무것도 고르지 않은 채 Enter 를 누르면 첫 계정이 지정되던 문제 —
         // 검색어를 입력한 경우에만 첫 결과를 골라 "검색 → Enter" 로 바로 고를 수 있게 한다
         EntryList.SelectedItem = items.FirstOrDefault(e => e.Id == select) ?? (q.Length > 0 ? items.FirstOrDefault() : null);
+        // 가상화 목록이라 지금 쓰는 계정이 아래쪽에 있으면 선택이 화면 밖에 숨는다 — 보이게 스크롤 (아직 그려지기 전이면 ListBox 가 미뤄서 처리)
+        if (EntryList.SelectedItem != null) EntryList.ScrollIntoView(EntryList.SelectedItem);
         EmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 

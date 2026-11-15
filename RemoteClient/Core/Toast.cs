@@ -58,9 +58,14 @@ public static class Toast
         owner.LocationChanged += OnOwnerMoved;
         owner.SizeChanged += OnOwnerMoved;
         owner.StateChanged += OnOwnerStateChanged;
-        owner.Activated += OnOwnerActivated;
-        owner.Deactivated += OnOwnerDeactivated;
         owner.Closed += OnOwnerClosed;
+        // 앱 단위 활성/비활성 — 메인 창이 아니라 대화상자에서 다른 앱으로 넘어가도 숨긴다
+        // (Application 은 앱 수명 동안 살아 있고 Detach 에서 해제한다)
+        if (Application.Current is { } app)
+        {
+            app.Activated += OnAppActivated;
+            app.Deactivated += OnAppDeactivated;
+        }
     }
 
     /// <summary>토스트 띄우기 (ms = 보여 줄 시간, 최소 1초)</summary>
@@ -83,6 +88,8 @@ public static class Toast
     {
         if (_owner == null || _anchor == null || !_owner.IsLoaded) return;
         while (Items.Count >= MaxVisible) Remove(Items[0]);
+        // 다른 앱을 쓰는 중에 생긴 알림(백그라운드 전송 완료 등)은 그 앱 위에 띄우지 않고, 돌아왔을 때 보여 준다
+        if (!_hidden && !AnyAppWindowActive()) SetHidden(true);
 
         var body = Build(text, kind);
         var popup = new Popup
@@ -234,16 +241,13 @@ public static class Toast
     private static void OnOwnerStateChanged(object? sender, EventArgs e) =>
         SetHidden(_owner?.WindowState == WindowState.Minimized || (_owner?.IsActive == false && !AnyAppWindowActive()));
 
-    private static void OnOwnerActivated(object? sender, EventArgs e) => SetHidden(_owner?.WindowState == WindowState.Minimized);
+    private static void OnAppActivated(object? sender, EventArgs e) => SetHidden(_owner?.WindowState == WindowState.Minimized);
 
     /// <summary>
     /// 다른 앱으로 전환하면 숨긴다 (Popup 은 항상 위 창이라 다른 앱 위에 떠 있게 된다).
-    /// 이 앱의 대화상자로 포커스가 옮겨 간 경우는 그대로 둔다 — 활성 창이 바뀐 뒤에 판단하도록 한 박자 늦춘다
+    /// 이 앱 창끼리(메인 ↔ 대화상자) 오가는 것은 Application.Deactivated 가 오지 않으므로 그대로 보인다
     /// </summary>
-    private static void OnOwnerDeactivated(object? sender, EventArgs e)
-    {
-        _owner?.Dispatcher.BeginInvoke(() => { if (_owner is { IsActive: false }) SetHidden(!AnyAppWindowActive()); }, DispatcherPriority.Background);
-    }
+    private static void OnAppDeactivated(object? sender, EventArgs e) => SetHidden(true);
 
     private static bool AnyAppWindowActive()
     {
@@ -263,9 +267,12 @@ public static class Toast
             _owner.LocationChanged -= OnOwnerMoved;
             _owner.SizeChanged -= OnOwnerMoved;
             _owner.StateChanged -= OnOwnerStateChanged;
-            _owner.Activated -= OnOwnerActivated;
-            _owner.Deactivated -= OnOwnerDeactivated;
             _owner.Closed -= OnOwnerClosed;
+        }
+        if (Application.Current is { } app)
+        {
+            app.Activated -= OnAppActivated;
+            app.Deactivated -= OnAppDeactivated;
         }
         _owner = null;
         _anchor = null;

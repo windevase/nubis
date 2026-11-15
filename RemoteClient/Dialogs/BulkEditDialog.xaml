@@ -82,7 +82,7 @@
                 <Grid Grid.Row="4" Grid.Column="1" Margin="0,0,0,12">
                     <TextBox x:Name="GroupBox" Padding="10,0,36,0" TextChanged="OnFieldChanged" Tag="{l:Tr '비우면 그룹 없음 (Hosts)'}"/>
                     <Button Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" HorizontalAlignment="Right" Margin="0,0,4,0"
-                            Click="OnPickGroup" ToolTip="{l:Tr '기존 그룹에서 고르기'}"/>
+                            Click="OnPickGroup" ToolTip="{l:Tr '기존 그룹에서 고르기'}" AutomationProperties.Name="{l:Tr '기존 그룹에서 고르기'}"/>
                 </Grid>
 
                 <!-- 접속 IP -->

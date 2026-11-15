@@ -77,8 +77,9 @@ public partial class MainWindow
         var work = Task.Run(() => provider.DiscoverAsync(cts.Token));
         // WaitAsync 는 먼저 끝나면 타이머·취소 등록을 바로 정리한다 (예전 Task.Delay 는 탐색이 끝난 뒤에도 제한 시간까지 타이머가 남았다)
         try { return await work.WaitAsync(DiscoverTimeout + TimeSpan.FromSeconds(2), outer); }
-        catch (TimeoutException)
+        catch (TimeoutException) when (!work.IsCompleted)
         {
+            // (탐색 자체가 TimeoutException 으로 끝난 경우는 원래 메시지 그대로 올린다 — 예전 동작)
             // 늦게 끝나는 탐색의 예외는 관찰만 한다 (UnobservedTaskException 방지)
             _ = work.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
             outer.ThrowIfCancellationRequested();

@@ -131,6 +131,19 @@ public partial class CommandPalette : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
+        // 한글 조합 중 Enter/Esc 는 Key.ImeProcessed 로 온다 — 조합을 확정한 뒤(TextChanged → 결과 갱신) 실행되게 한 박자 늦춘다.
+        // IME 가 확정 뒤 같은 키를 한 번 더 보내도 Run · CloseOnce 는 한 번만 동작한다
+        if (e.Key == Key.ImeProcessed && e.ImeProcessedKey is Key.Enter or Key.Escape)
+        {
+            var imeKey = e.ImeProcessedKey;
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closing) return;
+                if (imeKey == Key.Escape) { CloseOnce(); return; }
+                if (Results.SelectedItem is PaletteItem it) Run(it, ModifierFor(mods));
+            }, DispatcherPriority.Input);
+            return;
+        }
         switch (key)
         {
             case Key.Escape: CloseOnce(); e.Handled = true; return;
@@ -140,15 +153,17 @@ public partial class CommandPalette : Window
             case Key.PageUp: Move(-8); e.Handled = true; return;
             case Key.Tab: e.Handled = true; return;   // 포커스는 늘 검색창
             case Key.Enter:
-                var mod = mods.HasFlag(ModifierKeys.Control) ? PaletteModifier.Edit
-                    : mods.HasFlag(ModifierKeys.Shift) || mods.HasFlag(ModifierKeys.Alt) ? PaletteModifier.PublicIp
-                    : PaletteModifier.None;
-                if (Results.SelectedItem is PaletteItem item) Run(item, mod);
+                if (Results.SelectedItem is PaletteItem item) Run(item, ModifierFor(mods));
                 e.Handled = true;
                 return;
         }
         base.OnPreviewKeyDown(e);
     }
+
+    private static PaletteModifier ModifierFor(ModifierKeys mods) =>
+        mods.HasFlag(ModifierKeys.Control) ? PaletteModifier.Edit
+        : mods.HasFlag(ModifierKeys.Shift) || mods.HasFlag(ModifierKeys.Alt) ? PaletteModifier.PublicIp
+        : PaletteModifier.None;
 
     private void OnResultsMouseUp(object sender, MouseButtonEventArgs e)
     {
@@ -163,6 +178,8 @@ public partial class CommandPalette : Window
     /// <summary>창을 먼저 닫고, 메인 창이 다시 활성화된 뒤 실행한다</summary>
     private void Run(PaletteItem item, PaletteModifier mod)
     {
+        // 한 번만 실행 (Enter 반복 · IME 가 보낸 키 두 번 · 닫히는 중 클릭)
+        if (_executed || _closing) return;
         var owner = _owner;
         _executed = true;
         CloseOnce();
@@ -201,6 +218,8 @@ public partial class CommandPalette : Window
         _closed = true;
         if (ReferenceEquals(_current, this)) _current = null;
         SourceInitialized -= OnPaletteSourceInitialized;
+        // 닫힌 창의 Owner 속성에 기대지 않고 열 때 받은 메인 창을 쓴다
+        var owner = _owner;
         // 호스트 · 탭(세션 뷰) · 동작 대리자(메인 창) 참조를 모두 놓는다
         Results.ItemsSource = null;
         _results.ReplaceAll(Array.Empty<PaletteItem>());
@@ -209,7 +228,7 @@ public partial class CommandPalette : Window
         _owner = null;
         // 실행 없이 닫혔으면(Esc · 바깥 클릭) 메인 창에 포커스를 돌려준다.
         // 다른 앱으로 전환해서 닫힌 경우에는 메인 창을 앞으로 끌어오지 않는다 (OnPaletteDismissed 가 활성 여부를 다시 본다)
-        if (Owner is MainWindow { IsVisible: true } o && !_executed)
+        if (owner is { IsVisible: true } o && !_executed)
         {
             // 메인 창이 닫히는 중(소유 창이 함께 닫힘)이면 Activate 가 예외를 낸다 — 그때는 할 일이 없다
             try

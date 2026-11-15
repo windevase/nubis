@@ -270,7 +270,7 @@
                 <Button Style="{StaticResource TitleButton}" Content="&#xE921;" Click="OnMinimize"
                         ToolTip="{l:Tr '최소화'}" AutomationProperties.Name="{l:Tr '최소화'}"/>
                 <Button x:Name="MaxButton" Style="{StaticResource TitleButton}" Content="&#xE922;" Click="OnMaximize"/>
-                <Button Style="{StaticResource TitleButton}" Content="&#xE8BB;" Tag="#E5484D" Click="OnCloseWindow"
+                <Button Style="{StaticResource TitleButton}" Content="&#xE8BB;" Tag="{StaticResource Danger}" Click="OnCloseWindow"
                         ToolTip="{l:Tr '닫기'}" AutomationProperties.Name="{l:Tr '닫기'}"/>
             </StackPanel>
         </Grid>
@@ -309,14 +309,14 @@
                 </Border>
                 <ContentControl x:Name="ClaudeHost" Grid.Row="1"/>
                 <!-- Claude 의 run_command 실행 중 표시 + 취소 -->
-                <Border x:Name="RunBar" Grid.Row="1" VerticalAlignment="Top" Background="#2A2410" BorderBrush="#5A4A1A"
+                <Border x:Name="RunBar" Grid.Row="1" VerticalAlignment="Top" Background="{StaticResource WarningSubtle}" BorderBrush="{StaticResource Stroke}"
                         BorderThickness="0,0,0,1" Padding="12,6,8,6" Visibility="Collapsed">
                     <DockPanel>
                         <Button DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Content="{l:Tr '취소'}" Padding="10,3"
                                 FontSize="12" Click="OnCancelRuns"/>
                         <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True" Width="40" Height="3" Margin="0,0,10,0"
                                      VerticalAlignment="Center"/>
-                        <TextBlock x:Name="RunBarText" Foreground="#F5B740" FontSize="12" VerticalAlignment="Center"
+                        <TextBlock x:Name="RunBarText" Foreground="{StaticResource Warning}" FontSize="12" VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
                 </Border>
@@ -424,6 +424,7 @@
                                 </Button>
                                 <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory 에서 한꺼번에 등록 -->
                                 <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="12,7" Margin="8,0,0,0"
+                                        AutomationProperties.Name="{l:Tr '가져오기...'}"
                                         ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 서버를 한꺼번에 가져옵니다'}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
@@ -551,7 +552,7 @@
                                                     </TextBlock>
                                                     <Button x:Name="syncBtn" Grid.Column="5" Style="{StaticResource SubtleButton}" Padding="8,4"
                                                             FontSize="12" Foreground="{StaticResource TextSecondary}"
-                                                            Click="OnGroupSync" Visibility="Collapsed" ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}">
+                                                            Click="OnGroupSync" Visibility="Collapsed" AutomationProperties.Name="{Binding Profile.SyncButtonText}" ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}">
                                                         <StackPanel Orientation="Horizontal">
                                                             <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="11"
                                                                        VerticalAlignment="Center" Foreground="{StaticResource AccentText}"/>
@@ -687,17 +688,24 @@
                                                                Foreground="{StaticResource AccentText}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                 </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                    <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding Name}" Style="{StaticResource TextBodyStrong}" FontSize="14" TextTrimming="CharacterEllipsis"/>
-                                                        <Border Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="8,0,0,0"
+                                                    <!-- 왼쪽 정렬 Grid(* + Auto + Auto): 긴 이름만 말줄임, 배지는 이름 바로 옆에 남는다 (가로 StackPanel 은 말줄임이 안 됨) -->
+                                                    <Grid HorizontalAlignment="Left">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <TextBlock Text="{Binding Name}" Style="{StaticResource TextBodyStrong}" FontSize="14" TextTrimming="CharacterEllipsis"
+                                                                   ToolTip="{Binding Name}"/>
+                                                        <Border Grid.Column="1" Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="8,0,0,0"
                                                                 VerticalAlignment="Center">
                                                             <TextBlock Text="{Binding MethodsText}" FontSize="11" Foreground="{StaticResource TextSecondary}"/>
                                                         </Border>
-                                                        <Border Background="{StaticResource AccentSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="6,0,0,0"
+                                                        <Border Grid.Column="2" Background="{StaticResource AccentSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="6,0,0,0"
                                                                 VerticalAlignment="Center" Visibility="{Binding DefaultBadgeVisibility}">
                                                             <TextBlock Text="{Binding DefaultBadge}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentText}"/>
                                                         </Border>
-                                                    </StackPanel>
+                                                    </Grid>
                                                     <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextSecondary}" FontSize="12"
                                                                Margin="0,4,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/>
                                                 </StackPanel>
@@ -818,17 +826,23 @@
                                                         <ColumnDefinition Width="3*"/>
                                                         <ColumnDefinition Width="40"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                    <!-- 가로 StackPanel 은 글자에 무한 폭을 줘 말줄임이 안 되고 배지가 잘린다 → 왼쪽 정렬 Grid(* + Auto)로
+                                                         긴 호스트 이름만 말줄임하고 거부 배지는 이름 바로 옆에 남긴다 -->
+                                                    <Grid HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="*"/>
+                                                            <ColumnDefinition Width="Auto"/>
+                                                        </Grid.ColumnDefinitions>
                                                         <TextBlock Text="{Binding Key, Mode=OneTime}" Style="{StaticResource TextBodyStrong}"
                                                                    TextTrimming="CharacterEllipsis" ToolTip="{Binding Key, Mode=OneTime}" VerticalAlignment="Center"/>
                                                         <!-- 확인 창에서 사용자가 거부한 키 -->
-                                                        <Border Background="{StaticResource DangerSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1"
+                                                        <Border Grid.Column="1" Background="{StaticResource DangerSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1"
                                                                 Margin="8,0,0,0" VerticalAlignment="Center"
                                                                 Visibility="{Binding Value, Mode=OneTime, Converter={StaticResource KnownPart}, ConverterParameter=rejected}"
                                                                 ToolTip="{l:Tr '접속 확인 창에서 거부한 키입니다. 이 키는 자동으로 신뢰하지 않습니다.'}">
                                                             <TextBlock Text="{l:Tr '거부됨'}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Danger}"/>
                                                         </Border>
-                                                    </StackPanel>
+                                                    </Grid>
                                                     <TextBlock Grid.Column="1" Text="{Binding Value, Mode=OneTime, Converter={StaticResource KnownPart}, ConverterParameter=type}"
                                                                Foreground="{StaticResource TextSecondary}" FontSize="12" VerticalAlignment="Center"
                                                                TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/>
@@ -1844,7 +1858,7 @@
 
                 <!-- 호스트 편집 패널 (오른쪽 슬라이드) -->
                 <Grid x:Name="EditorLayer" Grid.Column="1" Visibility="Collapsed">
-                    <Border Background="#8C000000" MouseLeftButtonDown="OnEditorDimClick"/>
+                    <Border Background="{StaticResource Scrim}" MouseLeftButtonDown="OnEditorDimClick"/>
                     <!-- 패널 + 그림자 뒤판이 함께 미끄러진다 (EditorSlide). 그림자(Shadow16)는 내용 없는 뒤판에만 걸어
                          입력 칸 캐럿 깜박임 · 버튼 hover 가 그림자 효과를 매번 다시 그리게 하지 않는다 -->
                     <Grid Width="390" HorizontalAlignment="Right">
@@ -1956,7 +1970,7 @@
                                         <TextBox x:Name="EdGroup" Tag="{l:Tr '예: Production, Staging, Web'}"/>
                                         <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="&#xE70D;" FontFamily="{StaticResource IconFont}"
                                                 FontSize="10" Width="38" Height="38" Padding="0" Margin="8,0,0,0" Click="OnPickGroup"
-                                                ToolTip="{l:Tr '기존 그룹에서 고르기'}"/>
+                                                ToolTip="{l:Tr '기존 그룹에서 고르기'}" AutomationProperties.Name="{l:Tr '기존 그룹에서 고르기'}"/>
                                     </Grid>
 
                                     <!-- 로그인: Vault 계정(선택) + 직접 입력(비우면 Vault 값) -->

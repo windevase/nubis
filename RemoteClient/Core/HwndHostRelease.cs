@@ -28,16 +28,20 @@ public static class HwndHostRelease
         }
         catch { }
         // 2) 시각·논리 트리에서 뺀다 — 정상 경로(OnSourceChanged)로도 등록이 풀리고, 부모 화면과의 연결이 끊긴다
-        try
+        // 논리 부모를 먼저 본다 — ContentControl(UserControl 등)의 시각 부모는 템플릿 안 ContentPresenter 라,
+        // 그쪽만 비우면 TemplateBinding 이 끊기고 ContentControl.Content 는 여전히 host 를 가리킨다
+        try { Remove(LogicalTreeHelper.GetParent(host), host); } catch { }
+        try { Remove(VisualTreeHelper.GetParent(host), host); } catch { }
+    }
+
+    private static void Remove(DependencyObject? parent, HwndHost host)
+    {
+        switch (parent)
         {
-            switch (VisualTreeHelper.GetParent(host) ?? LogicalTreeHelper.GetParent(host))
-            {
-                case Panel p: p.Children.Remove(host); break;
-                case ContentControl c when ReferenceEquals(c.Content, host): c.Content = null; break;
-                case Decorator d when ReferenceEquals(d.Child, host): d.Child = null; break;
-                case ContentPresenter cp when ReferenceEquals(cp.Content, host): cp.Content = null; break;
-            }
+            case Panel p: p.Children.Remove(host); break;
+            case ContentControl c when ReferenceEquals(c.Content, host): c.Content = null; break;
+            case Decorator d when ReferenceEquals(d.Child, host): d.Child = null; break;
+            case ContentPresenter cp when ReferenceEquals(cp.Content, host): cp.Content = null; break;
         }
-        catch { }
     }
 }
