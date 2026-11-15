@@ -222,7 +222,8 @@ public partial class MainWindow
         var probe = new HostEntry
         {
             Protocol = ssh ? Protocol.Ssh : Protocol.Rdp,
-            Password = EdPassword?.Password ?? "",
+            // ResolveVault 는 비밀번호가 있는지만 본다 — Password 에 넣으면 입력 글자마다 DPAPI 로 암호화했다
+            ProtectedPassword = EdPassword?.Password.Length > 0 ? "set" : null,
             KeyPath = ssh && EdKey?.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null,
             CloudProfileId = _editing?.CloudProfileId,
         };
@@ -355,6 +356,14 @@ public partial class MainWindow
             EdAddress.Focus();
             return null;
         }
+        var publicIp = EdPublicIp.Text.Trim();
+        if (publicIp.Contains(' ') || publicIp.Contains('@'))
+        {
+            // 주소 칸과 같은 검사 — 걸러 내지 않으면 "공인 IP로 접속" 이 "user@1.2.3.4" 같은 주소로 연결을 시도했다
+            EditorError.Text = L.T("공인 IP 에는 IP 또는 호스트명만 넣으세요.");
+            EdPublicIp.Focus();
+            return null;
+        }
         if (!int.TryParse(EdPort.Text.Trim(), out var port) || port is < 1 or > 65535)
         {
             EditorError.Text = L.T("포트는 1 ~ 65535 사이 숫자여야 합니다.");
@@ -389,8 +398,7 @@ public partial class MainWindow
         }
         if (changed[FPublicIp] || changed[FUsePublic])
         {
-            var pub = EdPublicIp.Text.Trim();
-            h.PublicIp = pub.Length > 0 ? pub : null;
+            h.PublicIp = publicIp.Length > 0 ? publicIp : null;
             h.UsePublicIp = EdUsePublic.IsChecked == true && h.PublicIp != null;
         }
         if (changed[FPort]) h.Port = port;
@@ -431,9 +439,11 @@ public partial class MainWindow
     private void OnEditorDelete(object sender, RoutedEventArgs e)
     {
         if (!_editorOpen || _editing == null) return;
-        var before = _hosts.Count;
+        // 그사이 목록에서 이미 지워졌으면(클라우드 동기화·Claude delete_host 등) 지울 것이 없다 — 예전에는 삭제를 확인해도
+        // 아무것도 바뀌지 않아 패널이 닫히지 않았다
+        if (!_hosts.Contains(_editing)) { CloseEditor(); FlashHostStatus(L.T("이미 목록에서 삭제된 호스트입니다"), ToastKind.Info); return; }
         DeleteHost(_editing);
-        if (_hosts.Count < before) CloseEditor();
+        if (!_hosts.Contains(_editing)) CloseEditor();
     }
 
     private void OnEditorClose(object sender, RoutedEventArgs e) => TryCloseEditor();

@@ -32,16 +32,43 @@ public static partial class AnsibleInventoryImport
 
         int read = 0;
         inv.GetGroup(AllGroup);   // group_vars/all.yml 은 인벤토리에 all 이 안 나와도 적용된다
+        // 폴더 목록을 한 번만 읽어 두고 그 안에 있는 이름만 연다 — 호스트 수천 대 × 확장자 4개를 하나씩 File.Exists 하면
+        // 네트워크 드라이브에서는 수만 번 왕복이 된다
+        var groupNames = hasGroupDir ? ListNames(groupDir) : null;
+        var hostNames = hasHostDir ? ListNames(hostDir) : null;
         if (hasGroupDir)
             foreach (var g in inv.GroupNames())
+            {
+                if (read >= MaxVarsFiles) break;
+                if (!MayHaveVars(groupNames, g)) continue;
                 foreach (var file in VarsFiles(groupDir, g))
                     if (read < MaxVarsFiles && LoadVarsFile(inv, file, inv.GetGroup(g).Vars, blockPath)) read++;
+            }
         if (hasHostDir)
             foreach (var (name, vars) in inv.HostVarTargets())
+            {
+                if (read >= MaxVarsFiles) break;
+                if (!MayHaveVars(hostNames, name)) continue;
                 foreach (var file in VarsFiles(hostDir, name))
                     if (read < MaxVarsFiles && LoadVarsFile(inv, file, vars, blockPath)) read++;
+            }
         if (read > 0) inv.Warn(L.F("group_vars · host_vars 에서 변수 파일 {0}개를 함께 읽었습니다.", read));
     }
+
+    /// <summary>폴더 안 파일 · 하위 폴더 이름 (대소문자 무시). 목록을 못 읽으면 null — 그때는 이름마다 직접 확인한다</summary>
+    private static HashSet<string>? ListNames(string dir)
+    {
+        try
+        {
+            return new HashSet<string>(Directory.EnumerateFileSystemEntries(dir).Select(Path.GetFileName).OfType<string>(),
+                StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+    }
+
+    /// <summary>폴더 목록에 이름(확장자 없음 · .yml · .yaml · .json 파일 또는 같은 이름의 폴더)이 있을 수 있는지</summary>
+    private static bool MayHaveVars(HashSet<string>? names, string name) =>
+        names == null || names.Contains(name) || names.Contains(name + ".yml") || names.Contains(name + ".yaml") || names.Contains(name + ".json");
 
     /// <summary>이름에 해당하는 변수 파일 (Ansible 의 기본 확장자 규칙). 경로로 쓸 수 없는 이름은 건너뛴다</summary>
     private static List<string> VarsFiles(string dir, string name)

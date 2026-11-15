@@ -174,11 +174,7 @@ public sealed partial class SshSessionView
 
             // 셸은 터미널 화면이 준비되기 전의 기본 크기(120x30)로 만들어졌을 수 있다 — 그사이 Ready·Resized 로 온 크기 변경은
             // _shell 이 아직 없어 버려졌으므로, 지금 화면 크기와 다르면 서버에 다시 알린다
-            Dispatcher.Invoke(() =>
-            {
-                if (_shell is { } sh && (_term.Cols != cols || _term.Rows != rows))
-                    try { sh.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { }
-            });
+            if (_term.Cols != cols || _term.Rows != rows) SendResize(_term.Cols, _term.Rows);
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
             if (!TrySetConnected()) return;
@@ -326,7 +322,9 @@ public sealed partial class SshSessionView
         }
         finally
         {
-            _connecting = false;
+            // 호스트키 저장 뒤 재시도·공인 IP 재시도는 catch 안에서 새 ConnectAsync 를 이미 시작했다(첫 await 까지 동기 실행 → _gen 증가).
+            // 그 시도가 진행 중인데 여기서 _connecting 을 끄면 탭 메뉴 "다시 연결" 이 시도를 하나 더 겹쳐 시작한다 (OTP·비밀번호 중복 전송)
+            if (gen == _gen) _connecting = false;
             // 기억한 답(Push 선택 등)을 쓴 시도가 실패함 — 이 탭의 다음 시도는 기억한 답 없이 묻는다 (성공하면 위에서 다시 끈다)
             if (!authenticated && prompter.UsedRemembered) _skipRemembered = true;
         }

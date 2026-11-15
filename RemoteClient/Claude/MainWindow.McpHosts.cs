@@ -196,9 +196,12 @@ public partial class MainWindow
         var specs = ListArg(a, "hosts");
         if (specs.Count == 0) throw new McpToolException("hosts 가 필요합니다.");
         var targets = specs.Select(ResolveOneHost).DistinctBy(h => h.Id).ToList();
-        var labels = targets.Select(h => $"{McpHelpers.VisibleControlChars(h.DisplayName)}  ({h.ProtocolText} {h.Address}:{h.Port}{(h.IsCloud ? ", 클라우드 — 다음 동기화에서도 숨김" : "")})").ToList();
+        // 감사 로그·결과용(한국어 원문)과 승인 창용(번역)을 따로 만든다
+        string Label(HostEntry h, bool ui) => $"{McpHelpers.VisibleControlChars(h.DisplayName)}  ({h.ProtocolText} {h.Address}:{h.Port}" +
+            (h.IsCloud ? ui ? L.T(", 클라우드 — 다음 동기화에서도 숨김") : ", 클라우드 — 다음 동기화에서도 숨김" : "") + ")";
+        var labels = targets.Select(h => Label(h, ui: false)).ToList();
         if (!await AskApprovalAsync("delete_host", L.F("Claude 가 호스트 {0}개 삭제를 요청합니다", targets.Count),
-                L.T("Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다."), labels, "delete_host"))
+                L.T("Nubis 목록에서 지웁니다. 서버 자체에는 영향이 없습니다."), targets.Select(h => Label(h, ui: true)).ToList(), "delete_host"))
         {
             AuditLog.Write("delete_host", labels, "delete_host", "거부");
             throw new McpToolException("사용자가 삭제를 거부했습니다.");

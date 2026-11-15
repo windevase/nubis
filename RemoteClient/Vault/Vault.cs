@@ -284,6 +284,16 @@ public static class VaultStore
         return $"{BlobType(blob)} {Convert.ToBase64String(blob)}";
     }
 
+    /// <summary>
+    /// 암호가 걸리지 않은 키면 공개키 한 줄, 암호가 걸렸거나 읽을 수 없으면 null.
+    /// 키 암호를 넣었지만 키에 암호가 없는 경우를 가려 쓰이지 않는 키 암호를 저장하지 않는 데 쓴다.
+    /// </summary>
+    public static string? TryReadUnencryptedPublicKey(string privateKey)
+    {
+        try { return ReadPublicKey(privateKey, null); }
+        catch { return null; }
+    }
+
     /// <summary>SSH 공개키 blob 의 첫 필드(키 형식 이름: uint32 길이 + 문자열)</summary>
     public static string BlobType(byte[] blob)
     {

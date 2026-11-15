@@ -333,8 +333,11 @@ public static class McpHelpers
         // 장치 경로(\\?\, \\.\, \??\)와 이 PC 를 가리키는 UNC(\\localhost\c$ 등)는 받지 않는다 — 문자열 비교를 돌아가는 우회로가 된다.
         // 다른 서버의 일반 공유(네트워크 드라이브)는 허용
         var trimmed = localPath.Trim();
-        if (trimmed.StartsWith(@"\\?\", StringComparison.Ordinal) || trimmed.StartsWith(@"\\.\", StringComparison.Ordinal) ||
-            trimmed.StartsWith(@"\??\", StringComparison.Ordinal) || trimmed.StartsWith("//", StringComparison.Ordinal))
+        // .NET·Win32 는 \ 와 / 를 같이 구분자로 본다 — \/?\ · /\.\ · /??/ 처럼 섞어 쓴 장치 경로도 같이 거부
+        static bool Sep(char c) => c is '\\' or '/';
+        if (trimmed.Length >= 4 && Sep(trimmed[3]) &&
+            (Sep(trimmed[0]) && Sep(trimmed[1]) && trimmed[2] is '?' or '.' || Sep(trimmed[0]) && trimmed[1] == '?' && trimmed[2] == '?') ||
+            trimmed.StartsWith("//", StringComparison.Ordinal))
             return "장치 경로는 업로드할 수 없습니다. 드라이브 경로(C:\\...)나 일반 네트워크 공유 경로를 쓰세요.";
         if (IsLocalOrAdminUnc(trimmed))
             return "이 PC 를 가리키는 네트워크 경로나 관리 공유($)는 업로드할 수 없습니다. 드라이브 경로(C:\\...)를 쓰세요.";

@@ -202,13 +202,14 @@ public partial class SftpPanel
     /// - Windows 이름으로 바꾼 뒤 겹치는 이름(대소문자만 다름·a:b 와 a_b)은 "이름 (1)" 로 — 서로 덮어쓰지 않게
     /// </summary>
     private static void Plan(SftpClient c, string remote, bool isDir, string local,
-        List<(string, string, long)> files, List<string> dirs, List<string> skipped, CancellationToken ct)
+        List<(string, string, long)> files, List<string> dirs, List<string> skipped, CancellationToken ct, SftpFileAttributes? known = null)
     {
         ct.ThrowIfCancellationRequested();
         if (!isDir)
         {
             // 직접 고른 항목도 장치·FIFO·소켓이면 받지 않는다 — /dev/zero·/dev/urandom 은 끝없이, FIFO 는 멈춘다
-            var a = c.GetAttributes(remote);
+            // (known: 부르는 쪽이 병렬로 미리 읽은 속성)
+            var a = known ?? c.GetAttributes(remote);
             // 목록을 읽은 뒤 폴더로 바뀐 경우도 받지 않는다 (파일로 받으려다 전체 다운로드가 실패하지 않게)
             if (a.IsDirectory || IsSpecialFile(a.IsSocket, a.IsNamedPipe, a.IsCharacterDevice, a.IsBlockDevice)) { skipped.Add(remote); return; }
             files.Add((remote, local, a.Size));

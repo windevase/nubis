@@ -164,8 +164,19 @@ public sealed class McpServer : IDisposable
                 return;
             }
 
-            string body;
-            using (var r = new StreamReader(ctx.Request.InputStream, Encoding.UTF8)) body = await r.ReadToEndAsync();
+            // 본문 크기 제한: 인증된 클라이언트라도 잘못된(또는 악의적인) 거대 본문으로 메모리를 끝없이 쓰지 않게 한다.
+            // Content-Length 가 한도를 넘으면 읽지 않고 413, 길이를 모르는(chunked) 본문은 한도까지만 읽는다
+            if (ctx.Request.ContentLength64 > MaxRequestBytes)
+            {
+                res.StatusCode = 413;
+                return;
+            }
+            var body = await ReadBodyAsync(ctx.Request.InputStream, MaxRequestBytes);
+            if (body == null)
+            {
+                res.StatusCode = 413;
+                return;
+            }
             JsonDocument doc;
             try { doc = JsonDocument.Parse(body); }
             catch (JsonException)
@@ -250,6 +261,25 @@ public sealed class McpServer : IDisposable
         }
     }
 
+    /// <summary>요청 본문 최대 크기 (바이트). 가장 큰 정상 요청(import_hosts 의 표 붙여넣기 등)보다 넉넉하게</summary>
+    internal const int MaxRequestBytes = 16 * 1024 * 1024;
+
+    /// <summary>본문을 UTF-8 문자열로 읽는다 (BOM 은 버림). maxBytes 를 넘으면 더 읽지 않고 null</summary>
+    internal static async Task<string?> ReadBodyAsync(Stream input, int maxBytes)
+    {
+        using var ms = new MemoryStream();
+        var buf = new byte[16 * 1024];
+        int n;
+        while ((n = await input.ReadAsync(buf)) > 0)
+        {
+            if (ms.Length + n > maxBytes) return null;
+            ms.Write(buf, 0, n);
+        }
+        var span = ms.GetBuffer().AsSpan(0, (int)ms.Length);
+        if (span.StartsWith(Encoding.UTF8.Preamble)) span = span[Encoding.UTF8.Preamble.Length..];
+        return Encoding.UTF8.GetString(span);
+    }
+
     public enum McpMessageKind { Request, Notification, Response, Invalid }
 
     /// <summary>
@@ -276,8 +306,12 @@ public sealed class McpServer : IDisposable
     private bool TokenMatches(string? header)
     {
         if (header == null) return false;
-        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(header), Encoding.UTF8.GetBytes($"Bearer {Token}"));
+        _expectedAuth ??= Encoding.UTF8.GetBytes($"Bearer {Token}");
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(header), _expectedAuth);
     }
+
+    // "Bearer {Token}" 의 UTF-8 바이트 (요청마다 만들지 않게 한 번만)
+    private byte[]? _expectedAuth;
 
     /// <summary>
     /// 요청 id 의 취소. 아직 등록되지 않은 요청(취소 알림이 요청보다 먼저 처리된 경우)을 위해 먼저 기록해 두고,

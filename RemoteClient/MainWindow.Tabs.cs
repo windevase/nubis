@@ -272,7 +272,27 @@ public partial class MainWindow
         // 선택된 홈 탭은 본문 바탕(Layer2)과 이어진다. 선택 해제는 Brushes.Transparent — XAML 트리거가 이 인스턴스로 판단한다
         HomeTab.Background = (Brush)FindResource("Layer2Bg");
         UpdateActiveContext();
+        Dispatcher.BeginInvoke(ReleaseHiddenSessionFocus, DispatcherPriority.Input);
     }
+
+    /// <summary>
+    /// 홈으로 왔는데 키보드 포커스가 숨은 세션(터미널 WebView2 · RDP ActiveX 의 자식 HWND)에 남았거나, 닫힌 탭과 함께 사라졌으면
+    /// 메인 창으로 되돌린다. Win32 포커스는 창을 숨겨도 옮겨지지 않아, 홈에서 친 글자가 보이지 않는 터미널로 가거나
+    /// (닫힌 경우) 클릭하기 전까지 Ctrl+K 등 단축키가 먹지 않는다. 보이는 Claude 패널 · 홈 화면의 포커스는 건드리지 않는다
+    /// </summary>
+    private void ReleaseHiddenSessionFocus()
+    {
+        if (!IsActive || HomeView.Visibility != Visibility.Visible) return;
+        var focus = GetFocus();
+        var lost = focus == IntPtr.Zero || !IsWindowVisible(focus);
+        if (lost || SessionsHost.IsKeyboardFocusWithin) Focus();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
 
     /// <summary>연결 중인 탭은 닫기 전에 확인 (Settings 에서 끌 수 있음). 닫아도 되면 true</summary>
     private bool ConfirmCloseTabs(IReadOnlyCollection<SessionTab> tabs)
@@ -290,23 +310,47 @@ public partial class MainWindow
     private void CloseTabs(IReadOnlyCollection<SessionTab> tabs)
     {
         if (tabs.Count == 0 || !ConfirmCloseTabs(tabs)) return;
-        foreach (var t in tabs.ToList()) CloseTab(t);
+        // 확인 창(중첩 메시지 루프)이 떠 있는 동안 이미 닫힌 탭은 뺀다
+        var closing = tabs.Where(_tabs.Contains).Distinct().ToList();
+        if (closing.Count == 0) return;
+        if (closing.Count == 1) { CloseTab(closing[0]); return; }
+        // 여러 개: 지금 탭이 닫히면 남는 탭 중 오른쪽(없으면 왼쪽) 이웃으로 한 번만 옮긴다 —
+        // 하나씩 닫으며 곧 닫힐 탭을 차례로 고르면 그 뷰(RDP 등)를 보였다 숨기고 현재 탭 정보도 매번 다시 쓴다
+        var set = new HashSet<SessionTab>(closing);
+        var selected = _tabs.FirstOrDefault(t => t.IsSelected);
+        var next = selected != null && set.Contains(selected) ? NeighborAfterClose(_tabs, _tabs.IndexOf(selected), set) : null;
+        foreach (var t in closing) CloseTab(t, reselect: false);
+        if (selected == null || !set.Contains(selected)) UpdateActiveContext();
+        else if (next != null && _tabs.Contains(next)) SelectTab(next);
+        else if (_tabs.Count > 0) SelectTab(_tabs[^1]);
+        else SelectHome();
     }
 
-    private void CloseTab(SessionTab tab)
+    /// <summary>index 의 탭을 포함해 closing 을 닫을 때 남는 탭 중 고를 이웃: 오른쪽에서 가장 가까운 것, 없으면 왼쪽. 다 닫히면 null</summary>
+    internal static T? NeighborAfterClose<T>(IReadOnlyList<T> all, int index, ISet<T> closing) where T : class
+    {
+        for (var i = index + 1; i < all.Count; i++) if (!closing.Contains(all[i])) return all[i];
+        for (var i = Math.Min(index, all.Count) - 1; i >= 0; i--) if (!closing.Contains(all[i])) return all[i];
+        return null;
+    }
+
+    /// <param name="reselect">false =닫은 탭이 지금 탭이어도 다른 탭을 고르지 않는다 (여러 개를 닫는 쪽이 마지막에 한 번 고른다)</param>
+    private void CloseTab(SessionTab tab, bool reselect = true)
     {
         var idx = _tabs.IndexOf(tab);
         var wasSelected = tab.IsSelected;
-        if (_tabs.Contains(tab)) RememberClosedTab(tab);   // "닫은 탭 다시 열기" (Ctrl+Shift+R)
+        if (idx >= 0) RememberClosedTab(tab);   // "닫은 탭 다시 열기" (Ctrl+Shift+R)
         try { tab.Session.CloseSession(); } catch { }
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
+        tab.IsSelected = false;
         // 끌기 준비 상태가 닫은 탭(과 그 뷰)을 다음 끌기까지 붙잡지 않게
         if (ReferenceEquals(_tabDragging, tab)) _tabDragging = null;
+        if (!reselect) return;
 
         if (!wasSelected) { UpdateActiveContext(); return; }
         if (_tabs.Count == 0) SelectHome();
-        else SelectTab(_tabs[Math.Min(idx, _tabs.Count - 1)]);
+        else SelectTab(_tabs[Math.Min(Math.Max(idx, 0), _tabs.Count - 1)]);
     }
 
     private void OnHomeTab(object sender, MouseButtonEventArgs e) => SelectHome();
@@ -397,165 +441,7 @@ public partial class MainWindow
         Dispatcher.BeginInvoke(() => { SearchBox.Focus(); SearchBox.SelectAll(); }, DispatcherPriority.Input);
     }
 
-    // ---------- 탭 줄: 휠 스크롤 · 넘친 탭 목록 ----------
-
-    private void OnTabsWheel(object sender, MouseWheelEventArgs e)
-    {
-        TabsScroll.ScrollToHorizontalOffset(TabsScroll.HorizontalOffset - e.Delta);
-        e.Handled = true;
-    }
-
-    private void OnTabsScrollChanged(object sender, ScrollChangedEventArgs e) =>
-        TabListButton.Visibility = TabsScroll.ScrollableWidth > 0 ? Visibility.Visible : Visibility.Collapsed;
-
-    private void OnTabListClick(object sender, RoutedEventArgs e)
-    {
-        var menu = new ContextMenu { PlacementTarget = TabListButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-        for (var i = 0; i < _tabs.Count; i++)
-        {
-            var t = _tabs[i];
-            var item = new MenuItem
-            {
-                Header = (i < 8 ? $"{i + 1}  " : "    ") + t.Title + (t.Status == SessionStatus.Disconnected ? L.T("  (끊김)") : ""),
-                FontWeight = t.IsSelected ? FontWeights.SemiBold : FontWeights.Normal,
-            };
-            item.Click += (_, _) => SelectTab(t);
-            menu.Items.Add(item);
-        }
-        menu.IsOpen = true;
-    }
-
-    // ---------- 탭 우클릭 메뉴 ----------
-
-    private void OnTabMenuOpened(object sender, RoutedEventArgs e)
-    {
-        if (sender is not ContextMenu { PlacementTarget: FrameworkElement { DataContext: SessionTab tab } } menu) return;
-        menu.Items.Clear();
-        menu.Closed -= OnTabMenuClosed;
-        menu.Closed += OnTabMenuClosed;
-        void Add(string header, Action act, bool enabled = true)
-        {
-            var item = new MenuItem { Header = header, IsEnabled = enabled };
-            item.Click += (_, _) => act();
-            menu.Items.Add(item);
-        }
-        var idx = _tabs.IndexOf(tab);
-        var disconnected = _tabs.Where(t => t.Status == SessionStatus.Disconnected).ToList();
-        Add(L.T("다시 연결"), () => { SelectTab(tab); tab.Session.Reconnect(); }, tab.Status == SessionStatus.Disconnected);
-        if (tab.Host != null) Add(L.T("같은 호스트로 새 탭"), () => Connect(tab.Host, TabUsePublic(tab)));
-        if (tab.Protocol == Protocol.Local) Add(L.T("새 PowerShell 탭"), OpenLocalTerminal);
-        if (tab.View is RdpSessionView rdp) Add(L.T("전체 화면"), () => { SelectTab(tab); rdp.EnterFullScreen(); }, rdp.IsConnected);
-        Add(L.T("탭 이름 바꾸기..."), () =>
-        {
-            if (PromptDialog.Ask(this, L.T("탭 이름 바꾸기"), L.T("새 이름"), tab.Title) is { Length: > 0 } name)
-            {
-                tab.Title = name;
-                if (tab.IsSelected) UpdateActiveContext();   // Claude 에게 알려 주는 현재 탭 정보(active-session.txt)도 새 이름으로
-            }
-        });
-        if (tab.Host != null && _hosts.Contains(tab.Host)) Add(L.T("호스트 편집"), () => { SelectHome(); OpenEditor(tab.Host); });
-        menu.Items.Add(new Separator());
-        Add(L.T("닫기"), () => CloseTabs(new[] { tab }));
-        Add(L.T("다른 탭 모두 닫기"), () => CloseTabs(_tabs.Where(t => t != tab).ToList()), _tabs.Count > 1);
-        Add(L.T("오른쪽 탭 모두 닫기"), () => CloseTabs(_tabs.Skip(idx + 1).ToList()), idx < _tabs.Count - 1);
-        Add(L.T("끊긴 탭 모두 다시 연결"), () => ReconnectAll(disconnected), disconnected.Count > 0);
-        Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
-        menu.Items.Add(new Separator());
-        Add(L.T("닫은 탭 다시 열기 (Ctrl+Shift+R)"), ReopenClosedTab, CanReopenClosedTab);
-    }
-
-    /// <summary>
-    /// 탭 메뉴(TabMenu)는 창 리소스 하나를 모든 탭이 함께 쓴다 → 닫힌 뒤에도 항목의 람다(마지막 탭·끊긴 탭 목록)와
-    /// PlacementTarget(탭 항목 → 탭 → 세션 뷰)이 남아, 메뉴로 닫은 탭이 다음에 메뉴를 열 때까지 해제되지 않는다.
-    /// 항목 클릭은 메뉴가 닫히고 그려진 뒤(Render 우선순위) 실행되므로, 그보다 낮은 ApplicationIdle 에서 비운다.
-    /// </summary>
-    private void OnTabMenuClosed(object sender, RoutedEventArgs e)
-    {
-        if (sender is not ContextMenu menu) return;
-        Dispatcher.BeginInvoke(() =>
-        {
-            if (menu.IsOpen) return;   // 그 사이 다시 열렸으면 새 항목을 지우지 않는다
-            menu.Items.Clear();
-            menu.ClearValue(ContextMenu.PlacementTargetProperty);
-        }, DispatcherPriority.ApplicationIdle);
-    }
-
-    /// <summary>
-    /// 끊긴 탭 여러 개 다시 연결. RDP 는 계정 입력 창을 탭마다 차례로 띄우므로, 사용자가 한 번 취소하면
-    /// 나머지 탭은 묻지 않고 멈춘다 (취소해도 다음 창이 계속 뜨던 문제).
-    /// </summary>
-    private void ReconnectAll(IReadOnlyList<SessionTab> tabs)
-    {
-        foreach (var t in tabs.ToList())
-        {
-            // 앞 탭의 계정 입력 창(중첩 메시지 루프)이 떠 있는 동안 닫혔거나 이미 다시 연결된 탭은 건너뛴다
-            if (!_tabs.Contains(t) || t.Status != SessionStatus.Disconnected) continue;
-            t.Session.Reconnect();
-            if (t.View is RdpSessionView { LastConnectCancelled: true }) break;
-        }
-    }
-
-    // ---------- 탭 끌어서 순서 바꾸기 ----------
-
-    private Point _tabDragStart;
-    private SessionTab? _tabDragging;
-
-    private void OnTabDragStart(object sender, MouseButtonEventArgs e)
-    {
-        _tabDragStart = e.GetPosition(this);
-        _tabDragging = (sender as FrameworkElement)?.DataContext as SessionTab;
-    }
-
-    /// <summary>버튼을 떼면 끌기 준비를 푼다 (그냥 클릭한 탭이 나중에 다른 곳에서 누른 채 지나갈 때 끌려가지 않게)</summary>
-    private void OnTabDragEnd(object sender, MouseButtonEventArgs e) => _tabDragging = null;
-
-    private void OnTabDragMove(object sender, MouseEventArgs e)
-    {
-        if (_tabDragging == null || e.LeftButton != MouseButtonState.Pressed) return;
-        // 누른 탭 위에서 움직일 때만 끌기 시작
-        if (!ReferenceEquals((sender as FrameworkElement)?.DataContext, _tabDragging)) { _tabDragging = null; return; }
-        var d = e.GetPosition(this) - _tabDragStart;
-        if (Math.Abs(d.X) < SystemParameters.MinimumHorizontalDragDistance * 2) return;
-        var tab = _tabDragging;
-        _tabDragging = null;
-        DragDrop.DoDragDrop((DependencyObject)sender, new DataObject(typeof(SessionTab), tab), DragDropEffects.Move);
-    }
-
-    private void OnTabDragOver(object sender, DragEventArgs e)
-    {
-        e.Effects = e.Data.GetDataPresent(typeof(SessionTab)) ? DragDropEffects.Move : DragDropEffects.None;
-        if (e.Data.GetData(typeof(SessionTab)) is SessionTab dragged && (sender as FrameworkElement)?.DataContext is SessionTab over && dragged != over)
-        {
-            var from = _tabs.IndexOf(dragged);
-            var to = _tabs.IndexOf(over);
-            // 폭이 다른 탭끼리 바꾸면 자리를 바꾼 직후 커서가 다시 상대 탭 위에 놓여 왔다 갔다 하던 문제 —
-            // 바꾼 뒤에도 커서가 끄는 탭 위에 있게 될 만큼 들어왔을 때만 옮긴다
-            var overBox = TabsList.ItemContainerGenerator.ContainerFromItem(over) as FrameworkElement;
-            var dragBox = TabsList.ItemContainerGenerator.ContainerFromItem(dragged) as FrameworkElement;
-            if (from >= 0 && to >= 0 &&
-                (overBox == null || dragBox == null ||
-                 ShouldReorderTab(from, to, e.GetPosition(overBox).X, overBox.ActualWidth, dragBox.ActualWidth)))
-                _tabs.Move(from, to);
-        }
-        e.Handled = true;
-    }
-
-    /// <summary>
-    /// 끄는 탭(폭 draggedWidth)을 over 탭(폭 overWidth, 커서 x 는 over 기준) 자리로 옮길지.
-    /// 오른쪽으로 옮기면 over 탭이 왼쪽으로 draggedWidth 만큼 밀리므로 x ≥ overWidth − draggedWidth 여야
-    /// 옮긴 뒤 커서가 끄는 탭 위에 남는다 (왼쪽도 대칭). 탭 절반은 넘어야 옮겨 살짝 걸친 것만으로 바뀌지 않게 한다.
-    /// </summary>
-    internal static bool ShouldReorderTab(int from, int to, double x, double overWidth, double draggedWidth)
-    {
-        if (from == to || overWidth <= 0) return false;
-        return from < to
-            ? x >= Math.Max(overWidth / 2, overWidth - draggedWidth)
-            : x <= Math.Min(overWidth / 2, draggedWidth);
-    }
-
     /// <summary>창을 닫을 때 확인할 세션 수: 로컬 PowerShell 을 뺀, 끊기지 않은(연결됨·연결 중) 원격 세션</summary>
     internal static int LiveRemoteSessionCount(IEnumerable<(Protocol protocol, SessionStatus status)> tabs) =>
         tabs.Count(t => t.protocol != Protocol.Local && t.status != SessionStatus.Disconnected);
-
-    private void OnTabDrop(object sender, DragEventArgs e) => e.Handled = true;
 }

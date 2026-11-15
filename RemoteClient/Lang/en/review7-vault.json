@@ -1,0 +1,4 @@
+{
+  "공개키를 클립보드에 복사하지 못했습니다. 잠시 뒤 다시 시도하세요.": "Couldn't copy the public key to the clipboard. Try again in a moment.",
+  "호스트키를 지우지 못했습니다: {0}": "Couldn't delete the host key: {0}"
+}

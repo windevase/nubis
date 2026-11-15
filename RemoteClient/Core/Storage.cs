@@ -185,6 +185,7 @@ public static class SafeFile
             {
                 // 평문을 .bak 으로 남기지 않는다
                 try { WriteProtected(path, UnprotectBytes(bytes), keepBackup: false); } catch { }
+                ProtectPlainBackup(path);
             }
             return value;
         }
@@ -193,6 +194,24 @@ public static class SafeFile
             var why = ex is CryptographicException ? L.T("이 PC·이 Windows 계정에서 만든 파일이 아니라 풀 수 없습니다") : ex.Message.Split('\n')[0];
             return Recover(path, bytes => parse(UnprotectBytes(bytes)), fallback, why, out failed);
         }
+    }
+
+    /// <summary>
+    /// 예전 평문 파일 옆에 남은 평문 직전 저장본(.bak)도 암호화한다. 원본만 암호화하면 서버 목록·계정 이름이 담긴 .bak 이
+    /// 다음 저장(.bak 교체)까지 평문으로 남는다 — Vault·known_hosts 처럼 드물게 저장하는 파일은 오래 남을 수 있다.
+    /// 이미 암호화된 .bak 은 건드리지 않는다.
+    /// </summary>
+    internal static void ProtectPlainBackup(string path)
+    {
+        try
+        {
+            var bak = BackupPath(path);
+            if (!File.Exists(bak)) return;
+            var bytes = File.ReadAllBytes(bak);
+            if (IsProtected(bytes)) return;
+            WriteDurable(bak, ProtectBytes(UnprotectBytes(bytes)), keepBackup: false);
+        }
+        catch { /* 다음 저장 때 .bak 이 암호화된 본으로 바뀐다 */ }
     }
 
     /// <param name="restoreBackup">
@@ -517,36 +536,56 @@ public static class SettingsStore
     public static void UseProfile(bool inheritGlobal)
     {
         if (!AppPaths.UsingProfile) { Current = Global; return; }
-        if (File.Exists(FilePath)) { Current = Load(FilePath); return; }
+        if (File.Exists(FilePath)) { Current = Load(FilePath); StripGlobalOnly(Current); return; }   // 예전에 복사된 로그인 사본은 다음 저장 때 빠진다
         Current = inheritGlobal
             ? JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(Global)) ?? new AppSettings()
             : new AppSettings();
-        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); } catch { }
+        // 로그인 설정은 공통 settings.json 에만 둔다 — 프로필 사본에 남으면 아무도 읽지 않는 Client Secret 사본이 생기고,
+        // "로그인을 끄려면 settings.json 의 Login → Provider" 안내를 따라 프로필 쪽 파일을 고쳐도 효과가 없어 헷갈린다
+        StripGlobalOnly(Current);
+        lock (WriteGate)
+            try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); } catch { }
     }
+
+    /// <summary>프로필(계정별) 설정에서 공통 설정 전용 값(로그인)을 비운다. 언어는 값만 남아 해가 없어 그대로 둔다</summary>
+    internal static void StripGlobalOnly(AppSettings profile) => profile.Login = new LoginConfig();
+
+    // settings.json 쓰기를 한 번에 하나씩 — 같은 임시 파일(settings.json.tmp)을 두 스레드가 동시에 쓰거나,
+    // 직렬화하는 동안 다른 쪽이 값을 바꿔 예외로 저장이 조용히 빠지지 않게
+    private static readonly object WriteGate = new();
 
     /// <summary>지금 계정의 설정 변경 (테마·글꼴·SFTP·기본 포트 …)</summary>
     public static void Update(Action<AppSettings> change)
     {
-        change(Current);
-        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
-        catch { }
+        lock (WriteGate)
+        {
+            change(Current);
+            try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
+            catch { }
+        }
         Changed?.Invoke();
     }
 
     /// <summary>화면 상태(창 크기·그룹 접힘 등) 저장 — 열린 터미널에 설정을 다시 보내지 않는다</summary>
     public static void UpdateState(Action<AppSettings> change)
     {
-        change(Current);
-        try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
-        catch { }
+        lock (WriteGate)
+        {
+            change(Current);
+            try { SafeFile.WriteAtomic(FilePath, JsonSerializer.Serialize(Current, WriteOptions)); }
+            catch { }
+        }
     }
 
     /// <summary>공통 설정 변경 (언어·로그인)</summary>
     public static void UpdateGlobal(Action<AppSettings> change)
     {
-        change(Global);
-        try { SafeFile.WriteAtomic(GlobalPath, JsonSerializer.Serialize(Global, WriteOptions)); }
-        catch { }
+        lock (WriteGate)
+        {
+            change(Global);
+            try { SafeFile.WriteAtomic(GlobalPath, JsonSerializer.Serialize(Global, WriteOptions)); }
+            catch { }
+        }
         Changed?.Invoke();
     }
 }
@@ -574,14 +613,27 @@ public static class KnownHostStore
     /// <summary>LoadFailed 동안 Get 이 돌려주는 값 — 어떤 지문과도 같지 않다 (호출하는 쪽이 "저장된 값과 다름" 으로 처리)</summary>
     public static string UnavailableMark => L.T("(known_hosts.json 을 읽지 못해 저장된 호스트키를 확인할 수 없음)");
 
-    /// <summary>읽은 목록. 읽지 못했으면 null (LoadFailed). Gate 안에서 부른다</summary>
+    // 마지막으로 읽은 목록과 그 파일(경로·수정 시각·크기). 파일이 그대로면 다시 읽지 않는다 —
+    // 접속(호스트키 확인)·일괄 실행 때마다 파일 전체를 DPAPI 로 풀고 JSON 을 다시 읽던 것을 줄인다. 손으로 고치면 시각·크기가 바뀌어 다시 읽는다
+    private static Dictionary<string, string>? _cache;
+    private static (string path, DateTime stamp, long length)? _cacheFile;
+
+    private static (string path, DateTime stamp, long length) Stamp(string path)
+    {
+        var info = new FileInfo(path);
+        return (path, info.LastWriteTimeUtc, info.Length);
+    }
+
+    /// <summary>읽은 목록. 읽지 못했으면 null (LoadFailed). Gate 안에서 부른다 (돌려준 사전은 캐시 — Set/Remove 만 고친다)</summary>
     private static Dictionary<string, string>? TryLoad()
     {
         var path = AppPaths.KnownHostsFile;
-        if (!File.Exists(path)) { LoadFailed = false; _failedFile = null; return new Dictionary<string, string>(); }
-        var info = new FileInfo(path);
-        var stamp = (path, info.LastWriteTimeUtc, info.Length);
+        if (!File.Exists(path)) { LoadFailed = false; _failedFile = null; _cache = null; _cacheFile = null; return new Dictionary<string, string>(); }
+        var stamp = Stamp(path);
         if (_failedFile is { } f && f == stamp) { LoadFailed = true; return null; }
+        if (_cache != null && _cacheFile is { } c && c == stamp) { LoadFailed = false; return _cache; }
+        _cache = null;
+        _cacheFile = null;
         var all = SafeFile.LoadProtected(path, s => JsonSerializer.Deserialize<Dictionary<string, string>>(s),
             () => new Dictionary<string, string>(), out var failed);
         if (failed)
@@ -596,8 +648,30 @@ public static class KnownHostStore
         LoadFailed = false;
         _failedFile = null;
         SessionTrust.Clear();
+        // 평문 파일을 읽으며 암호화해 다시 썼을 수 있다 — 지금 파일 기준으로 기억
+        try { if (File.Exists(path)) { _cache = all; _cacheFile = Stamp(path); } } catch { }
         return all;
     }
+
+    /// <summary>목록(캐시)을 파일에 쓴다. 실패하면 캐시를 버려 다음 읽기가 파일 내용으로 돌아가게 한 뒤 예외를 다시 던진다</summary>
+    private static void Write(Dictionary<string, string> all)
+    {
+        var path = AppPaths.KnownHostsFile;
+        try
+        {
+            SafeFile.WriteProtected(path, JsonSerializer.Serialize(all, WriteOptions));
+            _cache = all;
+            _cacheFile = Stamp(path);
+        }
+        catch
+        {
+            _cache = null;
+            _cacheFile = null;
+            throw;
+        }
+    }
+
+    private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
     /// <summary>저장된 호스트키 목록 (화면 표시용). 파일을 읽지 못했으면 이번 실행에서 신뢰한 키만</summary>
     public static Dictionary<string, string> Load()
@@ -663,8 +737,9 @@ public static class KnownHostStore
         lock (Gate)
         {
             if (TryLoad() is not { } all) { SessionTrust[key] = value; return; }   // 손상된 원본 위에 쓰지 않는다
+            if (all.TryGetValue(key, out var old) && old == value) return;   // 같은 값이면 파일을 다시 쓰지 않는다
             all[key] = value;
-            SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
+            Write(all);
         }
     }
 
@@ -673,8 +748,7 @@ public static class KnownHostStore
         lock (Gate)
         {
             if (TryLoad() is not { } all) { SessionTrust.Remove(key); return; }
-            if (all.Remove(key))
-                SafeFile.WriteProtected(AppPaths.KnownHostsFile, JsonSerializer.Serialize(all, new JsonSerializerOptions { WriteIndented = true }));
+            if (all.Remove(key)) Write(all);
         }
     }
 }

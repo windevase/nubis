@@ -109,6 +109,13 @@ public sealed class ImportRow : INotifyPropertyChanged
     /// <summary>줄 툴팁 (메모가 없으면 null — 빈 툴팁을 띄우지 않게)</summary>
     public string? DetailTip => DetailText is { Length: > 0 } t ? t : null;
 
+    private string? _searchText;
+    /// <summary>
+    /// 미리보기 검색 대상 (이름 · 주소 · 그룹 · 사용자 · 메모). 줄 값은 바뀌지 않으므로 처음 한 번만 만든다 —
+    /// 수천 줄에서 글자를 칠 때마다 줄마다 메모 문자열을 새로 합치지 않게
+    /// </summary>
+    public string SearchText => _searchText ??= string.Join("\n", NameText, AddressText, GroupText, UserText, DetailText);
+
     public event PropertyChangedEventHandler? PropertyChanged;
 }
 
@@ -213,8 +220,10 @@ public static class ImportMerge
         var addrs = new JumpAddressSet();
         foreach (var h in list)
         {
+            // 점프 서버는 SSH 호스트만 될 수 있다 (등록할 때도 SSH 만 찾음) — RDP 항목 이름으로 "찾음" 이라 미리 보이지 않게
+            if (InferProtocol(h) != Protocol.Ssh) continue;
             if (!string.IsNullOrWhiteSpace(h.Name)) names.Add(h.Name.Trim());
-            if (InferProtocol(h) == Protocol.Ssh && !string.IsNullOrWhiteSpace(h.Address))
+            if (!string.IsNullOrWhiteSpace(h.Address))
             {
                 var (ha, hp) = SplitHostPort(h.Address);
                 addrs.Add(ha, h.Port ?? hp ?? d.SshPort);
@@ -321,12 +330,13 @@ public static class ImportMerge
         }
 
         // 점프 서버는 모두 추가한 뒤에 연결 (가져온 순서와 무관하게 찾도록)
-        List<HostEntry>? ssh = null;
+        // SSH 호스트 색인은 한 번만 (점프 서버를 쓰는 호스트 수천 대 × 목록 전체를 훑지 않게)
+        SshLookup? ssh = null;
         foreach (var (row, host) in added)
         {
             var spec = row.Source.JumpHost?.Trim();
             if (string.IsNullOrEmpty(spec) || host.Protocol != Protocol.Ssh) continue;
-            ssh ??= existing.Where(e => e.Protocol == Protocol.Ssh).ToList();
+            ssh ??= new SshLookup(existing);
             var jump = ResolveJump(spec, byName, ssh);
             if (jump != null && jump.Id != host.Id && jump.Protocol == Protocol.Ssh) host.JumpHostId = jump.Id;
             else warnings.Add(L.F("{0}: 점프 서버 '{1}' 를 찾지 못해 비워 두었습니다.", host.DisplayName, spec));
@@ -344,13 +354,22 @@ public static class ImportMerge
     {
         var before = (target.Label, target.Group, target.Username);
         var name = row.Source.Name.Trim();
-        if (name.Length > 0) target.Label = name;
+        // 이름 칸이 없어 파서가 주소를 이름으로 채운 줄("10.0.0.1")이면 사용자가 붙여 둔 이름을 주소로 덮지 않는다
+        if (name.Length > 0 && !IsAddressName(name, row.Source.Address)) target.Label = name;
         // 가져온 그룹 정보가 없으면 기존 그룹을 지우거나 "앞에 붙일 이름" 만으로 바꾸지 않는다
         // ("모두 이 그룹으로" 를 고른 경우만 그 값으로)
         if (d.GroupOverride != null) target.Group = d.GroupOverride.Trim();
         else if (!string.IsNullOrWhiteSpace(row.Source.Group)) target.Group = ResolveGroup(row.Source.Group, d);
         if (row.Source.Username?.Trim() is { Length: > 0 } user) target.Username = user;
         return before != (target.Label, target.Group, target.Username);
+    }
+
+    /// <summary>이름이 주소 그 자체인지 ("host:2222" · "[v6]" 처럼 포트 · 괄호가 붙은 형태 포함)</summary>
+    private static bool IsAddressName(string name, string address)
+    {
+        var a = address.Trim();
+        return name.Equals(a, StringComparison.OrdinalIgnoreCase)
+            || name.Equals(SplitHostPort(a).Host, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>목록에서 같은 호스트 (주소 대소문자 무시 + 포트 + 종류). 클라우드 호스트는 사설·공인 IP 도 비교</summary>
@@ -445,15 +464,45 @@ public static class ImportMerge
     }
 
     /// <summary>점프 서버 찾기: 가져온 이름 → 목록의 이름 → 주소(·포트). SSH 호스트만</summary>
-    private static HostEntry? ResolveJump(string spec, Dictionary<string, HostEntry> byName, List<HostEntry> ssh)
+    private static HostEntry? ResolveJump(string spec, Dictionary<string, HostEntry> byName, SshLookup ssh)
     {
         if (byName.TryGetValue(spec, out var named) && named.Protocol == Protocol.Ssh) return named;
-        if (ssh.FirstOrDefault(e => e.Label.Trim().Equals(spec, StringComparison.OrdinalIgnoreCase)) is { } byLabel) return byLabel;
+        if (ssh.ByLabel(spec) is { } byLabel) return byLabel;
         var (host, port) = ParseJumpSpec(spec);
         if (host.Length == 0) return null;
         if (byName.TryGetValue(host, out var named2) && named2.Protocol == Protocol.Ssh) return named2;
-        if (ssh.FirstOrDefault(e => e.Label.Trim().Equals(host, StringComparison.OrdinalIgnoreCase)) is { } byLabel2) return byLabel2;
-        return ssh.FirstOrDefault(e => (port == null || e.Port == port) &&
-                                       Addresses(e).Any(a => a.Equals(host, StringComparison.OrdinalIgnoreCase)));
+        if (ssh.ByLabel(host) is { } byLabel2) return byLabel2;
+        return ssh.ByAddress(host, port);
+    }
+
+    /// <summary>
+    /// 목록의 SSH 호스트 색인 — 이름(앞뒤 공백 무시) · 주소 · 주소+포트 → 목록에서 처음 나오는 호스트 (FirstOrDefault 와 같은 우선순위)
+    /// </summary>
+    private sealed class SshLookup
+    {
+        private readonly Dictionary<string, HostEntry> _label = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HostEntry> _addr = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, HostEntry> _addrPort = new(StringComparer.OrdinalIgnoreCase);
+
+        public SshLookup(IEnumerable<HostEntry> hosts)
+        {
+            foreach (var e in hosts)
+            {
+                if (e.Protocol != Protocol.Ssh) continue;
+                _label.TryAdd(e.Label.Trim(), e);
+                foreach (var a in Addresses(e))
+                {
+                    _addr.TryAdd(a, e);
+                    _addrPort.TryAdd(a + "|" + e.Port.ToString(System.Globalization.CultureInfo.InvariantCulture), e);
+                }
+            }
+        }
+
+        public HostEntry? ByLabel(string label) => _label.TryGetValue(label.Trim(), out var h) ? h : null;
+
+        public HostEntry? ByAddress(string host, int? port) =>
+            (port == null
+                ? _addr.TryGetValue(host, out var h)
+                : _addrPort.TryGetValue(host + "|" + port.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), out h)) ? h : null;
     }
 }

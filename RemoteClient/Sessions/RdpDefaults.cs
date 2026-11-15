@@ -68,7 +68,7 @@ public sealed class RdpDefaults
         var bytes = File.ReadAllBytes(path);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
         if (bytes.Length >= 2 && bytes[1] == 0 && bytes[0] != 0) return Encoding.Unicode.GetString(bytes);
-        return Encoding.UTF8.GetString(bytes).TrimStart('﻿');
+        return Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');
     }
 
     /// <summary>
@@ -111,7 +111,8 @@ public sealed class RdpDefaults
         return new RdpDefaults
         {
             FromFile = fromFile,
-            ColorDepth = I("session bpp", 32),
+            // RDP 컨트롤이 받는 색 깊이만 (그 밖의 값은 ColorDepth 설정이 예외를 내 연결 자체가 실패한다)
+            ColorDepth = I("session bpp", 32) is var bpp && bpp is 8 or 15 or 16 or 24 or 32 ? bpp : 32,
             ConnectionType = connType is >= 1 and <= 7 ? connType : 7,
             BandwidthDetection = B("bandwidthautodetect", true),
             PerformanceFlags = perf,

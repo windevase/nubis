@@ -118,7 +118,13 @@
   term.onData(d => post({ t: 'in', d }));
   // 셸이 알려주는 현재 폴더 (OSC 7: ESC ] 7 ; file://host/path BEL) → SFTP 패널이 따라감
   term.parser.registerOscHandler(7, data => { post({ t: 'cwd', d: data }); return true; });
-  term.onResize(({ cols, rows }) => post({ t: 'resize', cols, rows }));
+  // 창 크기를 끄는 동안에는 프레임마다 크기가 바뀐다 — 앱(→ 서버의 SIGWINCH)에는 멈춘 뒤 마지막 크기만 알린다
+  // (vim·htop 등이 드래그 내내 화면 전체를 다시 그려 보내지 않게)
+  let resizePostTimer = 0;
+  term.onResize(({ cols, rows }) => {
+    clearTimeout(resizePostTimer);
+    resizePostTimer = setTimeout(() => post({ t: 'resize', cols: term.cols, rows: term.rows }), 80);
+  });
   new ResizeObserver(() => { try { fit.fit(); } catch (e) { } }).observe(el);
 
   // 붙여넣기 요청: 서버가 bracketed paste 를 켰으면(줄마다 바로 실행되지 않음) 앱이 확인 창을 띄우지 않는다
@@ -257,6 +263,8 @@
     const hits = [];
     for (let y = 0; y < total; y++) {
       const line = b.getLine(y); if (!line) continue;
+      // 글자마다 셀을 읽는 칸 매핑은 찾는 말이 들어 있는 줄에서만 — 입력할 때마다 스크롤백(1만 줄) 전체의 셀을 훑지 않게 (CPU)
+      if (line.translateToString(true).toLowerCase().indexOf(q) < 0) continue;
       const c = lineCells(line);
       const s = c.s.toLowerCase();
       let i = s.indexOf(q);

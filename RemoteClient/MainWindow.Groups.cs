@@ -213,11 +213,15 @@ public partial class MainWindow
         SaveGroupState();
     }
 
-    /// <summary>직접 등록한 호스트들이 쓰는 그룹 이름 (편집 패널의 그룹 목록)</summary>
-    private List<string> KnownGroupNames() =>
-        _hosts.Where(h => !h.IsCloud && !string.IsNullOrWhiteSpace(h.Group))
-            .Select(h => h.Group.Trim())
-            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+    /// <summary>
+    /// 직접 등록한 호스트들이 쓰는 그룹 이름 (편집 패널·일괄 편집의 그룹 목록). 대소문자만 다른 이름은 그룹 머리글과 같은 표기 하나로
+    /// (예전에는 목록 순서상 처음 나온 표기라 머리글은 "Web" 인데 고르기 메뉴는 "web" 으로 보였다)
+    /// </summary>
+    private List<string> KnownGroupNames() => KnownGroupNames(_hosts);
+
+    internal static List<string> KnownGroupNames(IEnumerable<HostEntry> hosts) =>
+        CanonicalGroupNames(hosts).Values
+            .Where(n => n.Length > 0)
             .OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 }

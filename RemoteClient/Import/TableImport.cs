@@ -122,7 +122,15 @@ public static partial class TableImport
     /// <summary>앞쪽 비어 있지 않은 줄(최대 5줄)에서 따옴표 밖 구분자를 센다. 우선순위 탭 > ; > ,</summary>
     private static char DetectDelimiter(string text)
     {
-        var sample = text.Split('\n').Where(l => l.Trim().Length > 0).Take(5).ToList();
+        // 앞 5줄만 필요하므로 전체를 Split 하지 않는다 (수만 줄 붙여넣기에서 줄 배열을 한 벌 더 만들지 않게)
+        var sample = new List<string>(5);
+        for (int pos = 0; sample.Count < 5 && pos < text.Length;)
+        {
+            int nl = text.IndexOf('\n', pos);
+            var line = nl < 0 ? text[pos..] : text[pos..nl];
+            pos = nl < 0 ? text.Length : nl + 1;
+            if (line.Trim().Length > 0) sample.Add(line);
+        }
         if (sample.Count == 0) return ',';
         var candidates = new[] { '\t', ';', ',' };
         int need = (sample.Count + 1) / 2;

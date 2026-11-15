@@ -98,8 +98,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         Content = grid;
         // 터미널 화면 준비(탭이 처음 보일 때)를 기다리지 않고 바로 연결. 출력은 XtermView 가 모아 둔다
         Loaded += (_, _) => { if (!_started) { _started = true; _ = ConnectAsync(); } };
-        _term.Ready += () => { try { _shell?.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { } };
-        _term.Resized += (c, r) => { try { _shell?.ChangeWindowSize(c, r, 0, 0); } catch { } };
+        _term.Ready += () => SendResize(_term.Cols, _term.Rows);
+        _term.Resized += SendResize;
         _term.Input += OnInput;
         _term.CwdChanged += (cwd, host) =>
         {
@@ -130,7 +130,24 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             SendRaw(d);
             if (d.Contains('\r')) OnCommandEntered();
         }
-        else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r')) _ = ConnectAsync();
+        else if (_status == SessionStatus.Disconnected && !_connecting && d.Contains('\r'))
+            // 키 입력은 WebView2 의 WebMessageReceived 처리 중에 온다 — 계정 입력 창(모달)을 그 안에서 띄우지 않게 한 박자 늦춘다
+            Dispatcher.BeginInvoke(() => { if (!_closed && _status == SessionStatus.Disconnected && !_connecting) _ = ConnectAsync(); });
+    }
+
+    /// <summary>
+    /// 터미널 크기 변경을 서버에 알린다. 채널 요청 전송은 소켓이 막히면 기다릴 수 있어 UI 스레드에서 하지 않고,
+    /// 키 입력과 같은 작업 줄에서 순서대로 보낸다 (마지막 크기가 마지막에 도착하게)
+    /// </summary>
+    private void SendResize(uint cols, uint rows)
+    {
+        var shell = _shell;
+        if (shell == null || cols == 0 || rows == 0) return;
+        lock (_sendLock)
+            _sendChain = _sendChain.ContinueWith(_ =>
+            {
+                try { shell.ChangeWindowSize(cols, rows, 0, 0); } catch { }
+            }, System.Threading.Tasks.TaskScheduler.Default);
     }
 
     /// <summary>

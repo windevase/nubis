@@ -16,6 +16,8 @@ public static class SshConfigImport
 {
     /// <summary>Include 중첩 한도 (자기 자신을 다시 포함하는 순환도 여기서 끊긴다)</summary>
     public const int MaxIncludeDepth = 8;
+    /// <summary>Include 로 파일을 읽는 전체 횟수 한도 (서로 포함하는 glob 의 경로 폭증 방지)</summary>
+    public const int MaxIncludeReads = 1000;
 
     private const string GroupName = "SSH config";
 
@@ -62,6 +64,7 @@ public static class SshConfigImport
             st.Warnings.Add(L.F("파일을 읽을 수 없습니다: {0} ({1})", full, ex.Message));
             return Build(st);
         }
+        st.Reading.Add(full);
         ParseText(text, Path.GetFileName(full), 0, st);
         return Build(st);
     }
@@ -91,6 +94,14 @@ public static class SshConfigImport
         public Block Current;
         public bool MatchWarned;
         public Func<string, string?>? BlockPath;
+        /// <summary>지금 읽고 있는 파일들 (Include 사슬) — 자기 자신을 다시 포함하면 끊는다.
+        /// 깊이 한도만으로는 "Include conf.d/*" 를 서로 포함하는 파일 N개가 N^8 번 읽혀 멈춘 것처럼 된다</summary>
+        public readonly HashSet<string> Reading = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>순환으로 건너뛴 파일 (경고는 파일마다 한 번)</summary>
+        public readonly HashSet<string> CycleWarned = new(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Include 로 읽은 파일 수 (같은 파일을 여러 번 읽은 것도 셈)</summary>
+        public int IncludeReads;
+        public bool IncludeLimitWarned;
     }
 
     private static void ParseText(string text, string source, int depth, State st)
@@ -171,6 +182,24 @@ public static class SshConfigImport
                 st.Warnings.Add(L.F("Include 파일을 건너뛰었습니다: {0} ({1})", file, why));
                 continue;
             }
+            string key;
+            try { key = Path.GetFullPath(file); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { key = file; }
+            if (st.Reading.Contains(key))
+            {
+                if (st.CycleWarned.Add(key)) st.Warnings.Add(L.F("Include 가 자기 자신을 다시 포함해 건너뛰었습니다: {0}", file));
+                continue;
+            }
+            // 순환이 아니어도 서로 glob 으로 포함하는 파일이 많으면 경로 수가 폭증한다 — 전체 읽기 횟수로 끊는다
+            if (++st.IncludeReads > MaxIncludeReads)
+            {
+                if (!st.IncludeLimitWarned)
+                {
+                    st.IncludeLimitWarned = true;
+                    st.Warnings.Add(L.F("Include 로 읽을 파일이 {0}개를 넘어 나머지는 건너뛰었습니다.", MaxIncludeReads));
+                }
+                return;
+            }
             string text;
             try { text = File.ReadAllText(file); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -179,7 +208,9 @@ public static class SshConfigImport
                 continue;
             }
             var outer = st.Current;
-            ParseText(text, Path.GetFileName(file), depth + 1, st);
+            st.Reading.Add(key);
+            try { ParseText(text, Path.GetFileName(file), depth + 1, st); }
+            finally { st.Reading.Remove(key); }
             // 포함된 파일 안에서 Host/Match 가 바뀌었으면, Include 뒤의 줄은 원래 블록에 이어서 적용한다
             if (!ReferenceEquals(st.Current, outer))
             {

@@ -43,7 +43,10 @@ public partial class MainWindow
     {
         if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(name, out var v)) return new();
         if (v.ValueKind == JsonValueKind.String) return new() { v.GetString() ?? "" };
-        return v.ValueKind == JsonValueKind.Array ? v.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList() : new();
+        // 문자열이 아닌 항목(숫자·객체)은 GetString 이 예외를 던져 도구 전체가 "실행 중 오류" 로 끝나므로 건너뛴다
+        return v.ValueKind == JsonValueKind.Array
+            ? v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList()
+            : new();
     }
 
     private string GroupLabel(HostEntry h)

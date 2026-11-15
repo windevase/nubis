@@ -255,7 +255,8 @@ public partial class SftpPanel : UserControl
     private int _navSeq;
     private string? _navTarget;
 
-    private async Task NavigateAsync(string path)
+    /// <param name="select">목록을 연 뒤 이 경로의 항목을 골라 보이게 (방금 만든 폴더·이름을 바꾼 항목)</param>
+    private async Task NavigateAsync(string path, string? select = null)
     {
         var seq = ++_navSeq;
         _navTarget = path;
@@ -273,8 +274,11 @@ public partial class SftpPanel : UserControl
                 files = await Task.Run(() => c.ListDirectory(path).Where(f => f.Name is not "." and not "..").ToList());
                 if (seq != _navSeq) return;
                 // 심볼릭 링크가 폴더인지는 링크마다 서버에 물어야 한다 — 차례로 물으면 /etc·/usr/lib 처럼 링크가 많은 폴더가 느려 병렬로
-                await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, f =>
+                await Task.Run(() => Parallel.ForEach(files.Where(f => f.IsSymbolicLink), new ParallelOptions { MaxDegreeOfParallelism = 8 }, (f, state) =>
                 {
+                    // 더 나중 이동이 들어왔거나 탭이 닫힘 — 남은 링크는 묻지 않는다. 링크가 수천 개인 폴더(/usr/lib/x86_64-linux-gnu 등)에서
+                    // 쓸모없어진 목록 때문에 연결 잠금을 수십 초 잡아 다음 이동·전송이 기다리지 않게
+                    if (Volatile.Read(ref _navSeq) != seq || _closed) { state.Stop(); return; }
                     try { linkTarget[f.FullName] = c.GetAttributes(f.FullName); } catch { }
                 }));
             }
@@ -300,7 +304,7 @@ public partial class SftpPanel : UserControl
             var sameFolder = path == _cwd;
             _cwd = path;
             PathBox.Text = path;
-            SetItems(items, keepSelection: sameFolder);   // 정렬·숨김 파일 표시 (SftpPanel.List.cs)
+            SetItems(items, keepSelection: sameFolder, select);   // 정렬·숨김 파일 표시 (SftpPanel.List.cs)
         }
         catch (Exception ex)
         {
@@ -358,6 +362,14 @@ public partial class SftpPanel : UserControl
 
     private async void OnPathKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            // 입력을 버리고 지금 폴더로 되돌린 뒤 목록으로 — 고치다 만 경로가 칸에 남지 않게
+            PathBox.Text = _navTarget ?? _cwd;
+            e.Handled = true;
+            FocusListRow();
+            return;
+        }
         if (e.Key != Key.Enter) return;
         e.Handled = true;
         // ~ · ~/x · 상대 경로(현재 폴더 기준) · . / .. 를 절대 경로로 바꿔서 간다

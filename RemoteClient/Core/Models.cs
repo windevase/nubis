@@ -108,13 +108,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     [JsonIgnore] public double CardOpacity => IsStopped ? 0.45 : 1.0;
 
     [JsonIgnore] public string DisplayName => string.IsNullOrWhiteSpace(Label) ? Address : Label;
-    [JsonIgnore] public string ProtocolText => Protocol == Protocol.Ssh ? "SSH" : "RDP";
+    [JsonIgnore] public string ProtocolText => Protocol switch { Protocol.Ssh => "SSH", Protocol.Rdp => "RDP", _ => "Local" };
     [JsonIgnore]
     public string Subtitle
     {
         get
         {
-            var parts = new List<string> { Protocol == Protocol.Ssh ? "ssh" : "rdp" };
+            var parts = new List<string> { Protocol switch { Protocol.Ssh => "ssh", Protocol.Rdp => "rdp", _ => "local" } };
             if (IsCloud)
             {
                 parts.Add(UsePublicIp && HasPublicIp ? L.F("{0} (공인)", PublicIp) : PrimaryAddress + (HasPublicIp ? " · EIP" : ""));

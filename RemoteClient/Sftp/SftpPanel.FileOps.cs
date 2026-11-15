@@ -13,14 +13,17 @@ public partial class SftpPanel
 
     private async void OnNewFolder(object sender, RoutedEventArgs e)
     {
+        // 아직 목록을 못 열었으면(연결 실패 등) 현재 폴더가 비어 있어 Combine 이 "/이름" — 루트에 만들게 된다
+        if (_cwd.Length == 0) return;
         var name = PromptDialog.Ask(Window.GetWindow(this), L.T("새 폴더"), L.F("{0} 에 만들 폴더 이름", _cwd));
         if (string.IsNullOrEmpty(name)) return;
         if (ValidateRemoteName(name) is { } invalid) { Dialog.Show(Window.GetWindow(this)!, invalid, L.T("새 폴더")); return; }
         try
         {
             var c = await ClientAsync();
-            await Task.Run(() => c.CreateDirectory(Combine(_cwd, name)));
-            await NavigateAsync(_cwd);
+            var path = Combine(_cwd, name);
+            await Task.Run(() => c.CreateDirectory(path));
+            await NavigateAsync(_cwd, select: path);   // 만든 폴더를 골라 보이게 (수천 개 목록에서 찾지 않아도 되게)
         }
         catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("새 폴더")); }
     }
@@ -42,7 +45,7 @@ public partial class SftpPanel
                 if (item.IsLink) SftpRaw.Rename(c, item.FullName, newPath);
                 else c.RenameFile(item.FullName, newPath);
             });
-            await NavigateAsync(_cwd);
+            await NavigateAsync(_cwd, select: newPath);   // 정렬 위치가 바뀐 항목을 골라 보이게
         }
         catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("이름 변경")); }
     }
@@ -59,14 +62,19 @@ public partial class SftpPanel
         if (_busy) { ShowBusyHint(); return; }   // 확인 창을 띄운 사이 다른 전송이 시작됨
         // 연결을 기다리기 전에 전송 중으로 표시 — 그 사이 다른 작업·사용자 전환이 끼어들지 않게
         var ct = BeginTransfer(L.T("삭제 중..."), 0);
+        string? result = null;
+        var kind = ToastKind.Info;
         try
         {
             var c = await ClientAsync();
             await Task.Run(() => { foreach (var i in items) DeleteRecursive(c, i.FullName, i.IsDir && !i.IsLink, i.IsLink, ct); }, ct);
+            result = L.F("삭제 완료: {0}개", items.Count);
+            kind = ToastKind.Success;
         }
-        catch (OperationCanceledException) { }
+        // 취소해도 그 전까지 지운 것은 사라졌다 — 말없이 끝내지 않고 알린다
+        catch (OperationCanceledException) { result = L.T("삭제를 취소했습니다. 이미 삭제한 항목은 되돌릴 수 없습니다."); }
         catch (Exception ex) { Dialog.Show(Window.GetWindow(this)!, ex.Message, L.T("삭제")); }
-        finally { EndTransfer(null); }
+        finally { EndTransfer(result, kind); }
         await NavigateAsync(_cwd);
     }
 

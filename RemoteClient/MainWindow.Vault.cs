@@ -72,8 +72,10 @@ public partial class MainWindow
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
         var users = _hosts.Where(h => h.VaultId == entry.Id).ToList();
         // 기본 계정(클라우드 프로필·설정)으로 이 계정을 쓰는 호스트도 센다 — 지우면 다른 계정으로 넘어가거나 접속 때 묻게 된다
+        // (호스트마다 프로필 목록을 훑지 않게 사전으로)
+        var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
         var viaDefault = _hosts.Where(h => h.VaultId != entry.Id &&
-                                           h.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)) == entry.Id).ToList();
+                                           h.EffectiveVaultId(h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null) == entry.Id).ToList();
         var all = users.Concat(viaDefault).ToList();
         var msg = L.F("Vault 계정 '{0}' ({1}) 를 삭제할까요?", entry.Name, entry.MethodsText) +
                   (all.Count > 0
@@ -98,11 +100,14 @@ public partial class MainWindow
             if (p.RdpVaultId == entry.Id) { p.RdpVaultId = null; profilesChanged = true; }
         }
         if (profilesChanged) SaveProfiles();
-        SettingsStore.Update(s =>
-        {
-            if (s.DefaultSshVaultId == entry.Id) s.DefaultSshVaultId = null;
-            if (s.DefaultRdpVaultId == entry.Id) s.DefaultRdpVaultId = null;
-        });
+        // 기본 계정이었을 때만 설정을 쓴다 — 매번 쓰면 settings.json 을 다시 쓰고 열린 모든 터미널에 설정을 다시 보낸다
+        var cur = SettingsStore.Current;
+        if (cur.DefaultSshVaultId == entry.Id || cur.DefaultRdpVaultId == entry.Id)
+            SettingsStore.Update(s =>
+            {
+                if (s.DefaultSshVaultId == entry.Id) s.DefaultSshVaultId = null;
+                if (s.DefaultRdpVaultId == entry.Id) s.DefaultRdpVaultId = null;
+            });
         if (users.Count > 0) SaveHosts();
         RefreshHosts();
         RefreshVault();
@@ -111,12 +116,14 @@ public partial class MainWindow
     private void OnVaultCopyPublic(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry { PublicKey: { Length: > 0 } pub } entry) return;
-        try
+        // 복사 결과는 토스트로 (확인 창을 매번 닫지 않아도 되게). 클립보드를 다른 프로그램이 잡고 있으면 실패를 알린다
+        try { Clipboard.SetText($"{pub} {entry.Name.Replace(' ', '_')}"); }
+        catch
         {
-            Clipboard.SetText($"{pub} {entry.Name.Replace(' ', '_')}");
-            Dialog.Show(this, L.T("공개키를 복사했습니다.\n서버의 ~/.ssh/authorized_keys 에 한 줄로 붙여넣으세요."), "Vault");
+            Toast.Show(L.T("공개키를 클립보드에 복사하지 못했습니다. 잠시 뒤 다시 시도하세요."), ToastKind.Error);
+            return;
         }
-        catch { }
+        Toast.Show(L.T("공개키를 복사했습니다.\n서버의 ~/.ssh/authorized_keys 에 한 줄로 붙여넣으세요."), ToastKind.Success);
     }
 }
 

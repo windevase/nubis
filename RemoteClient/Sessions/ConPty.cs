@@ -192,7 +192,8 @@ public sealed class PseudoConsoleProcess : IDisposable
         try
         {
             // CreateProcess 가 준 핸들로 직접 대기 (PID 재조회 경쟁 없음)
-            using var wait = new ManualResetEvent(false) { SafeWaitHandle = new SafeWaitHandle(_hProcess, ownsHandle: false) };
+            // ManualResetEvent 의 SafeWaitHandle 을 바꿔 끼우면 생성자가 만든 이벤트 핸들이 GC 때까지 남는다 → 핸들만 감싸는 WaitHandle
+            using var wait = new ProcessWaitHandle(_hProcess);
             var tcs = new TaskCompletionSource();
             var reg = ThreadPool.RegisterWaitForSingleObject(wait, (_, _) => tcs.TrySetResult(), null, Timeout.Infinite, true);
             await tcs.Task;
@@ -206,6 +207,12 @@ public sealed class PseudoConsoleProcess : IDisposable
         var h = Interlocked.Exchange(ref _hProcess, IntPtr.Zero);
         if (h != IntPtr.Zero) CloseHandle(h);
         Exited?.Invoke(code);
+    }
+
+    /// <summary>프로세스 핸들을 소유하지 않고 감싸는 대기 핸들 (닫기는 WaitExitAsync 가 직접)</summary>
+    private sealed class ProcessWaitHandle : WaitHandle
+    {
+        public ProcessWaitHandle(IntPtr hProcess) => SafeWaitHandle = new SafeWaitHandle(hProcess, ownsHandle: false);
     }
 
     /// <summary>키 입력을 순서대로 보내는 백그라운드 작업 줄 (프로세스가 입력을 읽지 않아 파이프가 가득 차도 UI 스레드가 멈추지 않게)</summary>
@@ -272,7 +279,8 @@ public sealed class PseudoConsoleProcess : IDisposable
         {
             // 트리 정리는 Claude 패널만. PowerShell 탭은 셸만 끝낸다 — 콘솔에 붙은 자식은 아래 ClosePc(의사 콘솔 닫기)로 끝나고,
             // 따로 창을 띄운 GUI 앱(code ., Start-Process notepad 등)은 남는다
-            if (_process is { HasExited: false }) _process.Kill(entireProcessTree: KillTreeOnClose);
+            // 이미 끝난 프로세스는 건드리지 않는다 — 그 사이 WaitExitAsync 가 핸들을 닫아 값이 다른 핸들로 재사용됐을 수 있다
+            if (_process != null) { if (!_process.HasExited) _process.Kill(entireProcessTree: KillTreeOnClose); }
             else if (_hProcess != IntPtr.Zero) TerminateProcess(_hProcess, 1);
         }
         catch { }

@@ -44,8 +44,13 @@ public static class SshExec
             try
             {
                 return await Task.Run(() =>
-                    shared != null && shared.TryGetValue(h.Id, out var s) && RunShared(h, s.Client, s.User, command, timeoutSec, ct) is { } r
-                        ? r : RunOne(h, command, timeoutSec, ct), ct);
+                {
+                    if (shared == null || !shared.TryGetValue(h.Id, out var s)) return RunOne(h, command, timeoutSec, ct);
+                    if (RunShared(h, s.Client, s.User, command, timeoutSec, ct) is { } r) return r;
+                    // 승인 창에는 '열린 탭의 연결로 실행' 으로 보였으므로, 그사이 탭 연결이 끊겨 새로 접속했다는 것을 결과에 밝힌다
+                    var fresh = RunOne(h, command, timeoutSec, ct);
+                    return fresh with { Note = "열린 터미널 탭의 연결이 그사이 끊겨 새 연결(호스트 설정 계정)로 실행" };
+                }, ct);
             }
             finally { gate.Release(); }
         });

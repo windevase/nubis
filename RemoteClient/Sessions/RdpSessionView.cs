@@ -83,7 +83,13 @@ public sealed class RdpSessionView : UserControl, ISessionView
             }
         };
         _rdp.Disconnected += OnDisconnected;
-        _rdp.LeftFullScreen += () => { if (_closed) return; _appliedDisplay = default; Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background); };
+        // 전체 화면을 나오면 탭 크기로 되돌린다. 나온 직후에는 세션이 해상도 변경을 거부할 때가 있어 실패하면 한 번 더 시도
+        _rdp.LeftFullScreen += () =>
+        {
+            if (_closed) return;
+            _appliedDisplay = default;
+            Dispatcher.BeginInvoke(() => { if (!TryUpdateDisplay()) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); } }, DispatcherPriority.Background);
+        };
         _rdp.FatalError += code => OnDisconnected(-code);
         // 네트워크 순단 때 컨트롤이 스스로 다시 연결하는 동안(컨트롤이 자체 안내 화면을 그린다) 탭 상태만 "연결 중" 으로 보여 준다
         _rdp.AutoReconnecting += (_, _) => { if (!_closed && _status == SessionStatus.Connected) SetStatus(SessionStatus.Connecting); };
@@ -241,9 +247,12 @@ public sealed class RdpSessionView : UserControl, ISessionView
     /// <summary>마지막 연결 시도에서 사용자가 계정 입력을 취소했는가 ("끊긴 탭 모두 다시 연결" 이 나머지 탭을 묻지 않고 멈추는 데 씀)</summary>
     public bool LastConnectCancelled { get; private set; }
 
+    // 계정 입력 창(중첩 메시지 루프)이 떠 있는 동안 MCP reconnect 등으로 Connect 가 다시 불리면 창이 두 개 겹쳐 뜬다 — 한 번만
+    private bool _prompting;
+
     private void Connect()
     {
-        if (_closed) return;
+        if (_closed || _prompting) return;
         LastConnectCancelled = false;
 
         // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로 다시 읽는다
@@ -260,7 +269,10 @@ public sealed class RdpSessionView : UserControl, ISessionView
             // 인증 실패 뒤에는 저장된 비밀번호가 있어도 묻는다 (사용자 이름만 채워서)
             if (_forcePrompt || string.IsNullOrWhiteSpace(_user) || string.IsNullOrEmpty(_password))
             {
-                var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", _user, _saveCredentials != null);
+                (string User, string Password, bool Save)? cred;
+                _prompting = true;
+                try { cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", _user, _saveCredentials != null); }
+                finally { _prompting = false; }
                 // 대화상자(중첩 메시지 루프)가 떠 있는 동안 탭이 닫혔을 수 있다 (MCP close_session 등) — 컨트롤은 이미 풀에 반납됨
                 if (_closed) return;
                 if (cred == null)
@@ -381,6 +393,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
         if (_closed || !_loggedIn || _status != SessionStatus.Connected) return true;
         // 숨은 탭(크기 0)은 건너뛴다 — 640x480 으로 줄였다가 되돌리며 원격 창 배치를 흔들지 않게. 보일 때 다시 불린다
         if (!IsVisible || ActualWidth < 1 || ActualHeight < 1) return true;
+        // 전체 화면 중에는 모니터 해상도를 유지한다 — 전환 직전에 걸어 둔 크기 조절 타이머·DPI 변경이 탭 크기로 되돌리지 않게 (나오면 LeftFullScreen 이 맞춘다)
+        try { if ((bool)_rdp.Ocx.FullScreen) return true; } catch { }
         var size = DesktopSize();
         if (size == _appliedDisplay) return true;   // 같은 값이면 원격에 다시 보내지 않는다
         var (w, h, scale) = size;
@@ -397,6 +411,11 @@ public sealed class RdpSessionView : UserControl, ISessionView
     {
         if (_closed) return;
         _loggedIn = false;
+        _displayRetryTimer.Stop();
+        // 원격 화면에 키보드 포커스가 있었으면(안내 화면으로 바뀌며 포커스가 사라짐) "다시 연결" 버튼으로 옮겨 Enter 로 바로 다시 연결할 수 있게.
+        // 다른 곳(Claude 패널 등)에서 입력 중이면 포커스를 빼앗지 않는다
+        bool hadFocus;
+        try { hadFocus = _rdp.ContainsFocus || _wfh.IsKeyboardFocusWithin; } catch { hadFocus = false; }
         SetStatus(SessionStatus.Disconnected);
 
         string text;
@@ -425,6 +444,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             ? L.F("{0} 세션 정상 종료", _host.DisplayName)
             : L.F("{0} 연결 종료", _host.DisplayName), text,
             IsNormalDisconnectReason(reason) ? OverlayKind.Neutral : OverlayKind.Error);
+        if (hadFocus && IsVisible) Dispatcher.BeginInvoke(FocusSession, DispatcherPriority.Input);
     }
 
     /// <summary>
@@ -462,6 +482,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
                 catch { }
             }
             _appliedDisplay = default;   // 전체 화면 해상도로 바뀜 — 나오면 탭 크기로 다시 보낸다
+            _resizeTimer.Stop();         // 전환 직전에 걸린 탭 크기 조절이 전체 화면 해상도를 덮어쓰지 않게
+            _displayRetryTimer.Stop();
             _rdp.Ocx.FullScreenTitle = _host.DisplayName;
             _rdp.Ocx.FullScreen = true;
         }

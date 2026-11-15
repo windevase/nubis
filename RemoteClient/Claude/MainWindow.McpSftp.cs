@@ -104,6 +104,8 @@ public partial class MainWindow
     {
         var (h, conn) = await SftpTargetAsync(a);
         var path = Arg(a, "path");
+        // 빈 경로는 승인 창을 띄운 뒤 홈 폴더로 풀려 '폴더입니다' 로 끝난다 — 승인 전에 거른다
+        if (path.Trim().Length == 0) throw new McpToolException("path 가 필요합니다 (읽을 원격 파일 경로).");
         var max = Math.Clamp(IntArg(a, "max_bytes") ?? 65536, 1024, 1048576);
         var tail = BoolArg(a, "tail") == true;
         var what = $"파일 읽기: {path} ({(tail ? "끝 " : "앞 ")}{SftpPanel.HumanSize(max)})";

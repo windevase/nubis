@@ -146,7 +146,17 @@ public sealed class XtermView : UserControl
     private async Task InitWebAsync()
     {
         // _closed 먼저 — Dispose 된 WebView2 의 CoreWebView2 속성은 예외를 낸다
-        if (_closed || _web.CoreWebView2 != null) return;
+        // 초기화 중에 Loaded 가 또 오면(탭이 트리에서 빠졌다 다시 들어옴) 처리기를 두 번 달지 않게 — 두 번 달면 키 입력이 두 번 간다
+        if (_closed || _initializing || _web.CoreWebView2 != null) return;
+        _initializing = true;
+        try { await InitWebCoreAsync(); }
+        finally { _initializing = false; }
+    }
+
+    private bool _initializing;
+
+    private async Task InitWebCoreAsync()
+    {
         _env ??= CoreWebView2Environment.CreateAsync(null, AppPaths.WebViewDir, new CoreWebView2EnvironmentOptions(
             // 터미널 화면은 같은 로컬 페이지라 렌더러 하나를 공유하고, 브라우저 부가 기능(동기화·번역·SmartScreen 등)은 끈다
             "--renderer-process-limit=1 --disable-background-networking --disable-component-update --disable-sync " +
@@ -377,21 +387,12 @@ public sealed class XtermView : UserControl
                 break;
 
             case "paste":
-                try
-                {
-                    if (!Clipboard.ContainsText()) break;
-                    // 제어 문자(ESC 등)는 빼고 붙여넣는다 — 남겨 두면 "\x1b[201~" 로 bracketed paste 를 빠져나가 실행될 수 있다
-                    var text = SanitizePaste(Clipboard.GetText(), out var stripped).Replace("\r\n", "\r").Replace('\n', '\r');
-                    if (text.Length == 0) { FocusTerminal(); break; }
-                    // 여러 줄은 줄마다 바로 실행될 수 있어 확인 (서버가 bracketed paste 를 켰으면 실행되지 않으므로 묻지 않음).
-                    // 제어 문자가 들어 있던 텍스트는 의도적으로 만든 것일 수 있어 설정·bracketed paste 와 관계없이 항상 확인
-                    var bracketed = m.TryGetProperty("bp", out var bp) && bp.ValueKind == JsonValueKind.True;
-                    var ask = stripped || (!bracketed && SettingsStore.Current.ConfirmMultilinePaste);
-                    if (ask && !ConfirmPaste(text, stripped)) { FocusTerminal(); break; }
-                    Post(new { t = "paste", d = text });
-                }
-                catch { }
+            {
+                // 확인 창(모달)을 WebView2 이벤트 처리 중에 띄우지 않도록 한 박자 늦춘다 (링크 열기와 같은 이유)
+                var bracketed = m.TryGetProperty("bp", out var bp) && bp.ValueKind == JsonValueKind.True;
+                Dispatcher.BeginInvoke(new Action(() => PasteFromClipboard(bracketed)));
                 break;
+            }
 
             case "ack":
                 // 페이지가 출력 조각을 다 그렸다 (흐름 제어)
@@ -400,7 +401,9 @@ public sealed class XtermView : UserControl
 
             case "reconnect":
                 // 끊김 막대의 "다시 연결" 버튼
-                if (_reconnectLabel != null) ReconnectRequested?.Invoke();
+                // 다시 연결은 계정 입력 창(모달)을 띄울 수 있다 — WebView2 이벤트 처리 중이 아니라 한 박자 뒤에
+                if (_reconnectLabel != null)
+                    Dispatcher.BeginInvoke(new Action(() => { if (!_closed && _reconnectLabel != null) ReconnectRequested?.Invoke(); }));
                 break;
 
             case "zoom":
@@ -420,6 +423,25 @@ public sealed class XtermView : UserControl
                 PromptScreen?.Invoke(m.GetProperty("d").GetString() ?? "");
                 break;
         }
+    }
+
+    /// <summary>클립보드 붙여넣기 (UI 스레드). bracketed = 서버가 bracketed paste 를 켬 (줄마다 바로 실행되지 않음)</summary>
+    private void PasteFromClipboard(bool bracketed)
+    {
+        if (_closed) return;
+        try
+        {
+            if (!Clipboard.ContainsText()) return;
+            // 제어 문자(ESC 등)는 빼고 붙여넣는다 — 남겨 두면 "\x1b[201~" 로 bracketed paste 를 빠져나가 실행될 수 있다
+            var text = SanitizePaste(Clipboard.GetText(), out var stripped).Replace("\r\n", "\r").Replace('\n', '\r');
+            if (text.Length == 0) { FocusTerminal(); return; }
+            // 여러 줄은 줄마다 바로 실행될 수 있어 확인 (서버가 bracketed paste 를 켰으면 실행되지 않으므로 묻지 않음).
+            // 제어 문자가 들어 있던 텍스트는 의도적으로 만든 것일 수 있어 설정·bracketed paste 와 관계없이 항상 확인
+            var ask = stripped || (!bracketed && SettingsStore.Current.ConfirmMultilinePaste);
+            if (ask && !ConfirmPaste(text, stripped)) { FocusTerminal(); return; }
+            Post(new { t = "paste", d = text });   // 확인 창을 보는 사이 탭이 닫혔으면 Post 가 보내지 않는다
+        }
+        catch { }
     }
 
     /// <summary>
