@@ -1,0 +1,19 @@
+{
+  "태그 (선택)": "Tags (optional)",
+  "태그": "Tags",
+  "한 줄에 하나씩 키=값  (예: 용도=웹 서버)": "One key=value per line  (e.g. purpose=web server)",
+  "목록 카드에 값이 보이고 검색할 수 있습니다. 클라우드 동기화는 태그를 바꾸지 않습니다.": "Values show on the host card and can be searched. Cloud sync never changes tags.",
+  "적은 키만 바뀌고 다른 태그는 그대로입니다. 값을 비우면(키=) 그 태그를 지웁니다.": "Only the keys you write change; other tags stay as they are. Leave the value empty (key=) to remove that tag.",
+  "바꿀 태그를 한 줄에 하나씩 키=값 으로 적으세요.": "Write the tags to change, one key=value per line.",
+  "태그 {0}: {1}": "Tag {0}: {1}",
+  "태그 {0}: 지움": "Tag {0}: removed",
+  "태그 {0}번째 줄: '키=값' 형식으로 적으세요 ({1})": "Tags line {0}: use the 'key=value' format ({1})",
+  "태그 키 '{0}' 가 두 번 있습니다 (대소문자 구분 없음).": "Tag key '{0}' appears twice (keys are not case-sensitive).",
+  "태그는 호스트마다 {0}개까지입니다.": "A host can have at most {0} tags.",
+  "태그 키가 비어 있습니다.": "A tag key is empty.",
+  "태그 키는 {0}자 이하입니다: {1}…": "Tag keys can be at most {0} characters: {1}…",
+  "태그 키에 보이지 않는 제어 문자·양방향 문자가 있습니다: {0}": "A tag key contains invisible control or bidirectional characters: {0}",
+  "태그 키에는 = , | 를 쓸 수 없습니다: {0}": "Tag keys cannot contain = , or |: {0}",
+  "태그 '{0}' 의 값은 {1}자 이하입니다.": "The value of tag '{0}' can be at most {1} characters.",
+  "태그 '{0}' 의 값에 보이지 않는 제어 문자·양방향 문자가 있습니다: {1}": "The value of tag '{0}' contains invisible control or bidirectional characters: {1}"
+}

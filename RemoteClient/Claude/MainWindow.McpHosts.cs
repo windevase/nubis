@@ -97,6 +97,27 @@ public partial class MainWindow
             return v;
         }
         if (Has(a, "label")) { var v = Visible("label"); Note("이름", h.Label, v); h.Label = v; }
+        if (Has(a, "tags") || BoolArg(a, "replace_tags") == true)
+        {
+            var updates = new List<KeyValuePair<string, string?>>();
+            if (Has(a, "tags"))
+            {
+                var t = a.GetProperty("tags");
+                if (t.ValueKind != JsonValueKind.Object) throw new McpToolException("tags 는 {\"키\": \"값\"} 객체입니다 (값이 빈 문자열·null 이면 그 태그를 지움).");
+                foreach (var p in t.EnumerateObject())
+                    updates.Add(new(p.Name, p.Value.ValueKind switch
+                    {
+                        JsonValueKind.String => p.Value.GetString(),
+                        JsonValueKind.Null => null,
+                        JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False => p.Value.GetRawText(),
+                        _ => throw new McpToolException($"태그 '{p.Name}' 의 값은 문자열이어야 합니다."),
+                    }));
+            }
+            var tagChanges = new List<HostTags.Change>();
+            try { h.Tags = HostTags.Apply(h.Tags, updates, BoolArg(a, "replace_tags") == true, tagChanges); }
+            catch (ArgumentException ex) { throw new McpToolException(ex.Message); }
+            foreach (var c in tagChanges) Note($"{McpHostRules.TagLabel} {c.Key}", c.From ?? "없음", c.To ?? "없음");
+        }
         if (Has(a, "group"))
         {
             if (h.IsCloud) throw new McpToolException("클라우드 호스트의 그룹은 클라우드 프로필입니다 (group 을 바꿀 수 없음).");
@@ -184,6 +205,7 @@ public partial class MainWindow
         $"{h.ProtocolText} {h.Address}:{h.Port}" + (h.HasPublicIp ? $" (공인 {h.PublicIp}{(h.UsePublicIp ? ", 공인으로 접속" : "")})" : "") +
         $" · 이름 {(h.Label.Length > 0 ? h.Label : "-")} · 그룹 {GroupLabel(h)} · 사용자 {(h.Username.Length > 0 ? h.Username : "-")}" +
         $" · Vault {VaultStore.Get(h.VaultId)?.Name ?? "없음"}" +
+        (h.TagsText.Length > 0 ? $" · 태그 {h.TagsText}" : "") +
         (h.JumpHostId != null ? $" · 점프 서버 {JumpName(h.JumpHostId)}" : "") +
         (h.RdpGateway != null ? $" · RD 게이트웨이 {h.RdpGateway}" : "") +
         (h.Favorite ? " · 즐겨찾기" : "");
@@ -240,6 +262,7 @@ public partial class MainWindow
     {
         var h = ResolveOneHost(Arg(a, "host"));
         var copy = h.Clone();
+        var tagsBefore = copy.Tags == null ? null : new Dictionary<string, string>(copy.Tags, StringComparer.OrdinalIgnoreCase);
         var changes = ApplyHostArgs(copy, a, isNew: false);
         if (changes.Count == 0) return "바뀐 항목이 없습니다.";
         var text = string.Join("\n", changes);
@@ -285,6 +308,18 @@ public partial class MainWindow
             if (Changed(McpHostRules.FavoriteLabel)) h.Favorite = copy.Favorite;
             if (Changed(McpHostRules.JumpLabel)) h.JumpHostId = copy.JumpHostId;
             if (Changed(McpHostRules.GatewayLabel)) h.RdpGateway = copy.RdpGateway;
+            // 태그는 요청에서 바뀐 키만 원본에 반영 (대기 중 다른 경로로 바뀐 다른 키는 유지)
+            var tagKeys = McpHostRules.ChangedTagKeys(tagsBefore, copy.Tags);
+            if (tagKeys.Count > 0)
+            {
+                var merged = h.Tags == null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(h.Tags, StringComparer.OrdinalIgnoreCase);
+                foreach (var key in tagKeys)
+                {
+                    if (copy.Tags != null && copy.Tags.TryGetValue(key, out var v)) merged[key] = v;
+                    else merged.Remove(key);
+                }
+                h.Tags = merged.Count > 0 ? merged : null;
+            }
             // 기억한 답 지우기는 승인 시점의 답 전체를 지운다 (대기 중 새로 기억한 답 포함 — 사용자가 지우기를 승인했으므로)
             if (copy.PromptAnswers == null && changes.Any(c => c.StartsWith(McpHostRules.AnswersLabel, StringComparison.Ordinal))) h.PromptAnswers = null;
             if (h.PrivateIp != null && !h.IsCloud) h.PrivateIp = h.Address;
@@ -383,6 +418,16 @@ internal static class McpHostRules
     public const string JumpLabel = "점프 서버";
     public const string GatewayLabel = "RD 게이트웨이";
     public const string AnswersLabel = "기억한 인증 답";
+    public const string TagLabel = "태그";
+
+    /// <summary>두 태그 묶음 사이에 값이 달라진 키 (대소문자 무시)</summary>
+    public static List<string> ChangedTagKeys(IReadOnlyDictionary<string, string>? before, IReadOnlyDictionary<string, string>? after)
+    {
+        var b = before == null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(before, StringComparer.OrdinalIgnoreCase);
+        var a = after == null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(after, StringComparer.OrdinalIgnoreCase);
+        return b.Keys.Union(a.Keys, StringComparer.OrdinalIgnoreCase)
+            .Where(k => b.GetValueOrDefault(k) != a.GetValueOrDefault(k)).ToList();
+    }
 
     private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel };
 

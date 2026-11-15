@@ -50,6 +50,7 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <!-- 로그인 계정 -->
@@ -106,6 +107,16 @@
                         <RadioButton x:Name="FavOff" Style="{StaticResource Segment}" Content="{l:Tr '해제'}" GroupName="fav"/>
                     </UniformGrid>
                 </Border>
+
+                <!-- 태그: 적은 키만 바꾸고 다른 태그는 호스트마다 그대로 -->
+                <CheckBox x:Name="TagsCheck" Grid.Row="7" Style="{StaticResource RowCheck}" Content="{l:Tr '태그'}" VerticalAlignment="Top" Margin="0,10,12,0"/>
+                <StackPanel Grid.Row="7" Grid.Column="1" Margin="0,12,0,0">
+                    <TextBox x:Name="TagsBox" AutomationProperties.LabeledBy="{Binding ElementName=TagsCheck}" Height="68" AcceptsReturn="True"
+                             TextWrapping="NoWrap" Padding="10,8" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto" TextChanged="OnFieldChanged" Tag="{l:Tr '한 줄에 하나씩 키=값  (예: 용도=웹 서버)'}"/>
+                    <TextBlock Style="{StaticResource TextCaption}" Margin="2,6,0,0" TextWrapping="Wrap"
+                               Text="{l:Tr '적은 키만 바뀌고 다른 태그는 그대로입니다. 값을 비우면(키=) 그 태그를 지웁니다.'}"/>
+                </StackPanel>
             </Grid>
 
             <!-- 적용 범위 안내 (해당될 때만) -->

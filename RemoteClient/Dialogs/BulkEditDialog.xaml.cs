@@ -99,6 +99,7 @@ public partial class BulkEditDialog : Window
         if (sender == UserBox) UserCheck.IsChecked = true;
         else if (sender == PortBox) PortCheck.IsChecked = true;
         else if (sender == GroupBox) GroupCheck.IsChecked = true;
+        else if (sender == TagsBox) TagsCheck.IsChecked = true;
     }
 
     private void OnOk(object sender, RoutedEventArgs e)
@@ -120,6 +121,18 @@ public partial class BulkEditDialog : Window
         if (GroupCheck.IsChecked == true && GroupCheck.IsEnabled) r.Group = GroupBox.Text.Trim();
         if (IpCheck.IsChecked == true && IpCheck.IsEnabled) r.UsePublicIp = IpPublic.IsChecked == true;
         if (FavCheck.IsChecked == true) r.Favorite = FavOn.IsChecked == true;
+        if (TagsCheck.IsChecked == true)
+        {
+            try
+            {
+                var tags = HostTags.ParseText(TagsBox.Text);
+                if (tags.Count == 0) { ShowError(L.T("바꿀 태그를 한 줄에 하나씩 키=값 으로 적으세요.")); TagsBox.Focus(); return; }
+                BulkEdit.ValidateTags(tags);
+                r.Tags = tags;
+            }
+            catch (Exception ex) when (ex is FormatException or ArgumentException) { ShowError(ex.Message); TagsBox.Focus(); return; }
+            if (r.TagLimitError(_hosts) is { } limit) { ShowError(limit); TagsBox.Focus(); return; }
+        }
         if (r.IsEmpty) { ShowError(L.T("바꿀 항목을 하나 이상 체크하세요.")); return; }
         if (r.ClearOwnCredentials && !ConfirmClearOwn(r)) return;
         _result = r;

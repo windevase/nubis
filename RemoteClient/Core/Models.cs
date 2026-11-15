@@ -75,6 +75,13 @@ public sealed class HostEntry : INotifyPropertyChanged
     public string? CloudName { get; set; }
     public string? Purpose { get; set; }
     public string? Os { get; set; }
+    /// <summary>
+    /// 사용자 태그 (키=값 자유 형식, 예: 용도=웹, env=prod). 클라우드 동기화는 건드리지 않는다.
+    /// 키는 대소문자를 구분하지 않는다 (HostTags.Apply 가 같은 키를 하나로 다룸)
+    /// </summary>
+    public Dictionary<string, string>? Tags { get; set; }
+    /// <summary>태그를 "키=값, ..." 한 줄로 (목록·검색용). 없으면 빈 문자열</summary>
+    [JsonIgnore] public string TagsText => Tags is { Count: > 0 } t ? string.Join(", ", t.Select(kv => $"{kv.Key}={kv.Value}")) : "";
     /// <summary>SSH 접속 때 서버 배너로 판별한 OS ("windows" / "unix", SshServerOs). 주소를 바꾸면 지운다 (다른 서버일 수 있음)</summary>
     public string? SshBannerOs { get; set; }
 
@@ -120,6 +127,7 @@ public sealed class HostEntry : INotifyPropertyChanged
                 parts.Add(UsePublicIp && HasPublicIp ? L.F("{0} (공인)", PublicIp) : PrimaryAddress + (HasPublicIp ? " · EIP" : ""));
                 if (!string.IsNullOrWhiteSpace(Purpose)) parts.Add(Purpose);
                 if (IsStopped) parts.Add(CloudState!.ToLowerInvariant());
+                AddTagValues(parts);
                 return string.Join(" · ", parts);
             }
             // 실제로 로그인하는 사용자명 — 직접 고른 Vault 계정에 사용자명이 있으면 그 값 (호스트에 숨겨진 값이 아니라)
@@ -127,8 +135,19 @@ public sealed class HostEntry : INotifyPropertyChanged
             if (!string.IsNullOrWhiteSpace(user)) parts.Add(user);
             var addr = UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress;
             if (!string.IsNullOrWhiteSpace(Label)) parts.Add(Port == DefaultPort(Protocol) ? addr : $"{addr}:{Port}");
-            return string.Join(", ", parts);
+            var text = string.Join(", ", parts);
+            var tags = new List<string>();
+            AddTagValues(tags);
+            return tags.Count > 0 ? text + " · " + string.Join(" · ", tags) : text;
         }
+    }
+
+    /// <summary>카드 부제목에는 태그 값만 (키까지 넣으면 길어짐 — 키=값은 툴팁·list_hosts 에)</summary>
+    private void AddTagValues(List<string> parts)
+    {
+        if (Tags == null) return;
+        foreach (var v in Tags.Values)
+            if (!string.IsNullOrWhiteSpace(v)) parts.Add(v);
     }
 
     /// <summary>클라우드 프로필 찾기 (툴팁의 계정 출처 표시용, MainWindow 가 연결)</summary>
@@ -140,6 +159,7 @@ public sealed class HostEntry : INotifyPropertyChanged
         L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
         (Protocol != Protocol.Local && CredentialSourceText(ProfileResolver?.Invoke(CloudProfileId)) is { } src ? L.F("로그인 계정: {0}", src) + "\n" : "") +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
+        (TagsText.Length > 0 ? L.F("태그: {0}", TagsText) + "\n" : "") +
         "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
 
     /// <summary>
@@ -229,6 +249,7 @@ public sealed class HostEntry : INotifyPropertyChanged
         c._selected = false;
         // 얕은 복사면 복제본에서 기억한 답이 원본에도 들어간다
         c.PromptAnswers = PromptAnswers == null ? null : new Dictionary<string, string>(PromptAnswers);
+        c.Tags = Tags == null ? null : new Dictionary<string, string>(Tags, StringComparer.OrdinalIgnoreCase);
         return c;
     }
 

@@ -62,7 +62,8 @@ public partial class MainWindow
         // 있을 때만 붙인다 (대부분의 호스트는 줄 길이 그대로)
         (h.Favorite ? " | ★즐겨찾기" : "") +
         (h.JumpHostId != null ? $" | 점프 {JumpName(h.JumpHostId)}" : "") +
-        (h.RdpGateway != null ? $" | 게이트웨이 {h.RdpGateway}" : "");
+        (h.RdpGateway != null ? $" | 게이트웨이 {h.RdpGateway}" : "") +
+        (h.TagsText.Length > 0 ? $" | 태그 {h.TagsText}" : "");
 
     /// <summary>
     /// 호스트 지정 해석: "group:이름"(그룹·클라우드 프로필 전체), ID(앞 8자리 가능), 정확한 이름, IP, 그다음 부분 일치.
@@ -117,10 +118,10 @@ public partial class MainWindow
 
         yield return new McpTool("list_hosts",
             "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS, 그 뒤에 해당할 때만 " +
-            "| ★즐겨찾기 | 점프 <점프 서버 이름 (주소)> | 게이트웨이 <RD 게이트웨이>. 비밀번호는 포함하지 않는다.",
+            "| ★즐겨찾기 | 점프 <점프 서버 이름 (주소)> | 게이트웨이 <RD 게이트웨이> | 태그 키=값, .... 용도 칸은 클라우드 태그에서 온 값이고, 사용자가 붙인 태그는 '태그' 칸. 비밀번호는 포함하지 않는다.",
             Schema(new
             {
-                query = new { type = "string", description = "이름·IP(사설/공인)·인스턴스 ID·리전·용도·OS 부분 검색어" },
+                query = new { type = "string", description = "이름·IP(사설/공인)·인스턴스 ID·리전·용도·OS·태그(키=값) 부분 검색어" },
                 group = new { type = "string", description = "그룹 이름 (예: 'Production', '[AWS] prod')" },
                 protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
                 running_only = new { type = "boolean", description = "실행 중인 서버만" },
@@ -134,7 +135,7 @@ public partial class MainWindow
                 var proto = Arg(a, "protocol");
                 IEnumerable<HostEntry> list = _hosts;
                 if (q.Length > 0)
-                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.Username }
+                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.Username, h.TagsText }
                         .Any(s => s?.Contains(q, StringComparison.OrdinalIgnoreCase) == true));
                 if (group.Length > 0)
                     list = list.Where(h => GroupLabel(h).Contains(group, StringComparison.OrdinalIgnoreCase));
@@ -407,7 +408,8 @@ public partial class MainWindow
             {
                 address = new { type = "string", description = "IP 또는 호스트명" },
                 protocol = new { type = "string", @enum = new[] { "ssh", "rdp" }, description = "기본 ssh" },
-                label = new { type = "string" },
+                label = new { type = "string", description = "호스트 이름 (목록에 보이는 표시 이름. 비우면 주소)" },
+                tags = new { type = "object", additionalProperties = new { type = "string" }, description = "사용자 태그 {\"키\": \"값\"} — 키는 자유 (예: {\"용도\": \"웹\", \"env\": \"prod\"}). 목록 카드·검색·list_hosts 에 보인다. 키 40자·값 200자·30개까지" },
                 group = new { type = "string" },
                 port = new { type = "integer", description = "생략하면 설정의 기본 포트" },
                 username = new { type = "string" },
@@ -429,7 +431,9 @@ public partial class MainWindow
                 host = new { type = "string", description = "대상 호스트 (이름·IP·id, 정확히 1개여야 함)" },
                 address = new { type = "string", description = "새 주소 (직접 등록한 호스트만)" },
                 protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
-                label = new { type = "string" },
+                label = new { type = "string", description = "호스트 이름 (목록에 보이는 표시 이름 — 용도가 아님)" },
+                tags = new { type = "object", additionalProperties = new { type = "string" }, description = "사용자 태그 {\"키\": \"값\"} — 키는 자유 (예: {\"용도\": \"Rocky Linux 9.3\"}). 넘긴 키만 바꾸고, 값이 빈 문자열이면 그 태그를 지운다. 클라우드 호스트도 가능하며 동기화가 덮어쓰지 않는다" },
+                replace_tags = new { type = "boolean", description = "true = tags 에 없는 기존 태그는 모두 지운다 (tags 없이 true 면 태그 전체 삭제)" },
                 group = new { type = "string", description = "그룹 (직접 등록한 호스트만)" },
                 port = new { type = "integer" },
                 username = new { type = "string", description = "빈 문자열 = 지우기 (Vault 계정의 사용자명을 따름)" },
