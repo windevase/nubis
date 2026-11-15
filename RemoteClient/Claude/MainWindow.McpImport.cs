@@ -188,15 +188,24 @@ public partial class MainWindow
         if (args.AdVault == null && (args.Server != null || ownDomain == null || !domain.TrimEnd('.').Equals(ownDomain.TrimEnd('.'), StringComparison.OrdinalIgnoreCase)))
         {
             var auditTargets = new[] { $"AD {target}", "현재 Windows 로그인" };
-            var ok = await OnUiAsync(() => AskApprovalAsync("import_hosts", L.T("Claude 가 현재 Windows 로그인으로 Active Directory 조회를 요청합니다"),
-                L.T("이 PC 의 도메인이 아니거나 서버를 직접 지정한 조회입니다. 현재 Windows 로그인 정보로 아래 서버에 인증해 컴퓨터 목록을 읽습니다. 사내 도메인 컨트롤러가 아니면 그 서버가 Windows 인증(NTLM)을 받게 되니 주소를 확인하세요."),
-                new[] { L.F("도메인: {0}", domain), L.F("도메인 컨트롤러: {0}", args.Server ?? domain) }, command));
+            var approvalKey = command + "|login";
+            var reused = false;
+            var ok = await OnUiAsync(async () =>
+            {
+                // 미리보기 때 승인한 것과 같은 조회(같은 도메인·서버·조건)를 apply 에서 다시 하는 경우는 한 번만 승인을 재사용한다
+                if (args.Apply && TakeAdApproval(approvalKey)) { reused = true; return true; }
+                var yes = await AskApprovalAsync("import_hosts", L.T("Claude 가 현재 Windows 로그인으로 Active Directory 조회를 요청합니다"),
+                    L.T("이 PC 의 도메인이 아니거나 서버를 직접 지정한 조회입니다. 현재 Windows 로그인 정보로 아래 서버에 인증해 컴퓨터 목록을 읽습니다. 사내 도메인 컨트롤러가 아니면 그 서버가 Windows 인증(NTLM)을 받게 되니 주소를 확인하세요."),
+                    new[] { L.F("도메인: {0}", domain), L.F("도메인 컨트롤러: {0}", args.Server ?? domain) }, command);
+                if (yes && !args.Apply) RememberAdApproval(approvalKey);
+                return yes;
+            });
             if (!ok)
             {
                 AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 거부");
                 throw new McpToolException("사용자가 현재 Windows 로그인으로 AD 조회하는 것을 거부했습니다.");
             }
-            AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 승인");
+            AuditLog.Write("import_hosts", auditTargets, command, reused ? "AD 조회 승인 (미리보기 때 승인 재사용)" : "AD 조회 승인");
         }
         if (args.AdVault != null)
         {
@@ -207,13 +216,18 @@ public partial class MainWindow
                 if (v.Username.Trim().Length == 0) throw new McpToolException($"Vault 계정 '{v.Name}' 에 사용자명이 없습니다.");
                 if (!v.HasPassword) throw new McpToolException($"Vault 계정 '{v.Name}' 에 비밀번호가 없습니다 (AD 조회는 비밀번호 계정만).");
                 var auditTargets = new[] { $"AD {target}", $"Vault {v.Name}" };
-                if (!await AskApprovalAsync("import_hosts", L.T("Claude 가 Vault 계정으로 Active Directory 조회를 요청합니다"),
+                // 같은 Vault 계정(같은 사용자명)·같은 조회면 미리보기 때의 승인을 apply 에서 한 번만 재사용한다
+                var approvalKey = $"{command}|vault:{v.Id}|{v.Username}";
+                var reused = args.Apply && TakeAdApproval(approvalKey);
+                if (!reused && !await AskApprovalAsync("import_hosts", L.T("Claude 가 Vault 계정으로 Active Directory 조회를 요청합니다"),
                         L.T("아래 Vault 계정의 사용자명·비밀번호로 도메인 컨트롤러에 로그인해 컴퓨터 목록을 읽습니다. 서버가 사내 도메인 컨트롤러가 맞는지 확인하세요. 비밀번호는 Claude 에 전달되지 않습니다."),
                         new[] { L.F("Vault 계정: {0} ({1})", v.Name, v.Username), L.F("도메인 컨트롤러: {0}", args.Server ?? domain) }, command))
                 {
                     AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 거부");
                     throw new McpToolException("사용자가 Vault 계정으로 AD 조회하는 것을 거부했습니다.");
                 }
+                if (reused) AuditLog.Write("import_hosts", auditTargets, command, "AD 조회 승인 (미리보기 때 승인 재사용)");
+                else if (!args.Apply) RememberAdApproval(approvalKey);
                 // 승인 창을 기다리는 동안 계정이 지워졌거나 비밀번호가 바뀌었을 수 있어 승인 뒤에 읽는다
                 if (VaultStore.Get(v.Id) is not { } now || !Secret.TryUnprotect(now.ProtectedPassword, out var plain) || plain.Length == 0)
                 {
@@ -247,6 +261,31 @@ public partial class MainWindow
         }
         AuditLog.Write("import_hosts", new[] { $"AD {target}" }, command, $"조회 {result.Hosts.Count}대");
         return (result, $"Active Directory ({target})", $"ad ({target})");
+    }
+
+    /// <summary>
+    /// 미리보기(apply=false)에서 승인받은 AD 조회 (키 = 조회 명령 + 인증 수단 → 승인 시각). 잠금 안에서만 쓴다.
+    /// apply=true 의 다시 읽기가 똑같은 조회일 때 한 번만 꺼내 쓰고 지운다 — 같은 서버에 같은 인증을 한 번 더 보내는 것이라
+    /// 새로 노출되는 것은 없고, 등록 자체는 apply 의 가져오기 승인을 따로 받는다
+    /// </summary>
+    private readonly Dictionary<string, DateTime> _adApprovals = new(StringComparer.Ordinal);
+    private static readonly TimeSpan AdApprovalReuseWindow = TimeSpan.FromMinutes(10);
+
+    // Vault 계정 경로는 UI 스레드 밖(MCP 요청 스레드)에서도 부르므로 잠금으로 보호한다
+    private void RememberAdApproval(string key)
+    {
+        lock (_adApprovals)
+        {
+            var now = DateTime.UtcNow;
+            foreach (var old in _adApprovals.Where(kv => now - kv.Value > AdApprovalReuseWindow).Select(kv => kv.Key).ToList())
+                _adApprovals.Remove(old);
+            _adApprovals[key] = now;
+        }
+    }
+
+    private bool TakeAdApproval(string key)
+    {
+        lock (_adApprovals) return _adApprovals.Remove(key, out var at) && DateTime.UtcNow - at <= AdApprovalReuseWindow;
     }
 
     // =================== 등록 (UI 스레드) ===================

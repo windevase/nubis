@@ -65,7 +65,8 @@ public partial class MainWindow
                         {
                             tcp.ReceiveTimeout = 3000;
                             var buf = new byte[256];
-                            using var bcts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                            using var bcts = CancellationTokenSource.CreateLinkedTokenSource(ct);   // 취소되면 배너도 기다리지 않는다 (다음 시도 전 StopIfCancelled)
+                            bcts.CancelAfter(TimeSpan.FromSeconds(3));
                             var n = await tcp.GetStream().ReadAsync(buf, bcts.Token);
                             var banner = Encoding.ASCII.GetString(buf, 0, n).Split('\n')[0].Trim();
                             line += banner.StartsWith("SSH-") ? $" — 배너 {banner}" : $" — SSH 배너가 아님: '{banner}'";
@@ -80,6 +81,7 @@ public partial class MainWindow
                 catch (Exception ex) { sb.AppendLine($"  {port}/tcp 실패: {ex.Message}"); }
             }
         }
+        StopIfCancelled();   // 마지막 포트의 배너 대기 중 취소된 경우
         // run_command 와 같은 기준: SSH 는 비밀번호·키·기본 키 파일(~/.ssh/id_*) 중 하나, WinRM(RDP 호스트)은 비밀번호만
         var noAccount = string.IsNullOrWhiteSpace(conn.Username) || (h.Protocol == Protocol.Ssh
             ? string.IsNullOrEmpty(conn.Password) && !conn.HasKey && !SshAuth.HasDefaultKeyFiles()

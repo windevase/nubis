@@ -126,6 +126,10 @@ public static class ClaudeGuard
         // 사용자 전역 Claude Code 설정도 고치지 못하게 한다 — 작업 폴더의 .claude\ 를 막아도 ~/.claude/settings*.json 에 hook·allow 규칙을,
         // ~/.claude.json 에 프로젝트별 allowedTools · mcpServers 를 써 넣으면 같은 우회가 된다 (Edit 도구만 해당, claude 자체 저장은 영향 없음)
         foreach (var f in GlobalClaudeSettings) rules.Add($"Edit({f})");
+        // CLAUDE_CONFIG_DIR 을 쓰면 전역 설정이 ~/.claude 가 아니라 그 폴더에 있다 (claude 는 이 앱의 환경 변수를 물려받는다)
+        if (ClaudeConfigDirRule() is { } cfgDir)
+            foreach (var f in new[] { "settings.json", "settings.local.json", ".claude.json" })
+                rules.Add($"Edit({cfgDir}/{f})");
         // 셸로 앱 settings.json 을 고치는 것도 막는다 — Nubis 경로가 들어간 명령 · 작업 폴더(<data>\claude)에서 본 상위 폴더만 (2차 안전장치)
         foreach (var pat in new[] { "*Nubis*settings.json*", "*../settings.json*", @"*..\settings.json*" })
         {
@@ -143,6 +147,15 @@ public static class ClaudeGuard
 
     /// <summary>사용자 전역 Claude Code 설정 파일 (권한 규칙의 ~/ 표기 — 홈 폴더 기준)</summary>
     internal static readonly string[] GlobalClaudeSettings = { "~/.claude/settings.json", "~/.claude/settings.local.json", "~/.claude.json" };
+
+    /// <summary>CLAUDE_CONFIG_DIR 환경 변수가 가리키는 폴더의 규칙 경로 (없거나 잘못된 경로면 null)</summary>
+    private static string? ClaudeConfigDirRule()
+    {
+        var dir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR")?.Trim();
+        if (string.IsNullOrEmpty(dir)) return null;
+        try { return ToRulePath(dir); }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
+    }
 
     /// <summary>앱이 현재 탭 정보를 써 두는 파일 (claude 작업 폴더 안)</summary>
     public const string ActiveContextFile = "active-session.txt";
