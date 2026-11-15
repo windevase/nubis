@@ -87,6 +87,10 @@ public partial class SftpPanel
         target ??= FileList.SelectedItem ?? (FileList.Items.Count > 0 ? FileList.Items[0] : null);
         if (target != null)
         {
+            // ItemsSource 를 막 바꾼 직후에는 행 컨테이너가 아직 없어(Status != ContainersGenerated) ScrollIntoView 가 Loaded 우선순위로 미뤄진다 —
+            // 그러면 화면 밖 행은 아래에서 컨테이너를 못 찾아 목록 자체에 포커스가 간다. 먼저 한 번 배치해 보이는 행만 만든 뒤 스크롤한다 (가상화라 보이는 행 수만큼)
+            if (FileList.ItemContainerGenerator.Status != System.Windows.Controls.Primitives.GeneratorStatus.ContainersGenerated)
+                FileList.UpdateLayout();
             FileList.ScrollIntoView(target);
             FileList.UpdateLayout();   // 가상화 — 화면 밖 행은 컨테이너가 이때 만들어진다
             if (FileList.ItemContainerGenerator.ContainerFromItem(target) is ListBoxItem row && row.Focus()) return;

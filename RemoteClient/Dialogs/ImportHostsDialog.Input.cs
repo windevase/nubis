@@ -49,11 +49,15 @@ public partial class ImportHostsDialog
         e.Handled = true;
     }
 
-    /// <summary>미리보기 목록에서 Space = 고른 줄 체크 켜기 · 끄기 (체크 상자에 포커스가 있으면 체크 상자가 직접 처리)</summary>
+    /// <summary>
+    /// 미리보기 목록에서 Space = 포커스가 있는 줄 체크 켜기 · 끄기. 줄(ListBoxItem) 자체에 포커스가 있을 때만 —
+    /// 체크 상자에 포커스가 있으면 체크 상자가 직접 처리한다. 선택 줄이 아니라 포커스 줄 기준
+    /// (Ctrl+↑↓ 로 선택 없이 포커스만 옮긴 뒤 Space 를 누르면 포커스 표시와 다른 줄이 바뀌던 문제)
+    /// </summary>
     private void OnRowListKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Space || e.OriginalSource is CheckBox || Keyboard.Modifiers != ModifierKeys.None) return;
-        if (RowList.SelectedItem is not ImportRow row || !row.IsSelectable) return;
+        if (e.Key != Key.Space || Keyboard.Modifiers != ModifierKeys.None) return;
+        if (e.OriginalSource is not ListBoxItem { DataContext: ImportRow row } || !row.IsSelectable) return;
         row.IsSelected = !row.IsSelected;
         e.Handled = true;
     }
