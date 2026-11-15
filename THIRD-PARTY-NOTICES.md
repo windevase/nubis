@@ -105,6 +105,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Apache-2.0 전문: https://www.apache.org/licenses/LICENSE-2.0
 
 Tencent Cloud API 는 SDK 없이 공개된 TC3-HMAC-SHA256 서명 규격으로 직접 호출합니다.
+OCI(Oracle Cloud) API 도 SDK 없이 공개된 HTTP Signature(rsa-sha256) 규격으로 직접 서명해 호출합니다.
+
+## 호스트 가져오기
+
+| 패키지 | 라이선스 | 출처 |
+|---|---|---|
+| YamlDotNet (Ansible YAML 인벤토리 읽기) | MIT | https://github.com/aaubry/YamlDotNet — Copyright (c) Antoine Aubry and contributors |
+| System.DirectoryServices.Protocols (Active Directory · Entra Domain Services LDAP 조회) | MIT | https://github.com/dotnet/runtime — Copyright (c) .NET Foundation and Contributors |
 
 ## 시스템 구성요소 (재배포하지 않음)
 
