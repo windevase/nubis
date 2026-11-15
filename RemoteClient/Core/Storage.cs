@@ -355,7 +355,7 @@ public sealed class AppSettings
     public LoginConfig Login { get; set; } = new();
     /// <summary>화면 언어: "ko"(기본) · "en". null 이면 처음 실행 — 언어 선택 화면을 띄운다</summary>
     public string? Language { get; set; }
-    /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure</summary>
+    /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure, Oci</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 
     /// <summary>기본 Vault 계정: 계정을 따로 지정하지 않은 모든 호스트가 쓴다 (SSH · RDP 따로)</summary>

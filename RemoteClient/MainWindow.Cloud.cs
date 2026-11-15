@@ -270,7 +270,12 @@ public partial class MainWindow
         {
             var dlg = new Microsoft.Win32.OpenFileDialog
             {
-                Title = L.F("{0} 인증 파일 선택 ({1})", section.Title, section.Provider == CloudProvider.Aws ? "AWS config" : "ADC JSON"),
+                Title = L.F("{0} 인증 파일 선택 ({1})", section.Title, section.Provider switch
+                {
+                    CloudProvider.Aws => "AWS config",
+                    CloudProvider.Oci => "OCI config",
+                    _ => "ADC JSON",
+                }),
                 Filter = section.Provider == CloudProvider.Gcp ? L.T("JSON (*.json)|*.json|모든 파일|*.*") : L.T("모든 파일|*.*"),
                 InitialDirectory = Path.GetDirectoryName(current) is { } d && Directory.Exists(d) ? d : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 FileName = Path.GetFileName(current),

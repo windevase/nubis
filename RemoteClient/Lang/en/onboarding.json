@@ -7,7 +7,7 @@
   "SSH / RDP 서버를 주소·포트·계정으로 등록합니다. 검색창에 user@host 를 입력해 바로 접속할 수도 있습니다.": "Register an SSH / RDP server by address, port and account. You can also type user@host in the search box to connect right away.",
   "새 호스트": "New host",
   "클라우드 서버 가져오기": "Import cloud servers",
-  "AWS · Tencent · GCP · Azure 의 서버를 이 PC 에 저장된 인증 프로필로 그룹별로 가져옵니다.": "Import servers from AWS · Tencent · GCP · Azure into groups, using the credential profiles saved on this PC.",
+  "AWS · Tencent · GCP · Azure · OCI 의 서버를 이 PC 에 저장된 인증 프로필로 그룹별로 가져옵니다.": "Import servers from AWS · Tencent · GCP · Azure · OCI into groups, using the credential profiles saved on this PC.",
   "Cloud 열기": "Open Cloud",
   "Vault 계정": "Vault accounts",
   "여러 서버가 함께 쓰는 사용자명·비밀번호·SSH 키를 한 번 저장해 두고 골라 씁니다.": "Save the username, password and SSH key that several servers share once, then pick them per host.",

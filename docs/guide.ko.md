@@ -285,6 +285,7 @@ Vault 페이지의 **호스트 보기** 는 그 계정으로 로그인하는 호
 | Tencent | 프로필 | `tccli configure` | `~/.tccli/<프로필>.credential` (`default` 포함) |
 | GCP | 프로젝트 | `gcloud auth application-default login` | ADC 파일 |
 | Azure | 구독 | `az login` | `~/.azure` |
+| OCI | 프로필 | `oci session authenticate`(브라우저) 또는 `oci setup config` 로 API 키 등록 | `~/.oci/config` (`[DEFAULT]` · `[x]`) |
 
 Cloud 페이지의 각 섹션에 있는 **로그인** 버튼은 해당 CLI 로그인 명령을 새 콘솔 창에서 실행합니다. 인증 파일이 표준 위치가 아니면 **경로 변경** 으로 지정합니다.
 
@@ -522,7 +523,7 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 
 ### 11.8 클라우드 인증 파일 경로
 
-Cloud 페이지의 섹션마다 **경로 변경** 으로 지정합니다 (기본은 표준 위치). AWS 는 `AWS_CONFIG_FILE`, GCP 는 `GOOGLE_APPLICATION_CREDENTIALS`, Azure 는 `AZURE_CONFIG_DIR` 로 적용되어 로그인 버튼으로 띄우는 CLI 에도 같은 경로가 쓰입니다. Claude 는 바꿀 수 없습니다.
+Cloud 페이지의 섹션마다 **경로 변경** 으로 지정합니다 (기본은 표준 위치). AWS 는 `AWS_CONFIG_FILE`, GCP 는 `GOOGLE_APPLICATION_CREDENTIALS`, Azure 는 `AZURE_CONFIG_DIR`, OCI 는 `OCI_CLI_CONFIG_FILE` 로 적용되어 로그인 버튼으로 띄우는 CLI 에도 같은 경로가 쓰입니다. Claude 는 바꿀 수 없습니다.
 
 ---
 

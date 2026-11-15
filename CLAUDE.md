@@ -1,6 +1,6 @@
 # Nubis — Working Guide
 
-SSH / RDP / SFTP remote access client for Windows (WPF, .NET 10). It imports cloud (AWS · Tencent · GCP · Azure) servers per profile, and the in-app Claude Code panel drives the app through a built-in MCP server. See `README.md` for features.
+SSH / RDP / SFTP remote access client for Windows (WPF, .NET 10). It imports cloud (AWS · Tencent · GCP · Azure · OCI) servers per profile, and the in-app Claude Code panel drives the app through a built-in MCP server. See `README.md` for features.
 
 ## Build · Run · Test
 
@@ -51,7 +51,7 @@ The source folder is named `RemoteClient\`, but the project / assembly / namespa
 | `Remote\SshAuth.cs` + `Dialogs\AuthPromptDialog` | SSH auth methods · keyboard-interactive answers (`KbdAuth`: saved password only to a password prompt, once per connection; OTP etc. asked via `AuthPrompter` in interactive paths, error in non-interactive ones) · password-expired change · failure hints |
 | `Remote\SshAgent.cs` / `JumpTunnel.cs` / `OpenSshKnownHosts.cs` | OpenSSH compatibility: ssh-agent keys (named pipe, signing delegated via a custom `HostAlgorithm`) · ProxyJump (`HostEntry.JumpHostId` → SSH.NET local forward; host keys still checked against the target address) · read-only `~/.ssh/known_hosts` lookup |
 | `Remote\SharedSftpClient.cs` / `SudoSftp.cs` + `Sftp\SftpPanel.RunAs.cs` | SFTP channel on the terminal's SSH session (no re-auth) / SFTP as another user via `sudo sftp-server` when the terminal prompt shows a different user (`TerminalCwd.PromptUser`) |
-| `Cloud\Cloud.cs` / `CloudSync.cs` / `*Provider.cs` | Cloud profiles · `CloudPaths` · provider list / storage · `CloudSync.Apply` merge / 4 providers (AWS SDK, Tencent TC3 hand-signed, GCP · Azure REST) |
+| `Cloud\Cloud.cs` / `CloudSync.cs` / `*Provider.cs` | Cloud profiles · `CloudPaths` · provider list / storage · `CloudSync.Apply` merge / 5 providers (AWS SDK, Tencent TC3 hand-signed, GCP · Azure REST, OCI hand-signed REST — `OciAuth.cs` reads `~/.oci/config`) |
 | `Vault\Vault.cs` + dialogs | Vault accounts (username + password / SSH key, `vault.json`). Hosts reference a single `VaultId`, and `WithDefaults` fills values only into the copy used for connecting (`KeyMaterial` · `KeyPassphrase` are `[JsonIgnore]`). A Vault account **picked on the host** wins over the host's own username/password/key (they stay saved but hidden in the editor and come back when the Vault is cleared); default accounts (profile / settings) only fill blanks. The old split form (`Kind`/`ProtectedSecret`, `VaultPasswordId`/`VaultKeyId`) is converted on read |
 | `Core\Models.cs` / `Storage.cs` / `Logging.cs` / `BrandIcons.cs` | Host model · JSON storage (`SafeFile`) · DPAPI (`Secret`) · known_hosts · settings · `AuditLog` · `LogFiles` · vector icons |
 | `Dialogs\*Dialog.xaml` | App-themed dialogs. **Use `Dialog.Show` instead of `MessageBox.Show`** (same argument order) |

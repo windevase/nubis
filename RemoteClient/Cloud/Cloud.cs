@@ -24,16 +24,17 @@ using Google.Apis.Auth.OAuth2;
 
 namespace Nubis;
 
-public enum CloudProvider { Aws, Tencent, Gcp, Azure }
+// 설정·프로필 JSON 에는 이름(문자열)으로 저장되지만, 순서 정렬(그룹 표시 순서)에 쓰이므로 새 클라우드는 끝에 추가한다
+public enum CloudProvider { Aws, Tencent, Gcp, Azure, Oci }
 
 /// <summary>
-/// 클라우드 계정 단위(AWS/Tencent 프로필, GCP 프로젝트, Azure 구독). 동기화하면 이 프로필 그룹으로 호스트가 등록된다.
+/// 클라우드 계정 단위(AWS/Tencent/OCI 프로필, GCP 프로젝트, Azure 구독). 동기화하면 이 프로필 그룹으로 호스트가 등록된다.
 /// </summary>
 public sealed class CloudProfile : INotifyPropertyChanged
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public CloudProvider Provider { get; set; }
-    /// <summary>AWS/Tencent: 프로필 이름, GCP: 프로젝트 ID, Azure: 구독 ID</summary>
+    /// <summary>AWS/Tencent/OCI: 프로필 이름, GCP: 프로젝트 ID, Azure: 구독 ID</summary>
     public string Name { get; set; } = "";
     public string DisplayName { get; set; } = "";
     /// <summary>Azure 구독의 테넌트 ID</summary>
@@ -101,7 +102,7 @@ public static class CloudPaths
     // 앱 시작 시점의 원래 환경변수 (기본값으로 되돌릴 때 복원)
     private static readonly Dictionary<string, string?> Original = new[]
     {
-        "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CONFIG_DIR",
+        "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_CONFIG_DIR", "OCI_CLI_CONFIG_FILE",
     }.ToDictionary(n => n, Environment.GetEnvironmentVariable);
 
     public static bool IsFolder(CloudProvider p) => p is CloudProvider.Tencent or CloudProvider.Azure;
@@ -112,6 +113,7 @@ public static class CloudPaths
         CloudProvider.Tencent => Path.Combine(Home, ".tccli"),
         CloudProvider.Gcp => Original["GOOGLE_APPLICATION_CREDENTIALS"]
                              ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "gcloud", "application_default_credentials.json"),
+        CloudProvider.Oci => Original["OCI_CLI_CONFIG_FILE"] ?? Path.Combine(Home, ".oci", "config"),
         _ => Original["AZURE_CONFIG_DIR"] ?? Path.Combine(Home, ".azure"),
     };
 
@@ -129,6 +131,8 @@ public static class CloudPaths
             aws != null ? Path.Combine(Path.GetDirectoryName(aws) ?? "", "credentials") : Original["AWS_SHARED_CREDENTIALS_FILE"]);
         Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", Custom(CloudProvider.Gcp) ?? Original["GOOGLE_APPLICATION_CREDENTIALS"]);
         Environment.SetEnvironmentVariable("AZURE_CONFIG_DIR", Custom(CloudProvider.Azure) ?? Original["AZURE_CONFIG_DIR"]);
+        // OCI: oci CLI 와 OciConfig 모두 OCI_CLI_CONFIG_FILE 을 읽는다
+        Environment.SetEnvironmentVariable("OCI_CLI_CONFIG_FILE", Custom(CloudProvider.Oci) ?? Original["OCI_CLI_CONFIG_FILE"]);
         AzureProvider.ClearTokenCache();
     }
 }
@@ -171,7 +175,7 @@ public static class CloudProviders
 {
     public static IReadOnlyList<ICloudProvider> All { get; } = new ICloudProvider[]
     {
-        new AwsProvider(), new TencentProvider(), new GcpProvider(), new AzureProvider(),
+        new AwsProvider(), new TencentProvider(), new GcpProvider(), new AzureProvider(), new OciProvider(),
     };
 
     public static ICloudProvider Get(CloudProvider p) => All.First(x => x.Kind == p);
@@ -181,6 +185,7 @@ public static class CloudProviders
         CloudProvider.Aws => "AWS",
         CloudProvider.Tencent => "Tencent",
         CloudProvider.Gcp => "GCP",
+        CloudProvider.Oci => "OCI",
         _ => "Azure",
     };
 
@@ -191,6 +196,7 @@ public static class CloudProviders
             CloudProvider.Aws => Color.FromRgb(0xFF, 0x99, 0x00),
             CloudProvider.Tencent => Color.FromRgb(0x00, 0x6E, 0xFF),
             CloudProvider.Gcp => Color.FromRgb(0x34, 0xA8, 0x53),
+            CloudProvider.Oci => Color.FromRgb(0xC7, 0x46, 0x34),
             _ => Color.FromRgb(0x00, 0x78, 0xD4),
         });
         b.Freeze();

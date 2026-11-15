@@ -285,6 +285,7 @@ Nubis reuses the **credential profiles** already saved on this PC — the profil
 | Tencent | Profile | `tccli configure` | `~/.tccli/<profile>.credential` (including `default`) |
 | GCP | Project | `gcloud auth application-default login` | ADC file |
 | Azure | Subscription | `az login` | `~/.azure` |
+| OCI | Profile | `oci session authenticate` (browser) or an API key via `oci setup config` | `~/.oci/config` (`[DEFAULT]` · `[x]`) |
 
 The **Sign in** button in each section of the Cloud page runs that CLI's sign-in command in a new console window. If your credential files are not in the standard location, set them with **Change path**.
 
@@ -522,7 +523,7 @@ See [chapter 10](#10-sign-in-screen-and-per-account-profiles). Settings are save
 
 ### 11.8 Cloud credential file paths
 
-Set these with **Change path** in each section of the Cloud page (the standard location is the default). They are applied as `AWS_CONFIG_FILE` for AWS, `GOOGLE_APPLICATION_CREDENTIALS` for GCP and `AZURE_CONFIG_DIR` for Azure, so the CLI started by the Sign in button uses the same path. Claude cannot change them.
+Set these with **Change path** in each section of the Cloud page (the standard location is the default). They are applied as `AWS_CONFIG_FILE` for AWS, `GOOGLE_APPLICATION_CREDENTIALS` for GCP `AZURE_CONFIG_DIR` for Azure and `OCI_CLI_CONFIG_FILE` for OCI, so the CLI started by the Sign in button uses the same path. Claude cannot change them.
 
 ---
 
