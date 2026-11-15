@@ -674,8 +674,16 @@ public static class ReadOnlyCommands
         { reason = "원격 컴퓨터 지정(-ComputerName·-CimSession·-Session)"; return false; }
         // ComputerName 이 위치 인자인 cmdlet 도 있다: Test-WSMan 공격자 -Authentication Negotiate 는 그 서버로 인증을 보낸다.
         // AD cmdlet 의 -Server(Get-ADUser -Server 공격자)는 LDAP 로 현재 계정 인증을 보낸다. 접두어 약어(-ser · -auth)도 같이
-        if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:ser(?:v(?:e(?:r)?)?)?|au(?:t(?:h\w*)?)?|certificatet\w*)(?![\w-])", RegexOptions.IgnoreCase))
-        { reason = "다른 서버로 인증 전송(-Server·-Authentication·-CertificateThumbprint)"; return false; }
+        if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:au(?:t(?:h\w*)?)?|certificatet\w*)(?![\w-])", RegexOptions.IgnoreCase))
+        { reason = "다른 서버로 인증 전송(-Authentication·-CertificateThumbprint)"; return false; }
+        // -Server 는 Resolve-DnsName 만 예외 — 질의할 DNS 서버 지정(인증 없음)이라 흔한 조회(Resolve-DnsName x -Server 8.8.8.8)를 막지 않는다.
+        // 그 문장이 Resolve-DnsName 하나로만 이뤄져야 한다 (스크립트 블록·괄호·변수로 다른 cmdlet 을 끼워 넣지 못하게)
+        foreach (var seg in Regex.Split(bare, @"[;|&\r\n]"))
+        {
+            if (!Regex.IsMatch(seg, @"(?<![\w$-])-ser(?:v(?:e(?:r)?)?)?(?![\w-])", RegexOptions.IgnoreCase)) continue;
+            if (Regex.IsMatch(seg, @"^\s*Resolve-DnsName(?![\w-])[^{}()$@\[\]]*$", RegexOptions.IgnoreCase)) continue;
+            reason = "다른 서버로 인증 전송(-Server)"; return false;
+        }
         // Test-Connection(5.1) 의 -Source 는 그 컴퓨터의 WMI 에 접속(인증)해 거기서 ping 한다
         if (Regex.IsMatch(bare, @"(?<![\w$-])Test-Connection(?![\w-])", RegexOptions.IgnoreCase) &&
             Regex.IsMatch(bare, @"(?<![\w$-])-so\w*(?![\w-])", RegexOptions.IgnoreCase))

@@ -110,6 +110,9 @@ public partial class MainWindow
         // 검색어가 그대로인 새로 고침(자동 동기화·편집 저장·창 크기)은 키보드로 고른 카드를 유지한다
         var visible = VisibleHosts();
         var keep = q == _lastSearch && _highlighted != null && visible.Contains(_highlighted) ? _highlighted : null;
+        // 검색어가 바뀌면 "직접 고름" 도 푼다 — 새 첫 결과가 우연히 전에 고른 카드와 같으면 SetHighlight 가 표시를 남겨,
+        // 고른 뒤 주소를 이어 입력하고 Enter 를 눌러도 입력한 주소가 아니라 그 카드로 연결됐다
+        if (q != _lastSearch) _highlightPicked = false;
         _lastSearch = q;
         SetHighlight(keep ?? (searching ? visible.FirstOrDefault() : null), scroll: keep == null);
         // 보이는 그룹이 없으면 안내 (검색 중이면 검색 결과 없음)

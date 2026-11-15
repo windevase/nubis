@@ -154,6 +154,8 @@ public static class SshConfigImport
             st.Warnings.Add(L.F("Include 가 너무 깊게 중첩되어 건너뛰었습니다: {0}", arg));
             return;
         }
+        // 읽기 한도를 이미 넘었으면 남은 Include 는 폴더를 다시 훑지 않고 넘긴다 (경고는 한 번 남김)
+        if (st.IncludeLimitWarned) return;
 
         var path = ExpandHome(arg);
         if (!Path.IsPathRooted(path)) path = Path.Combine(st.BaseDir, path);

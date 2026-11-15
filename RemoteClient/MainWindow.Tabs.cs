@@ -285,7 +285,10 @@ public partial class MainWindow
         if (!IsActive || HomeView.Visibility != Visibility.Visible) return;
         var focus = GetFocus();
         var lost = focus == IntPtr.Zero || !IsWindowVisible(focus);
-        if (lost || SessionsHost.IsKeyboardFocusWithin) Focus();
+        // WPF 쪽 포커스가 숨은 세션에 남은 경우는 Win32 포커스가 메인 창 자체일 때만 본다 — 보이는 Claude 패널(WebView2 자식 HWND)에
+        // 실제 포커스가 있는데 WPF 포커스 기록만 세션 뷰에 남아 있으면 Claude 패널에서 포커스를 빼앗았다
+        var mainHwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (lost || (focus == mainHwnd && SessionsHost.IsKeyboardFocusWithin)) Focus();
     }
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]

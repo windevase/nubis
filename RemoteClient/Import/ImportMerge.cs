@@ -364,12 +364,13 @@ public static class ImportMerge
         return before != (target.Label, target.Group, target.Username);
     }
 
-    /// <summary>이름이 주소 그 자체인지 ("host:2222" · "[v6]" 처럼 포트 · 괄호가 붙은 형태 포함)</summary>
+    /// <summary>이름이 주소 그 자체인지 ("host:2222" · "[v6]" 처럼 포트 · 괄호가 붙은 형태 포함 — 이름 쪽에 괄호 · 포트가 있어도)</summary>
     private static bool IsAddressName(string name, string address)
     {
         var a = address.Trim();
+        if (a.Length == 0) return false;
         return name.Equals(a, StringComparison.OrdinalIgnoreCase)
-            || name.Equals(SplitHostPort(a).Host, StringComparison.OrdinalIgnoreCase);
+            || SplitHostPort(name).Host.Equals(SplitHostPort(a).Host, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>목록에서 같은 호스트 (주소 대소문자 무시 + 포트 + 종류). 클라우드 호스트는 사설·공인 IP 도 비교</summary>

@@ -64,6 +64,7 @@ public sealed class PseudoConsoleProcess : IDisposable
     private FileStream? _input;
     private Process? _process;
     private IntPtr _hProcess, _hThread;
+    private readonly object _procLock = new();   // _hProcess 닫기 ↔ TerminateProcess
     private IntPtr _job;   // KILL_ON_JOB_CLOSE Job (PTY 수명 동안 유지, KillTreeOnClose 일 때만)
     // 읽기 스레드·입력 작업 줄에서도 읽는다
     private volatile bool _disposed;
@@ -204,8 +205,12 @@ public sealed class PseudoConsoleProcess : IDisposable
         // 프로세스가 끝나면 의사 콘솔을 닫아야 출력 파이프가 EOF 가 된다
         ClosePc();
         // 프로세스 핸들은 대기가 끝난 여기서 닫는다 (Dispose 가 먼저 닫으면 대기 중인 핸들이 무효가 됨)
-        var h = Interlocked.Exchange(ref _hProcess, IntPtr.Zero);
-        if (h != IntPtr.Zero) CloseHandle(h);
+        // Dispose 의 TerminateProcess 와 겹치지 않게 (닫힌 핸들 값이 재사용된 다른 프로세스를 끝내지 않도록)
+        lock (_procLock)
+        {
+            var h = Interlocked.Exchange(ref _hProcess, IntPtr.Zero);
+            if (h != IntPtr.Zero) CloseHandle(h);
+        }
         Exited?.Invoke(code);
     }
 
@@ -281,7 +286,7 @@ public sealed class PseudoConsoleProcess : IDisposable
             // 따로 창을 띄운 GUI 앱(code ., Start-Process notepad 등)은 남는다
             // 이미 끝난 프로세스는 건드리지 않는다 — 그 사이 WaitExitAsync 가 핸들을 닫아 값이 다른 핸들로 재사용됐을 수 있다
             if (_process != null) { if (!_process.HasExited) _process.Kill(entireProcessTree: KillTreeOnClose); }
-            else if (_hProcess != IntPtr.Zero) TerminateProcess(_hProcess, 1);
+            else lock (_procLock) { if (_hProcess != IntPtr.Zero) TerminateProcess(_hProcess, 1); }
         }
         catch { }
         // Job 을 닫으면 남은 하위 프로세스(Kill 이 놓친 손자 포함)가 모두 끝난다

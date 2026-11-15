@@ -487,7 +487,12 @@ public sealed class RdpSessionView : UserControl, ISessionView
             _rdp.Ocx.FullScreenTitle = _host.DisplayName;
             _rdp.Ocx.FullScreen = true;
         }
-        catch (Exception ex) { Dialog.Show(Window.GetWindow(this), L.F("전체 화면으로 바꾸지 못했습니다: {0}", ex.Message), "RDP"); }
+        catch (Exception ex)
+        {
+            // 위에서 원격 해상도를 모니터 크기로 바꾸고 크기 조절 타이머를 멈췄다 — 전환에 실패했으면 탭 크기로 되돌린다
+            RestartResizeTimer();
+            Dialog.Show(Window.GetWindow(this), L.F("전체 화면으로 바꾸지 못했습니다: {0}", ex.Message), "RDP");
+        }
     }
 
     public void FocusSession()
