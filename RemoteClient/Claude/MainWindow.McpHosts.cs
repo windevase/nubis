@@ -125,13 +125,80 @@ public partial class MainWindow
             Note("Vault 계정", VaultStore.Get(h.VaultId)?.Name ?? (h.VaultId != null ? "(삭제됨)" : "없음"), v?.Name ?? "없음");
             h.VaultId = v?.Id;
         }
+        if (Has(a, "favorite"))
+        {
+            var v = BoolArg(a, "favorite") ?? throw new McpToolException("favorite 는 true 또는 false 입니다.");
+            Note(McpHostRules.FavoriteLabel, h.Favorite ? "예" : "아니오", v ? "예" : "아니오");
+            h.Favorite = v;
+        }
+        // 편집 창과 같게: 프로토콜을 바꾸면 다른 프로토콜 전용 값(점프 서버 = SSH, RD 게이트웨이 = RDP)은 지운다
+        if (h.Protocol != Protocol.Ssh && h.JumpHostId != null && !Has(a, "jump_host"))
+        {
+            Note(McpHostRules.JumpLabel, JumpName(h.JumpHostId), "없음");
+            h.JumpHostId = null;
+        }
+        if (h.Protocol != Protocol.Rdp && h.RdpGateway != null && !Has(a, "rdp_gateway"))
+        {
+            Note(McpHostRules.GatewayLabel, h.RdpGateway, "없음");
+            h.RdpGateway = null;
+        }
+        if (Has(a, "jump_host"))
+        {
+            var spec = Arg(a, "jump_host").Trim();
+            if (McpHelpers.HasInvisibleChars(spec)) throw new McpToolException($"jump_host 에 보이지 않는 제어 문자·양방향 문자가 있습니다: {McpHelpers.VisibleControlChars(spec)}");
+            HostEntry? jump = null;
+            if (spec.Length > 0 && !spec.Equals("none", StringComparison.OrdinalIgnoreCase))
+            {
+                jump = ResolveOneHost(spec);
+                if (McpHostRules.JumpError(h, jump) is { } err) throw new McpToolException(err);
+            }
+            Note(McpHostRules.JumpLabel, JumpName(h.JumpHostId), jump == null ? "없음" : JumpName(jump.Id));
+            h.JumpHostId = jump?.Id;
+        }
+        if (Has(a, "rdp_gateway"))
+        {
+            var raw = Arg(a, "rdp_gateway");
+            if (McpHelpers.HasInvisibleChars(raw.Trim())) throw new McpToolException($"rdp_gateway 에 보이지 않는 제어 문자·양방향 문자가 있습니다: {McpHelpers.VisibleControlChars(raw)}");
+            var gw = McpHostRules.NormalizeGateway(raw, out var err);
+            if (err != null) throw new McpToolException(err);
+            if (gw != null && h.Protocol != Protocol.Rdp) throw new McpToolException("rdp_gateway 는 RDP 호스트에만 지정할 수 있습니다.");
+            Note(McpHostRules.GatewayLabel, h.RdpGateway ?? "없음", gw ?? "없음");
+            h.RdpGateway = gw;
+        }
+        if (BoolArg(a, "clear_prompt_answers") == true && h.PromptAnswers is { Count: > 0 } answers)
+        {
+            // 답 내용(OTP 방식 선택 등)은 승인 창·결과·감사 로그에 넣지 않고 개수만
+            Note(McpHostRules.AnswersLabel, $"{answers.Count}개", "지움");
+            h.PromptAnswers = null;
+        }
         return changes;
     }
+
+    /// <summary>점프 서버 표시 이름 (승인 창·결과용). 목록에 없으면 "(삭제된 호스트)"</summary>
+    private string JumpName(Guid? id) =>
+        id is not { } j ? "없음"
+        : _hosts.FirstOrDefault(x => x.Id == j) is { } x ? $"{McpHelpers.VisibleControlChars(x.DisplayName)} ({x.Address})"
+        : "(삭제된 호스트)";
 
     private string HostSummary(HostEntry h) =>
         $"{h.ProtocolText} {h.Address}:{h.Port}" + (h.HasPublicIp ? $" (공인 {h.PublicIp}{(h.UsePublicIp ? ", 공인으로 접속" : "")})" : "") +
         $" · 이름 {(h.Label.Length > 0 ? h.Label : "-")} · 그룹 {GroupLabel(h)} · 사용자 {(h.Username.Length > 0 ? h.Username : "-")}" +
-        $" · Vault {VaultStore.Get(h.VaultId)?.Name ?? "없음"}";
+        $" · Vault {VaultStore.Get(h.VaultId)?.Name ?? "없음"}" +
+        (h.JumpHostId != null ? $" · 점프 서버 {JumpName(h.JumpHostId)}" : "") +
+        (h.RdpGateway != null ? $" · RD 게이트웨이 {h.RdpGateway}" : "") +
+        (h.Favorite ? " · 즐겨찾기" : "");
+
+    /// <summary>
+    /// 승인을 기다리는 동안 점프 서버가 지워졌거나 더는 쓸 수 없게 됐으면(SSH 가 아님 · 자기도 점프를 거침) 오류 문구. 괜찮으면 null.
+    /// 바꾸지 않은 점프 서버(before 와 같음)는 보지 않는다
+    /// </summary>
+    private string? JumpStillValid(HostEntry target, Guid? jumpId, Guid? before)
+    {
+        if (jumpId is not { } id || id == before) return null;
+        var jump = _hosts.FirstOrDefault(x => x.Id == id);
+        if (jump == null) return "승인을 기다리는 동안 점프 서버로 고른 호스트가 목록에서 지워져 반영하지 않았습니다.";
+        return McpHostRules.JumpError(target, jump) is { } err ? "승인을 기다리는 동안 점프 서버 설정이 바뀌었습니다: " + err : null;
+    }
 
     private async Task<string> AddHostFromClaude(JsonElement a)
     {
@@ -143,7 +210,8 @@ public partial class MainWindow
         var summary = HostSummary(h);
         if (!await AskApprovalAsync("add_host", L.T("Claude 가 호스트 등록을 요청합니다"),
                 L.T("아래 호스트를 등록합니다. Vault 계정을 연결하면 이 주소로 접속할 때 그 계정의 비밀번호·키가 쓰입니다. 주소가 맞는지 확인하세요.") +
-                (dup != null ? L.F("\n⚠ 같은 주소·포트의 호스트 '{0}' 가 이미 있습니다.", dup.DisplayName) : ""),
+                (dup != null ? L.F("\n⚠ 같은 주소·포트의 호스트 '{0}' 가 이미 있습니다.", dup.DisplayName) : "") +
+                (h.JumpHostId != null || h.RdpGateway != null ? L.T("\n점프 서버·RD 게이트웨이를 거쳐 접속하면 로그인이 그 서버를 지나갑니다. 믿을 수 있는 서버인지 확인하세요.") : ""),
                 new[] { h.DisplayName }, summary))
         {
             AuditLog.Write("add_host", new[] { h.DisplayName }, summary, "거부");
@@ -155,6 +223,11 @@ public partial class MainWindow
         {
             AuditLog.Write("add_host", new[] { h.DisplayName }, summary, $"승인 후 취소 (대기 중 같은 주소·포트의 '{dupNow.DisplayName}' 가 생김)");
             throw new McpToolException($"승인을 기다리는 동안 같은 주소·포트의 호스트 '{dupNow.DisplayName}' 가 생겨 등록하지 않았습니다. 확인한 뒤 다시 요청하세요.");
+        }
+        if (JumpStillValid(h, h.JumpHostId, null) is { } jumpErr)
+        {
+            AuditLog.Write("add_host", new[] { h.DisplayName }, summary, "승인 후 취소 (점프 서버 변경)");
+            throw new McpToolException(jumpErr);
         }
         _hosts.Add(h);
         SaveHosts();
@@ -170,24 +243,55 @@ public partial class MainWindow
         var changes = ApplyHostArgs(copy, a, isNew: false);
         if (changes.Count == 0) return "바뀐 항목이 없습니다.";
         var text = string.Join("\n", changes);
-        var risky = changes.Any(c => c.StartsWith("주소") || c.StartsWith("공인") || c.StartsWith("Vault") || c.StartsWith("포트"));
-        if (!await AskApprovalAsync("update_host", L.T("Claude 가 호스트 설정 변경을 요청합니다"),
-                L.F("'{0}' 의 설정을 바꿉니다.", McpHelpers.VisibleControlChars(h.DisplayName)) + (risky ? L.T("\n주소·포트·Vault 계정이 바뀌면 저장된 계정이 쓰이는 서버가 달라집니다. 확인하세요.") : ""),
-                new[] { McpHelpers.VisibleControlChars(h.DisplayName) }, text))
+        // 즐겨찾기만 바꾸는 요청은 접속 대상·계정에 영향이 없어 승인 없이 반영한다 (감사 로그는 남김)
+        var favoriteOnly = McpHostRules.IsFavoriteOnly(changes);
+        if (!favoriteOnly)
         {
-            AuditLog.Write("update_host", new[] { h.DisplayName }, text, "거부");
-            throw new McpToolException("사용자가 변경을 거부했습니다.");
+            var risky = changes.Any(McpHostRules.IsRisky);
+            var desc = L.F("'{0}' 의 설정을 바꿉니다.", McpHelpers.VisibleControlChars(h.DisplayName)) +
+                       (risky ? L.T("\n주소·포트·Vault 계정·점프 서버·RD 게이트웨이가 바뀌면 저장된 계정이 쓰이는 서버나 거쳐 가는 경로가 달라집니다. 확인하세요.") : "");
+            // 이 호스트를 점프 서버로 쓰는 호스트가 있는데 이 호스트에 점프를 붙이면 — 점프는 한 단계만이라 그 호스트들은 새 점프를 거치지 않는다
+            if (copy.JumpHostId != null && copy.JumpHostId != h.JumpHostId && MainWindow.JumpUsers(_hosts, h) is > 0 and var users)
+                desc += "\n" + L.F("이 호스트를 점프 서버로 쓰는 호스트 {0}개는 새 점프 서버를 거치지 않고 이 호스트에 바로 연결합니다 (점프는 한 단계만 지원).", users);
+            if (!await AskApprovalAsync("update_host", L.T("Claude 가 호스트 설정 변경을 요청합니다"),
+                    desc, new[] { McpHelpers.VisibleControlChars(h.DisplayName) }, text))
+            {
+                AuditLog.Write("update_host", new[] { h.DisplayName }, text, "거부");
+                throw new McpToolException("사용자가 변경을 거부했습니다.");
+            }
         }
         // 승인 창을 기다리는 동안(다른 승인 창 대기 포함) 호스트가 지워졌으면 반영하지 않는다
-        if (!_hosts.Contains(h)) throw new McpToolException("승인을 기다리는 동안 호스트가 목록에서 지워져 바꾸지 않았습니다.");
+        if (!_hosts.Contains(h))
+        {
+            AuditLog.Write("update_host", new[] { h.DisplayName }, text, "승인 후 취소 (대기 중 호스트가 지워짐)");
+            throw new McpToolException("승인을 기다리는 동안 호스트가 목록에서 지워져 바꾸지 않았습니다.");
+        }
+        // 새로 고른 점프 서버가 그사이 지워졌거나 쓸 수 없게 됐으면 반영하지 않는다 (지워진 점프 → 연결 불가, 중첩 점프 → 점프 없이 직접 연결)
+        if (JumpStillValid(copy, copy.JumpHostId, h.JumpHostId) is { } jumpErr)
+        {
+            AuditLog.Write("update_host", new[] { h.DisplayName }, text, "승인 후 취소 (점프 서버 변경)");
+            throw new McpToolException(jumpErr);
+        }
         // 확인한 값만 원본에 반영 (비밀번호·키 파일·클라우드 정보는 건드리지 않음)
-        if (h.Address != copy.Address) h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
-        h.Protocol = copy.Protocol; h.Address = copy.Address; h.Port = copy.Port; h.Label = copy.Label; h.Group = copy.Group;
-        h.Username = copy.Username; h.PublicIp = copy.PublicIp; h.UsePublicIp = copy.UsePublicIp; h.VaultId = copy.VaultId;
-        if (h.PrivateIp != null && !h.IsCloud) h.PrivateIp = h.Address;
+        if (favoriteOnly)
+            h.Favorite = copy.Favorite;
+        else
+        {
+            if (h.Address != copy.Address) h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
+            h.Protocol = copy.Protocol; h.Address = copy.Address; h.Port = copy.Port; h.Label = copy.Label; h.Group = copy.Group;
+            h.Username = copy.Username; h.PublicIp = copy.PublicIp; h.UsePublicIp = copy.UsePublicIp; h.VaultId = copy.VaultId;
+            // 새 항목은 요청에서 실제로 바뀐 것만 — 승인을 기다리는 동안 사용자가 화면에서 바꾼 즐겨찾기·점프·게이트웨이를 되돌리지 않게
+            bool Changed(string label) => changes.Any(c => c.StartsWith(label + ":", StringComparison.Ordinal));
+            if (Changed(McpHostRules.FavoriteLabel)) h.Favorite = copy.Favorite;
+            if (Changed(McpHostRules.JumpLabel)) h.JumpHostId = copy.JumpHostId;
+            if (Changed(McpHostRules.GatewayLabel)) h.RdpGateway = copy.RdpGateway;
+            // 기억한 답 지우기는 승인 시점의 답 전체를 지운다 (대기 중 새로 기억한 답 포함 — 사용자가 지우기를 승인했으므로)
+            if (copy.PromptAnswers == null && changes.Any(c => c.StartsWith(McpHostRules.AnswersLabel, StringComparison.Ordinal))) h.PromptAnswers = null;
+            if (h.PrivateIp != null && !h.IsCloud) h.PrivateIp = h.Address;
+        }
         SaveHosts();
         RefreshHosts();
-        AuditLog.Write("update_host", new[] { h.DisplayName }, text, "승인·변경");
+        AuditLog.Write("update_host", new[] { h.DisplayName }, text, favoriteOnly ? "변경 (즐겨찾기만 — 승인 생략)" : "승인·변경");
         return $"바꿨습니다: {h.DisplayName}\n{text}";
     }
 
@@ -268,5 +372,82 @@ public partial class MainWindow
             : Line(p) + string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s)))));
         AuditLog.Write("cloud_sync", targets.Select(p => $"[{p.ProviderText}] {p.GroupName}"), "sync", "조회·반영");
         return "동기화 결과:\n" + result;
+    }
+}
+
+/// <summary>add_host / update_host 의 UI 와 무관한 판정 (테스트 대상)</summary>
+internal static class McpHostRules
+{
+    // 변경 목록 줄의 머리말 (ApplyHostArgs 의 Note 라벨) — 위험 판정·즐겨찾기만 판정이 이 문자열에 기댄다
+    public const string FavoriteLabel = "즐겨찾기";
+    public const string JumpLabel = "점프 서버";
+    public const string GatewayLabel = "RD 게이트웨이";
+    public const string AnswersLabel = "기억한 인증 답";
+
+    private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel };
+
+    /// <summary>접속 대상·계정·경로를 바꾸는 변경 (승인 창에 경고)</summary>
+    public static bool IsRisky(string change) => RiskyLabels.Any(l => change.StartsWith(l, StringComparison.Ordinal));
+
+    /// <summary>즐겨찾기만 바꾸는 변경인가 (승인 생략 대상). 빈 목록은 false</summary>
+    public static bool IsFavoriteOnly(IReadOnlyCollection<string> changes) =>
+        changes.Count > 0 && changes.All(c => c.StartsWith(FavoriteLabel + ":", StringComparison.Ordinal));
+
+    /// <summary>
+    /// target 의 점프 서버로 jump 를 쓸 수 없으면 이유, 쓸 수 있으면 null. 편집 창(OnPickJump)과 같은 규칙:
+    /// 둘 다 SSH, 자기 자신 불가, 한 단계만 (jump 가 다시 점프 서버를 거치면 불가 — 이미 지정된 점프 서버는 그대로 허용)
+    /// </summary>
+    public static string? JumpError(HostEntry target, HostEntry jump)
+    {
+        if (target.Protocol != Protocol.Ssh) return "점프 서버는 SSH 호스트에만 지정할 수 있습니다.";
+        if (jump.Id == target.Id || ReferenceEquals(jump, target)) return "자기 자신을 점프 서버로 지정할 수 없습니다.";
+        if (jump.Protocol != Protocol.Ssh) return $"'{jump.DisplayName}' 은 SSH 호스트가 아니라 점프 서버로 쓸 수 없습니다.";
+        if (jump.JumpHostId != null && jump.Id != target.JumpHostId)
+            return $"'{jump.DisplayName}' 도 점프 서버를 거쳐 접속합니다. 점프 서버는 한 단계만 지원합니다.";
+        return null;
+    }
+
+    /// <summary>
+    /// RD 게이트웨이 값 검사: "" 이면 null(지우기), "host" 또는 "host:port" ("[IPv6]:port" 포함).
+    /// 공백·제어 문자·경로·계정 구분자(/ \ @ ; 등)는 거부 — 게이트웨이 칸에 다른 값을 끼워 넣지 못하게
+    /// </summary>
+    public static string? NormalizeGateway(string value, out string? error)
+    {
+        error = null;
+        var v = value.Trim();
+        if (v.Length == 0) return null;
+        if (v.Length > 255 || McpHelpers.HasInvisibleChars(v)) { error = "rdp_gateway 가 올바르지 않습니다."; return null; }
+        foreach (var ch in v)
+            // ASCII 만 — 유니코드 글자(키릴 'о' 등)로 승인 창에서 다른 게이트웨이처럼 보이게 꾸미지 못하게
+            if (!(char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '[' or ']'))
+            { error = $"rdp_gateway 에 쓸 수 없는 문자가 있습니다: '{ch}' (\"호스트\" 또는 \"호스트:포트\")"; return null; }
+
+        string host;
+        string? port = null;
+        if (v.StartsWith('['))
+        {
+            var close = v.IndexOf(']');
+            if (close < 2) { error = "rdp_gateway 의 IPv6 주소 형식이 올바르지 않습니다."; return null; }
+            host = v[1..close];
+            var rest = v[(close + 1)..];
+            if (rest.Length > 0)
+            {
+                if (rest[0] != ':') { error = "rdp_gateway 형식이 올바르지 않습니다."; return null; }
+                port = rest[1..];
+            }
+            if (!System.Net.IPAddress.TryParse(host, out var ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6)
+            { error = "rdp_gateway 의 IPv6 주소가 올바르지 않습니다."; return null; }
+        }
+        else
+        {
+            if (v.Contains('[') || v.Contains(']') || v.Count(c => c == ':') > 1) { error = "rdp_gateway 형식이 올바르지 않습니다 (IPv6 는 [주소]:포트)."; return null; }
+            var colon = v.IndexOf(':');
+            host = colon < 0 ? v : v[..colon];
+            if (colon >= 0) port = v[(colon + 1)..];
+            if (host.Length == 0 || host.StartsWith('.') || host.StartsWith('-')) { error = "rdp_gateway 의 호스트가 올바르지 않습니다."; return null; }
+        }
+        if (port != null && !(int.TryParse(port, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var p) && p is >= 1 and <= 65535))
+        { error = "rdp_gateway 의 포트는 1~65535 입니다."; return null; }
+        return v;
     }
 }

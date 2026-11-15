@@ -82,6 +82,26 @@ public static class SettingsCatalog
             true, s => s.RdpCertWarning, Bool, (s, v) => s.RdpCertWarning = (bool)v),
         new("SshHostKeyPrompt", "SSH 새 서버 호스트키 확인 창", "bool", "켜면 처음 보는 서버의 호스트키를 확인 후 저장 (보안 설정 — 사용자 승인 필요)",
             true, s => s.SshHostKeyPrompt, Bool, (s, v) => s.SshHostKeyPrompt = (bool)v),
+        new("ConfirmMultilinePaste", "여러 줄 붙여넣기 전에 확인", "bool",
+            "끄면 여러 줄을 붙여넣을 때 확인 없이 바로 실행될 수 있음 (보안 설정 — 사용자 승인 필요)",
+            true, s => s.ConfirmMultilinePaste, Bool, (s, v) => s.ConfirmMultilinePaste = (bool)v),
+        // ----- 편의 (Settings → 편의 기능) -----
+        new("ShowRecent", "호스트 목록에 최근 접속 표시", "bool", "호스트 목록 맨 위의 최근 접속 그룹",
+            false, s => s.ShowRecent, Bool, (s, v) => s.ShowRecent = (bool)v),
+        new("ConfirmCloseTab", "연결 중인 탭 닫을 때 확인", "bool", "",
+            false, s => s.ConfirmCloseTab, Bool, (s, v) => s.ConfirmCloseTab = (bool)v),
+        new("SmartCopyPaste", "스마트 복사/붙여넣기", "bool", "선택이 있으면 Ctrl+C 는 복사, Ctrl+V 는 붙여넣기 (Windows Terminal 방식)",
+            false, s => s.SmartCopyPaste, Bool, (s, v) => s.SmartCopyPaste = (bool)v),
+        new("CopyOnSelect", "선택하면 바로 복사", "bool", "마우스로 선택하면 복사, 우클릭은 붙여넣기 (PuTTY 방식)",
+            false, s => s.CopyOnSelect, Bool, (s, v) => s.CopyOnSelect = (bool)v),
+        new("SshAutoReconnect", "SSH 끊기면 자동 재연결", "bool", "",
+            false, s => s.SshAutoReconnect, Bool, (s, v) => s.SshAutoReconnect = (bool)v),
+        new("SftpOpenFolderAfterDownload", "SFTP 다운로드 후 폴더 열기", "bool", "다운로드가 끝나면 탐색기로 받은 폴더를 연다",
+            false, s => s.SftpOpenFolderAfterDownload, Bool, (s, v) => s.SftpOpenFolderAfterDownload = (bool)v),
+        new("CloudSyncOnStart", "앱 시작 시 클라우드 동기화", "bool", "",
+            false, s => s.CloudSyncOnStart, Bool, (s, v) => s.CloudSyncOnStart = (bool)v),
+        new("CloudSyncIntervalMinutes", "클라우드 자동 동기화 간격(분)", "int", "0 = 끔, 또는 5 ~ 1440",
+            false, s => s.CloudSyncIntervalMinutes, SyncInterval, (s, v) => s.CloudSyncIntervalMinutes = (int)v),
         new("AutoApproveReadOnly", "읽기 전용 명령 자동 승인", "bool",
             "Claude 의 run_command · send_to_terminal(셸 프롬프트일 때) · sftp_list/sftp_read 중 조회 명령을 승인 없이 실행. Claude 는 끄기만 할 수 있고, 켜기는 사용자가 Settings 화면에서 직접 해야 한다",
             true, s => s.AutoApproveReadOnly,
@@ -148,6 +168,19 @@ public static class SettingsCatalog
         else throw new ArgumentException("정수여야 합니다.");
         return n >= min && n <= max ? n : throw new ArgumentException($"{min} ~ {max} 사이여야 합니다.");
     }
+
+    /// <summary>클라우드 자동 동기화 간격: 0(끔) 또는 5 ~ 1440분 (Settings 화면과 같은 범위)</summary>
+    private static object SyncInterval(JsonElement v)
+    {
+        int n;
+        if (v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var x)) n = x;
+        else if (v.ValueKind == JsonValueKind.String && int.TryParse(v.GetString(), out var y)) n = y;
+        else throw new ArgumentException("정수여야 합니다.");
+        return n == 0 || (n >= 5 && n <= 24 * 60) ? n : throw new ArgumentException("0(끔) 또는 5 ~ 1440 사이여야 합니다.");
+    }
+
+    /// <summary>바뀌면 클라우드 자동 동기화 타이머를 다시 맞춰야 하는 키</summary>
+    public static readonly string[] CloudSyncKeys = { nameof(AppSettings.CloudSyncOnStart), nameof(AppSettings.CloudSyncIntervalMinutes) };
 
     private static string Show(object v) => v switch
     {

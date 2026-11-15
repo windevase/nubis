@@ -104,11 +104,11 @@ public partial class MainWindow
         // 일반 그룹은 호스트에 직접 지정 → Vault 계정이 우선이라 묻지 않는다.
         // 클라우드 그룹은 프로필 기본 계정으로 저장 → 기본 계정은 호스트에 적힌 값보다 뒤라 지울지 묻는다
         var clearOwn = false;
-        var keepHostVault = new HashSet<HostEntry>();
+        var overrideHostVault = false;
         if (g.IsCloud)
         {
             // 호스트마다 다른 Vault 계정을 직접 골라 둔 경우 — 예전에는 묻지 않고 지정을 지워 프로필 기본 계정으로 바꿨다
-            var picked = targets.Where(h => h.VaultId != null && h.VaultId != id && VaultStore.Get(h.VaultId) != null).ToList();
+            var picked = HostsWithOtherVault(targets, id);
             if (picked.Count > 0)
             {
                 var choice = Dialog.Choose(this,
@@ -116,32 +116,70 @@ public partial class MainWindow
                     L.T("Vault 계정 지정"), L.T("해제하고 이 계정 사용"), L.T("직접 고른 계정 유지"), L.T("취소"),
                     MessageBoxImage.Question, string.Join("\n", picked.Take(15).Select(h => h.DisplayName)) + (picked.Count > 15 ? "\n..." : ""));
                 if (choice is not (0 or 1)) return;
-                if (choice == 1) keepHostVault.UnionWith(picked);
+                overrideHostVault = choice == 0;
             }
-            // 이미 이 계정을 직접 골라 둔 호스트에 숨겨 둔 값(직접 적은 사용자명·비밀번호·키)이 있으면 지정을 그대로 둔다 —
-            // 지정을 비우면 숨겨 둔 값이 프로필 기본 계정보다 우선이 되어 로그인 계정이 바뀐다 (지금과 같은 계정으로 로그인)
-            keepHostVault.UnionWith(targets.Where(h => h.VaultId == id && BulkEdit.HasOwnCredentials(h)));
+            var keep = GroupVaultKeep(targets, id, isCloud: true, overrideHostVault);
             // 직접 고른 계정을 유지하는 호스트는 Vault 계정이 우선이라 직접 적은 값을 물을 필요가 없다
-            if (AskClearOwnCredentials(targets.Where(h => !keepHostVault.Contains(h)).ToList(), v) is not { } answer) return;
+            if (AskClearOwnCredentials(targets.Where(h => !keep.Contains(h)).ToList(), v) is not { } answer) return;
             clearOwn = answer;
         }
 
-        foreach (var h in targets)
-        {
-            if (keepHostVault.Contains(h)) continue;
-            if (clearOwn) BulkEdit.ClearCredentials(h);
-            // 클라우드 그룹: 호스트는 프로필 기본값을 따르게 비워 둔다
-            h.VaultId = g.IsCloud ? null : id;
-        }
-        if (g.Profile is { } p)
-        {
-            if (proto == Protocol.Rdp) p.RdpVaultId = id; else p.SshVaultId = id;
-            SaveProfiles();
-        }
+        ApplyGroupVaultCore(g, proto, id, clearOwn, overrideHostVault);
+        FlashHostStatus(L.F("'{0}' 에 Vault 계정 '{1}' 을 지정했습니다", g.Name, v.Name));
+    }
+
+    /// <summary>
+    /// 그룹 Vault 계정 지정의 실제 반영 (우클릭 메뉴와 MCP set_group_defaults 공통, 묻는 창 없음).
+    /// clearOwn: 직접 적은 사용자명·비밀번호·키를 지울지 (클라우드 그룹만, 유지하는 호스트 제외).
+    /// overrideHostVault: 클라우드 그룹에서 다른 Vault 계정을 직접 골라 둔 호스트의 지정도 해제할지. 바꾼 호스트 수를 돌려준다
+    /// </summary>
+    private int ApplyGroupVaultCore(HostGroup g, Protocol proto, Guid id, bool clearOwn, bool overrideHostVault)
+    {
+        var targets = GroupMembers(g).Where(h => h.Protocol == proto).ToList();
+        var keep = GroupVaultKeep(targets, id, g.IsCloud, overrideHostVault);
+        var n = ApplyGroupVaultTo(targets, g.Profile, proto, id, g.IsCloud && clearOwn, keep);
+        if (g.Profile != null) SaveProfiles();
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
-        FlashHostStatus(L.F("'{0}' 에 Vault 계정 '{1}' 을 지정했습니다", g.Name, v.Name));
+        return n;
+    }
+
+    /// <summary>클라우드 그룹에 지정할 계정(id)과 다른, 지금 있는 Vault 계정을 직접 골라 둔 호스트</summary>
+    internal static List<HostEntry> HostsWithOtherVault(IEnumerable<HostEntry> targets, Guid id) =>
+        targets.Where(h => h.VaultId != null && h.VaultId != id && VaultStore.Get(h.VaultId) != null).ToList();
+
+    /// <summary>
+    /// 그룹 Vault 지정에서 호스트의 지정을 그대로 둘 호스트. 일반 그룹은 없음.
+    /// 클라우드 그룹: overrideHostVault 가 아니면 다른 계정을 직접 골라 둔 호스트,
+    /// 그리고 이미 이 계정을 직접 골라 두고 숨겨 둔 값(직접 적은 사용자명·비밀번호·키)이 있는 호스트 —
+    /// 지정을 비우면 숨겨 둔 값이 프로필 기본 계정보다 우선이 되어 로그인 계정이 바뀐다 (지금과 같은 계정으로 로그인)
+    /// </summary>
+    internal static HashSet<HostEntry> GroupVaultKeep(IReadOnlyList<HostEntry> targets, Guid id, bool isCloud, bool overrideHostVault)
+    {
+        var keep = new HashSet<HostEntry>();
+        if (!isCloud) return keep;
+        if (!overrideHostVault) keep.UnionWith(HostsWithOtherVault(targets, id));
+        keep.UnionWith(targets.Where(h => h.VaultId == id && BulkEdit.HasOwnCredentials(h)));
+        return keep;
+    }
+
+    /// <summary>그룹 Vault 지정을 호스트·프로필 값에 반영 (저장은 호출한 쪽). 클라우드 그룹(profile 있음)은 호스트를 비워 프로필 기본 계정을 따르게</summary>
+    internal static int ApplyGroupVaultTo(IReadOnlyList<HostEntry> targets, CloudProfile? profile, Protocol proto, Guid id, bool clearOwn, IReadOnlySet<HostEntry> keep)
+    {
+        var n = 0;
+        foreach (var h in targets)
+        {
+            if (keep.Contains(h)) continue;
+            if (clearOwn) BulkEdit.ClearCredentials(h);
+            h.VaultId = profile != null ? null : id;
+            n++;
+        }
+        if (profile != null)
+        {
+            if (proto == Protocol.Rdp) profile.RdpVaultId = id; else profile.SshVaultId = id;
+        }
+        return n;
     }
 
     /// <summary>
@@ -165,45 +203,90 @@ public partial class MainWindow
         var name = proto == Protocol.Rdp ? "RDP" : "SSH";
         if (confirm && Dialog.Show(this, L.F("'{0}' 의 {1} 호스트에 지정한 Vault 계정을 해제할까요?\n해제한 호스트는 직접 적은 값 → 프로필 기본 계정 → 설정의 기본 Vault 계정 순으로 씁니다.", g.Name, name),
                 L.T("Vault 계정 해제"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-        foreach (var h in GroupMembers(g).Where(h => h.Protocol == proto)) h.VaultId = null;
-        if (g.Profile is { } p)
-        {
-            if (proto == Protocol.Rdp) p.RdpVaultId = null; else p.SshVaultId = null;
-            SaveProfiles();
-        }
+        ClearGroupVaultCore(g, proto);
+        FlashHostStatus(L.F("'{0}' 의 {1} Vault 계정 지정을 해제했습니다", g.Name, name));
+    }
+
+    /// <summary>그룹 Vault 해제의 실제 반영 (우클릭 메뉴 · MCP 공통, 묻는 창 없음). 지정이 있던 호스트 수</summary>
+    private int ClearGroupVaultCore(HostGroup g, Protocol proto)
+    {
+        var n = ClearGroupVaultOn(GroupMembers(g), g.Profile, proto);
+        if (g.Profile != null) SaveProfiles();
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();
-        FlashHostStatus(L.F("'{0}' 의 {1} Vault 계정 지정을 해제했습니다", g.Name, name));
+        return n;
+    }
+
+    internal static int ClearGroupVaultOn(IEnumerable<HostEntry> members, CloudProfile? profile, Protocol proto)
+    {
+        var n = 0;
+        foreach (var h in members.Where(h => h.Protocol == proto))
+        {
+            if (h.VaultId != null) n++;
+            h.VaultId = null;
+        }
+        if (profile != null)
+        {
+            if (proto == Protocol.Rdp) profile.RdpVaultId = null; else profile.SshVaultId = null;
+        }
+        return n;
     }
 
     /// <summary>그룹의 공인 IP 가 있는 호스트 전체를 공인/사설 IP 접속으로. 클라우드 그룹은 프로필 기본값도 바꿔 새 서버에도 적용</summary>
     private void SetGroupPublicIp(HostGroup g, bool usePublic)
     {
-        var targets = GroupMembers(g).Where(h => h.HasPublicIp).ToList();
-        foreach (var h in targets) h.UsePublicIp = usePublic;
-        if (g.Profile is { } p)
-        {
-            p.UsePublicIp = usePublic;
-            SaveProfiles();
-        }
+        var count = SetGroupPublicIpCore(g, usePublic);
+        FlashHostStatus(usePublic ? L.F("호스트 {0}개를 공인 IP 접속으로 바꿨습니다", count)
+                                  : L.F("호스트 {0}개를 사설 IP 접속으로 바꿨습니다", count));
+    }
+
+    /// <summary>그룹 공인/사설 IP 접속 일괄 변경의 실제 반영 (우클릭 메뉴 · MCP 공통). 대상(공인 IP 가 있는) 호스트 수</summary>
+    private int SetGroupPublicIpCore(HostGroup g, bool usePublic)
+    {
+        var n = SetGroupPublicIpOn(GroupMembers(g), g.Profile, usePublic);
+        if (g.Profile != null) SaveProfiles();
         SaveHosts();
         RefreshHosts();
-        FlashHostStatus(usePublic ? L.F("호스트 {0}개를 공인 IP 접속으로 바꿨습니다", targets.Count)
-                                  : L.F("호스트 {0}개를 사설 IP 접속으로 바꿨습니다", targets.Count));
+        return n;
+    }
+
+    internal static int SetGroupPublicIpOn(IEnumerable<HostEntry> members, CloudProfile? profile, bool usePublic)
+    {
+        var targets = members.Where(h => h.HasPublicIp).ToList();
+        foreach (var h in targets) h.UsePublicIp = usePublic;
+        if (profile != null) profile.UsePublicIp = usePublic;
+        return targets.Count;
     }
 
     private void RenameGroup(HostGroup g)
     {
         if (PromptDialog.Ask(this, L.T("그룹 이름 바꾸기"), L.F("'{0}' 그룹의 새 이름", g.GroupName), g.GroupName)?.Trim() is not { Length: > 0 } name
             || name == g.GroupName) return;
-        foreach (var h in _hosts.Where(h => !h.IsCloud && string.Equals(h.Group?.Trim(), g.GroupName, StringComparison.CurrentCultureIgnoreCase)))
-            h.Group = name;
-        // 접힘 상태는 새 이름의 키로 (이미 있는 그룹과 합쳐졌으면 그 그룹의 표기로)
-        if (_collapsedLocal.Remove(g.Key) && CanonicalGroupNames(_hosts).TryGetValue(name, out var canon)) _collapsedLocal.Add("L:" + canon);
+        RenameGroupCore(g, name);
+    }
+
+    /// <summary>직접 등록한 그룹 이름 바꾸기의 실제 반영 (우클릭 메뉴 · MCP 공통). 바꾼 호스트 수</summary>
+    private int RenameGroupCore(HostGroup g, string name)
+    {
+        var n = RenameLocalGroup(_hosts, _collapsedLocal, g.GroupName, g.Key, name);
         SaveGroupState();
         SaveHosts();
         RefreshHosts();
+        return n;
+    }
+
+    internal static int RenameLocalGroup(IReadOnlyCollection<HostEntry> all, HashSet<string> collapsed, string oldName, string oldKey, string newName)
+    {
+        var n = 0;
+        foreach (var h in all.Where(h => !h.IsCloud && string.Equals(h.Group?.Trim(), oldName, StringComparison.CurrentCultureIgnoreCase)))
+        {
+            h.Group = newName;
+            n++;
+        }
+        // 접힘 상태는 새 이름의 키로 (이미 있는 그룹과 합쳐졌으면 그 그룹의 표기로)
+        if (collapsed.Remove(oldKey) && CanonicalGroupNames(all).TryGetValue(newName, out var canon)) collapsed.Add("L:" + canon);
+        return n;
     }
 
     private void SetAllGroups(bool collapsed)

@@ -69,6 +69,9 @@ internal sealed class ClosedTabHistory
 
     public int Count => _items.Count;
 
+    /// <summary>기록 (오래된 것부터, 마지막이 다음에 다시 열 항목) — MCP list_closed_tabs 용 읽기 전용</summary>
+    public IReadOnlyList<Entry> Items => _items;
+
     public void Push(Entry e)
     {
         _items.Add(e);

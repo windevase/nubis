@@ -58,7 +58,11 @@ public partial class MainWindow
     private string HostLine(HostEntry h) =>
         $"{h.Id.ToString()[..8]} | {h.DisplayName} | {GroupLabel(h)} | {h.ProtocolText.ToLowerInvariant()} {h.PrimaryAddress}:{h.Port}" +
         (h.HasPublicIp ? $" (공인 {h.PublicIp}{(h.UsePublicIp ? ", 기본 접속" : "")})" : "") +
-        $" | {(h.IsCloud ? h.CloudState ?? "" : "-")} | {h.Purpose ?? ""} | {h.Os ?? ""}";
+        $" | {(h.IsCloud ? h.CloudState ?? "" : "-")} | {h.Purpose ?? ""} | {h.Os ?? ""}" +
+        // 있을 때만 붙인다 (대부분의 호스트는 줄 길이 그대로)
+        (h.Favorite ? " | ★즐겨찾기" : "") +
+        (h.JumpHostId != null ? $" | 점프 {JumpName(h.JumpHostId)}" : "") +
+        (h.RdpGateway != null ? $" | 게이트웨이 {h.RdpGateway}" : "");
 
     /// <summary>
     /// 호스트 지정 해석: "group:이름"(그룹·클라우드 프로필 전체), ID(앞 8자리 가능), 정확한 이름, IP, 그다음 부분 일치.
@@ -112,13 +116,15 @@ public partial class MainWindow
             }));
 
         yield return new McpTool("list_hosts",
-            "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS. 비밀번호는 포함하지 않는다.",
+            "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS, 그 뒤에 해당할 때만 " +
+            "| ★즐겨찾기 | 점프 <점프 서버 이름 (주소)> | 게이트웨이 <RD 게이트웨이>. 비밀번호는 포함하지 않는다.",
             Schema(new
             {
                 query = new { type = "string", description = "이름·IP(사설/공인)·인스턴스 ID·리전·용도·OS 부분 검색어" },
                 group = new { type = "string", description = "그룹 이름 (예: 'Production', '[AWS] prod')" },
                 protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
                 running_only = new { type = "boolean", description = "실행 중인 서버만" },
+                favorites_only = new { type = "boolean", description = "즐겨찾기한 호스트만" },
                 limit = new { type = "integer", description = "최대 개수 (기본 300)" },
             }),
             a => OnUi(() =>
@@ -135,6 +141,7 @@ public partial class MainWindow
                 if (proto.Length > 0)
                     list = list.Where(h => h.ProtocolText.Equals(proto, StringComparison.OrdinalIgnoreCase));
                 if (BoolArg(a, "running_only") == true) list = list.Where(h => !h.IsStopped);
+                if (BoolArg(a, "favorites_only") == true) list = list.Where(h => h.Favorite);
                 var all = list.OrderBy(GroupLabel).ThenBy(h => h.DisplayName).ToList();
                 var limit = IntArg(a, "limit") ?? 300;
                 var sb = new StringBuilder($"{all.Count}개" + (all.Count > limit ? $" (앞 {limit}개만 표시)" : "") + "\n");
@@ -244,6 +251,12 @@ public partial class MainWindow
         // 이 PC 의 클라우드·온프레미스 출처 찾기 · 클라우드 프로필 추가/로그인 · 호스트 가져오기
         foreach (var t in CloudDiscoveryTools()) yield return t;
         foreach (var t in ImportTools()) yield return t;
+        // UI 에서 손으로 하는 동작을 Claude 도 (각 파일이 자기 도구를 정의)
+        foreach (var t in HostMoreTools()) yield return t;
+        foreach (var t in SessionTools()) yield return t;
+        foreach (var t in SftpWriteTools()) yield return t;
+        foreach (var t in CloudProfileTools()) yield return t;
+        foreach (var t in VaultTools()) yield return t;
 
         yield return new McpTool("get_settings",
             "Nubis 앱 설정(터미널 테마·글꼴·구문 강조·기본 포트·보안 옵션)의 현재 값과 바꿀 수 있는 값 범위를 보여준다.",
@@ -252,7 +265,7 @@ public partial class MainWindow
 
         yield return new McpTool("update_settings",
             "Nubis 앱 설정을 바꾼다. changes 에 {\"키\": 값} 형식 (키는 get_settings 참고, 여러 개 한 번에 가능). " +
-            "화면 설정은 바로 적용되고, 보안 설정(RdpCertWarning, SshHostKeyPrompt, AutoApproveReadOnly)은 사용자 승인 창을 거친다. " +
+            "화면 설정은 바로 적용되고, 보안 설정(RdpCertWarning, SshHostKeyPrompt, ConfirmMultilinePaste, AutoApproveReadOnly)은 사용자 승인 창을 거친다. " +
             "AutoApproveReadOnly 는 끄기만 가능하다. 값이 하나라도 잘못되면 아무것도 바꾸지 않는다.",
             Schema(new
             {
@@ -335,6 +348,7 @@ public partial class MainWindow
             if (moved > 0) note = $"\n클라우드 호스트 {moved}개의 포트도 새 기본 포트로 바꿨습니다.";
         }
         if (SettingsPage.Visibility == Visibility.Visible) RefreshSettingsPage();
+        AfterClaudeSettingsChange(plan);   // 최근 접속 표시 · 클라우드 자동 동기화 타이머 (MainWindow.McpVault.cs)
         AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, security || portMoves > 0 ? "승인·변경" : "변경");
         if (plan.Any(p => p.Def.Key == nameof(AppSettings.TerminalGpu))) note += "\nGPU 가속은 앱을 다시 시작해야 적용됩니다.";
         return "설정을 바꿨습니다:\n" + command + note;
@@ -356,16 +370,32 @@ public partial class MainWindow
     {
         // ---------- Vault ----------
         yield return new McpTool("list_vault",
-            "Vault 계정 목록 (이름 · 사용자명 · 로그인 방식 · 사용 중인 호스트 수). 비밀번호·키 내용은 절대 포함하지 않는다. " +
-            "add_host / update_host 의 vault 인자에 이름을 넘겨 호스트에 연결한다.",
+            "Vault 계정 목록 (이름 · 사용자명 · 로그인 방식 · 직접 연결한 호스트 수 · 기본 계정으로 쓰는 호스트 수 · 설정의 SSH/RDP 기본 계정 여부 · 메모). " +
+            "비밀번호·키 내용은 절대 포함하지 않는다. add_host / update_host 의 vault 인자에 이름을 넘겨 호스트에 연결한다.",
             Schema(new { }),
             _ => OnUi(() =>
             {
                 var all = VaultStore.All();
                 if (all.Count == 0) return "Vault 에 저장된 계정이 없습니다. 사용자에게 Nubis 의 Vault 메뉴에서 계정을 추가해 달라고 안내하세요.";
-                var sb = new StringBuilder("id | 이름 | 사용자명 | 로그인 방식 | 사용 호스트\n");
+                var s = SettingsStore.Current;
+                // 기본 계정(클라우드 프로필·설정)으로 쓰는 호스트 수 — 호스트마다 프로필 목록을 훑지 않게 사전으로
+                var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
+                var viaDefault = _hosts.Select(h => h.ResolveVault(h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null))
+                    .Where(r => r.id != null && r.source is "profile" or "default").GroupBy(r => r.id!.Value).ToDictionary(g => g.Key, g => g.Count());
+                var sb = new StringBuilder("id | 이름 | 사용자명 | 로그인 방식 | 직접 연결 호스트 | 기본 계정으로 쓰는 호스트 | 설정 기본 | 메모\n");
                 foreach (var v in all)
-                    sb.AppendLine($"{v.Id.ToString()[..8]} | {v.Name} | {(v.Username.Length > 0 ? v.Username : "-")} | {v.MethodsText}{(v.KeyType.Length > 0 ? $" ({v.KeyType})" : "")} | {_hosts.Count(h => h.VaultId == v.Id)}");
+                {
+                    var def = (s.DefaultSshVaultId == v.Id, s.DefaultRdpVaultId == v.Id) switch
+                    {
+                        (true, true) => "SSH, RDP",
+                        (true, false) => "SSH",
+                        (false, true) => "RDP",
+                        _ => "-",
+                    };
+                    var note = string.IsNullOrWhiteSpace(v.Note) ? "-" : McpHelpers.VisibleControlChars(v.Note.Trim()).Replace("\n", " ");
+                    sb.AppendLine($"{v.Id.ToString()[..8]} | {McpHelpers.VisibleControlChars(v.Name)} | {(v.Username.Length > 0 ? McpHelpers.VisibleControlChars(v.Username) : "-")} | {v.MethodsText}{(v.KeyType.Length > 0 ? $" ({v.KeyType})" : "")} | " +
+                                  $"{_hosts.Count(h => h.VaultId == v.Id)} | {viaDefault.GetValueOrDefault(v.Id)} | {def} | {note}");
+                }
                 return sb.ToString();
             }));
 
@@ -384,12 +414,16 @@ public partial class MainWindow
                 vault = new { type = "string", description = "Vault 계정 이름 또는 id" },
                 public_ip = new { type = "string" },
                 use_public_ip = new { type = "boolean" },
+                favorite = new { type = "boolean", description = "즐겨찾기" },
+                jump_host = new { type = "string", description = "SSH 만: 거쳐 갈 점프 서버(ProxyJump) — 목록의 다른 SSH 호스트 이름·id. 한 단계만 (점프 서버가 다시 점프를 거치면 불가)" },
+                rdp_gateway = new { type = "string", description = "RDP 만: RD 게이트웨이 \"호스트\" 또는 \"호스트:포트\"" },
             }, "address"),
             a => OnUiAsync(() => AddHostFromClaude(a)));
 
         yield return new McpTool("update_host",
             "등록된 호스트 1개의 설정을 바꾼다 (넘긴 항목만). host 는 이름·IP·id. 클라우드 동기화 호스트는 주소를 바꿀 수 없다. " +
-            "비밀번호는 바꿀 수 없다. 변경 전에 앱이 사용자 승인을 받는다.",
+            "비밀번호는 바꿀 수 없다. 변경 전에 앱이 사용자 승인을 받는다 (즐겨찾기만 바꿀 때는 제외). " +
+            "프로토콜을 바꾸면 다른 프로토콜 전용 값(SSH 점프 서버 / RDP 게이트웨이)은 지워진다.",
             Schema(new
             {
                 host = new { type = "string", description = "대상 호스트 (이름·IP·id, 정확히 1개여야 함)" },
@@ -402,6 +436,10 @@ public partial class MainWindow
                 vault = new { type = "string", description = "Vault 계정 이름 또는 id (list_vault). \"none\" = 연결 해제" },
                 public_ip = new { type = "string", description = "빈 문자열 = 지우기" },
                 use_public_ip = new { type = "boolean" },
+                favorite = new { type = "boolean", description = "즐겨찾기. 이것만 바꾸면 승인 창 없이 반영된다 (감사 로그는 남음)" },
+                jump_host = new { type = "string", description = "SSH 만: 점프 서버(ProxyJump) 호스트 이름·id. \"none\" = 해제. 자기 자신·다른 점프를 거치는 호스트는 불가 (한 단계만)" },
+                rdp_gateway = new { type = "string", description = "RDP 만: RD 게이트웨이 \"호스트\" 또는 \"호스트:포트\". 빈 문자열 = 지우기 (mstsc 기본 설정을 따름)" },
+                clear_prompt_answers = new { type = "boolean", description = "true = 서버 인증 질문(OTP 방식 선택 등)에 기억해 둔 답을 모두 지운다. 답 내용은 보여주지 않는다" },
             }, "host"),
             a => OnUiAsync(() => UpdateHostFromClaude(a)));
 
@@ -426,48 +464,8 @@ public partial class MainWindow
         // ---------- 출력 기다리기 ----------
         yield return WaitForOutputTool();
 
-        // ---------- SFTP ----------
-        yield return new McpTool("sftp_list",
-            "SSH 호스트의 원격 폴더 목록 (이름·종류·크기·수정 시각·권한). 승인 규칙은 run_command 와 같다(설정에 따라 읽기 전용 자동 승인).",
-            Schema(new
-            {
-                host = new { type = "string" },
-                path = new { type = "string", description = "원격 경로 (생략 시 홈)" },
-            }, "host"),
-            a => SftpListAsync(a));
-
-        yield return new McpTool("sftp_read",
-            "SSH 호스트의 원격 텍스트 파일을 읽는다 (로그·설정 확인용, 기본 64KB, 최대 1MB). tail=true 면 끝부분. 바이너리 파일은 거부. " +
-            "승인 규칙은 run_command 와 같다.",
-            Schema(new
-            {
-                host = new { type = "string" },
-                path = new { type = "string" },
-                max_bytes = new { type = "integer", description = "읽을 최대 바이트 (기본 65536, 최대 1048576)" },
-                tail = new { type = "boolean", description = "파일 끝부분을 읽기 (로그)" },
-            }, "host", "path"),
-            a => SftpReadAsync(a));
-
-        yield return new McpTool("sftp_download",
-            "SSH 호스트의 원격 파일·폴더를 이 PC 의 다운로드\\Nubis\\<호스트> 폴더로 받는다 (경로는 앱이 정함, 기존 파일은 덮어쓰지 않음). 항상 사용자 승인.",
-            Schema(new
-            {
-                host = new { type = "string" },
-                path = new { type = "string", description = "원격 파일 또는 폴더" },
-            }, "host", "path"),
-            a => SftpDownloadAsync(a));
-
-        yield return new McpTool("sftp_upload",
-            "이 PC 의 파일·폴더를 SSH 호스트의 원격 폴더로 올린다. 같은 이름이 있으면 overwrite=true 일 때만 덮어쓴다. 항상 사용자 승인. " +
-            "Nubis 데이터 폴더와 ~/.ssh, 개인키 파일은 올릴 수 없다.",
-            Schema(new
-            {
-                host = new { type = "string" },
-                local_path = new { type = "string", description = "이 PC 의 파일 또는 폴더 (절대 경로)" },
-                remote_dir = new { type = "string", description = "올릴 원격 폴더" },
-                overwrite = new { type = "boolean" },
-            }, "host", "local_path", "remote_dir"),
-            a => SftpUploadAsync(a));
+        // ---------- SFTP (읽기·전송: MainWindow.McpSftp.cs, 쓰기: SftpWriteTools) ----------
+        foreach (var t in SftpTools()) yield return t;
 
         // ---------- 클라우드 ----------
         yield return new McpTool("cloud_sync",

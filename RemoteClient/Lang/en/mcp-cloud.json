@@ -1,0 +1,5 @@
+{
+  "Claude 가 클라우드 프로필 설정 변경을 요청합니다": "Claude wants to change cloud profile settings",
+  "'{0}' 프로필의 설정을 바꿉니다. 이 프로필 서버들의 접속 주소·포트·로그인 계정이 함께 바뀔 수 있으니 아래 내용을 확인하세요.": "The settings of profile '{0}' will be changed. The connect address, port and login account of this profile's servers may change too, so review the details below.",
+  "Claude 가 클라우드 프로필 제거를 요청합니다": "Claude wants to remove a cloud profile"
+}

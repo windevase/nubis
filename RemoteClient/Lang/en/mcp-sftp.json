@@ -1,0 +1,16 @@
+{
+  "\n열린 터미널 탭(session {0})의 로그인된 연결을 씁니다 (다시 인증하지 않음, 계정 {1}).": "\nUses the signed-in connection of the open terminal tab (session {0}) — no re-authentication, account {1}.",
+  "\n⚠ 이 탭의 SFTP 가 sudo 로 {0} 권한으로 열려 있어, 이 작업도 {0} 권한으로 실행됩니다.": "\n⚠ This tab's SFTP is open as {0} via sudo, so this operation also runs as {0}.",
+  "\n⚠ 상위 경로가 심볼릭 링크를 거칩니다 — 실제 위치: {0}": "\n⚠ The parent path goes through a symbolic link — actual location: {0}",
+  "Claude 가 원격 폴더 만들기를 요청합니다": "Claude is requesting to create a remote folder",
+  "승인하면 서버에 아래 폴더를 만듭니다.": "If approved, the folder below is created on the server.",
+  "Claude 가 원격 이름 변경을 요청합니다": "Claude is requesting a remote rename",
+  "승인하면 서버에서 아래 항목의 이름을 바꿉니다. 심볼릭 링크는 링크 자체의 이름만 바뀝니다.": "If approved, the item below is renamed on the server. For a symbolic link, only the link itself is renamed.",
+  "Claude 가 원격 삭제를 요청합니다": "Claude is requesting a remote delete",
+  "승인하면 서버에서 아래 항목을 삭제합니다. 폴더는 안의 내용까지 모두 지우며 되돌릴 수 없습니다. 심볼릭 링크는 링크만 지우고 가리키는 원본은 그대로 둡니다.": "If approved, the item below is deleted from the server. Folders are deleted with all their contents, and this cannot be undone. Symbolic links are removed by themselves; their targets are left untouched.",
+  "\n삭제할 항목: 파일 {0}개 · 폴더 {1}개 · 링크 {2}개": "\nItems to delete: {0} file(s) · {1} folder(s) · {2} link(s)",
+  "Claude 가 원격 파일 쓰기를 요청합니다": "Claude is requesting to write a remote file",
+  "승인하면 서버에 아래 내용으로 새 파일을 만듭니다.": "If approved, a new file with the content below is created on the server.",
+  "승인하면 서버의 파일을 아래 내용으로 바꿉니다 (임시 파일에 쓴 뒤 바꿔치기, 권한 유지).": "If approved, the server file is replaced with the content below (written to a temporary file and swapped in, permissions kept).",
+  "\n⚠ 비밀 정보나 시스템 설정이 들어 있을 수 있는 경로입니다.": "\n⚠ This path may contain secrets or system settings."
+}

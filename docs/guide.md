@@ -420,8 +420,11 @@ Click **Claude** in the title bar (or press `Ctrl+Shift+A`) to open the official
 | Analyze the current screen | (while looking at a tab) "What is this error?" — the tab you are viewing is sent with every question |
 | Read logs | "Show the end of /var/log/nginx/error.log on web-01" |
 | Diagnose connection problems | "I can't connect to web-02, find out why" |
-| Manage hosts | "Add 10.0.1.5 as web-02 in Production and link the ops account" |
-| App settings | "Set the terminal theme to dracula and the font size to 16" |
+| Manage hosts | "Add 10.0.1.5 as web-02 in Production and link the ops account" · "Star db-replica" |
+| Groups | "Rename the On-prem / Web group to Web" · "Set the default SSH account for PRODUCTION to ops" |
+| Tabs | "Reconnect all disconnected tabs" |
+| Remote files | "Create a folder /tmp/x on demo-sftp" |
+| App settings | "Set the terminal theme to dracula and the font size to 16" · "Turn on copy-on-select" |
 | Setup help | "Walk me through setting up GitHub sign-in" |
 
 While Claude runs commands on servers, a **Running · Cancel** bar appears at the top of the panel. Cancelling returns immediately and skips servers that haven't started (commands already started may run to completion). With many servers the output per server is reduced, and long output keeps the beginning and **the end (where errors usually are)**. `capture_screen` switches back to the tab you were viewing after capturing.
@@ -430,46 +433,122 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 
 | Action | Approval |
 |---|---|
-| Lookups (host list, reading the screen, terminal state (current folder, user), screen capture, connection diagnosis, reading settings, finding import sources), cloud re-sync | None |
-| Opening a tab (`open_session`) | None (written to the audit log) |
-| Closing a connected tab (`close_session`) | Approval prompt (a disconnected tab closes right away) |
-| Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env` always ask) |
+| Lookups (host, group, tab, closed-tab, cloud-profile and Vault lists, reading the screen, terminal state (current folder, user), screen capture, connection diagnosis, reading settings, finding import sources), cloud re-sync | None |
+| Showing a Vault account's public key (`vault_get_public_key`) or the stored host keys (`list_known_hosts`) | None (written to the audit log) |
+| Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), starring a host, cancelling a cloud sync | None (written to the audit log) |
+| Display and convenience settings (theme, font, copy-on-select, auto reconnect and so on) | None (written to the audit log) |
+| Closing connected tabs (`close_session`, `close_sessions`) | Approval prompt (disconnected tabs close right away; closing several tabs takes one approval) |
+| Connecting more than 8 hosts at once (`connect_hosts`) | Approval prompt |
+| Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env`, and reading with the tab's sudo rights, always ask) |
 | Running commands on several servers (`run_command`) | Approval prompt (with read-only auto-approve on, only read-only commands skip it; SSH servers that look like Windows or whose OS is unknown always ask) |
 | Typing into a terminal (`send_to_terminal`) | Approval prompt (with read-only auto-approve on, a one-line read-only command skips it while the screen shows a shell prompt — password prompts, vim, local PowerShell tabs and Windows or unknown-OS servers always ask) |
-| Adding, changing or deleting hosts; uploading or downloading files; adding cloud profiles; cloud CLI sign-in; adding imported hosts | **Always an approval prompt** (an import is previewed first and added with one approval) |
+| Hosts and groups: adding, changing, duplicating or deleting hosts, bulk edits (`bulk_update_hosts`), group defaults (`set_group_defaults`), renaming a group (`rename_group`) | **Always an approval prompt** |
+| Remote files: uploading, downloading, creating folders, renaming, deleting and saving (`sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`, `sftp_write`) | **Always an approval prompt** (deletes show the item count; saving shows a summary of the changes) |
+| Cloud: adding, changing or removing profiles, cloud CLI sign-in | **Always an approval prompt** |
+| Vault and known hosts: setting or clearing the default Vault account, deleting a Vault account, deleting a stored host key | **Always an approval prompt** (the prompt lists what is affected) |
+| Adding imported hosts | **Always an approval prompt** (previewed first and added with one approval) |
 | Querying Active Directory for an import with a Vault account, another domain or a named domain controller | Approval prompt before the query |
 | Changing security settings (RDP certificate warning, host-key prompt, auto-approve), or a default-port change that moves cloud hosts | **Approval prompt.** Claude can never turn auto-approve on, only off |
-| Sign-in screen · editor path · cloud credential paths | Claude cannot change them |
+| Passwords, keys and key passphrases; sign-in screen settings (owner only); the SFTP editor path; cloud credential paths; turning read-only auto-approve on | **Claude can never do these.** For passwords, keys and sign-in, Claude only opens the right dialog or page (`open_app_page`) and you fill it in yourself |
 
 The approval prompt shows the target servers and the full command. It flags risky commands (`rm -rf`, `reboot`, `Stop-Service` and so on), and the run button stays locked for 1.5 seconds after the prompt appears. Only one prompt is shown at a time, and if Claude cancels the request the prompt closes as rejected. Esc rejects. Every request is written to the audit log (the document icon in the panel header).
 
 ### 10.4 What Claude cannot do
 
 - Read or decrypt saved passwords and keys. The account files (`hosts.json`, `vault.json` and others) are blocked from Claude's read tools and shell commands.
-- Put a password on a host. Accounts are attached only by linking a Vault account. Imports never carry passwords either.
+- Put a password or key on a host, a Vault account or a cloud profile. Accounts are attached only by linking a Vault account, and imports never carry passwords. When a secret is needed, Claude opens the dialog and you type it in.
 - Upload the Nubis data folder, `~/.ssh` or private key files to a server, or import from them (`~/.ssh/config` excepted).
-- Change the sign-in screen settings or the editor path, or edit `settings.json` directly.
+- Change the sign-in screen settings, the SFTP editor path or cloud credential paths, turn on read-only auto-approve, or edit `settings.json` directly.
+- Delete a host key you rejected.
 
 ### 10.5 MCP tools
+
+Claude has 58 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+
+**Hosts and groups**
 
 | Tool | Purpose |
 |---|---|
 | `list_groups` · `list_hosts` | Search groups and hosts |
+| `add_host` · `update_host` · `delete_host` | Add, change and delete hosts (starring a host needs no approval) |
+| `duplicate_host` | Copy a host as a new one, account settings included |
+| `bulk_update_hosts` | Change several hosts at once, with the same rules as bulk edit |
+| `set_group_defaults` | A group's SSH/RDP Vault account and public-IP choice, like the group right-click menu |
+| `rename_group` | Rename a group you created (merges into a group of the same name; cloud groups are renamed in the profile) |
+| `set_group_collapsed` | Collapse or expand groups in the host list |
+| `connect_hosts` | Open tabs to several hosts at once, like **Connect all** |
+
+**Sessions and tabs**
+
+| Tool | Purpose |
+|---|---|
 | `list_sessions` · `open_session` · `close_session` | List, open and close tabs |
+| `select_session` | Show a tab, or the host list (home) |
+| `rename_session` | Rename a tab |
+| `reconnect_session` | Reconnect one tab or all disconnected tabs |
+| `close_sessions` | Close other tabs, tabs to the right, or all disconnected tabs |
+| `list_closed_tabs` · `reopen_closed_tab` | Closed-tab history and reopening (`Ctrl+Shift+R`) |
+| `open_local_terminal` | Open a local PowerShell tab |
+| `toggle_sftp_panel` | Show or hide an SSH tab's SFTP panel |
+
+**Terminal**
+
+| Tool | Purpose |
+|---|---|
 | `read_terminal` · `get_selection` · `capture_screen` | Terminal content, selected text, screen image |
 | `get_terminal_info` | The terminal's current folder, sign-in account and sudo switch (answers instantly, no command sent) |
 | `wait_for_output` | Wait until some text appears, the prompt returns or output goes quiet |
 | `send_to_terminal` | Type into a terminal |
+
+**Remote commands**
+
+| Tool | Purpose |
+|---|---|
 | `run_command` | Run on several servers in parallel (SSH / WinRM) |
 | `test_connection` | DNS, port, SSH-banner and WinRM diagnosis (does not sign in) |
-| `sftp_list` · `sftp_read` · `sftp_download` · `sftp_upload` | Remote files |
-| `add_host` · `update_host` · `delete_host` · `list_vault` | Host management and the Vault list |
+
+**SFTP**
+
+| Tool | Purpose |
+|---|---|
+| `sftp_list` · `sftp_read` | Browse folders and read text files |
+| `sftp_download` · `sftp_upload` | Transfer files and folders (downloads go to `Downloads\Nubis\<host>`) |
+| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | Create a folder; rename or delete a file, folder or symbolic link (only the link itself, never its target) |
+| `sftp_write` | Save a text file (refused if the file changed on the server after Claude read it) |
+
+**Cloud**
+
+| Tool | Purpose |
+|---|---|
 | `discover_sources` | Find what can be imported: cloud profiles on this PC (and whether sign-in is needed), `~/.ssh/config`, mRemoteNG and the AD domain |
-| `cloud_add_profile` · `cloud_login` · `cloud_sync` | Add cloud profiles (synced right away), run a CLI sign-in in a new console window, re-sync |
-| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible or AD — preview first, then add with one approval |
+| `cloud_list_profiles` | Cloud profiles and their settings (a default password only shows as set or unset) |
+| `cloud_add_profile` · `cloud_login` | Add cloud profiles (synced right away), run a CLI sign-in in a new console window |
+| `cloud_update_profile` · `cloud_remove_profile` | Change profile settings (ports, public IP, stopped servers, default Vault accounts); remove a profile and its hosts from Nubis (the cloud servers are untouched) |
+| `cloud_sync` · `cloud_sync_cancel` | Re-sync, cancel a running sync |
+
+**Vault and known hosts**
+
+| Tool | Purpose |
+|---|---|
+| `list_vault` | Vault accounts (never passwords or keys) |
+| `vault_set_default` | Set or clear the default SSH/RDP account in Settings |
+| `vault_get_public_key` | The public-key line of an SSH-key account, for `authorized_keys` |
+| `vault_delete` | Delete a Vault account (hosts, profiles and settings that use it are unlinked) |
+| `list_known_hosts` · `delete_known_host` | Stored host keys; delete one after a server is reinstalled (rejected keys cannot be deleted) |
+
+**Settings and app screens**
+
+| Tool | Purpose |
+|---|---|
 | `get_settings` · `update_settings` | App settings |
-| `get_setup_status` · `open_app_page` | Setup status and opening screens (for setup guidance) |
+| `get_setup_status` · `open_app_page` | Setup status; open screens and dialogs, including the Vault, host and cloud-profile dialogs where you type passwords yourself |
 | `diagnostics` | App memory and handles |
+
+**Import**
+
+| Tool | Purpose |
+|---|---|
+| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible or AD — preview first, then add with one approval |
 
 ### 10.6 Running commands on several servers (SSH / WinRM)
 

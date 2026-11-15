@@ -1,0 +1,5 @@
+{
+  "\n점프 서버·RD 게이트웨이를 거쳐 접속하면 로그인이 그 서버를 지나갑니다. 믿을 수 있는 서버인지 확인하세요.": "\nConnecting through a jump host or RD gateway sends the login through that server. Make sure it is a server you trust.",
+  "\n주소·포트·Vault 계정·점프 서버·RD 게이트웨이가 바뀌면 저장된 계정이 쓰이는 서버나 거쳐 가는 경로가 달라집니다. 확인하세요.": "\nChanging the address, port, Vault account, jump host or RD gateway changes which server the saved account is used on, or the path it goes through. Please check.",
+  "이 호스트를 점프 서버로 쓰는 호스트 {0}개는 새 점프 서버를 거치지 않고 이 호스트에 바로 연결합니다 (점프는 한 단계만 지원).": "{0} host(s) that use this host as their jump host will connect to it directly, without going through the new jump host (only one hop is supported)."
+}

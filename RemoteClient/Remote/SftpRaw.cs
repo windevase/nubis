@@ -28,9 +28,49 @@ public static class SftpRaw
     private static readonly MethodInfo? RemoveMethod = SessionType?.GetMethod("RequestRemove", new[] { typeof(string) });
     private static readonly MethodInfo? RenameMethod = SessionType?.GetMethod("RequestRename", new[] { typeof(string), typeof(string) });
 
+    private static readonly MethodInfo? LStatMethod = SessionType?.GetMethod("RequestLStat", new[] { typeof(string) });
+    private static readonly MethodInfo? RmDirMethod = SessionType?.GetMethod("RequestRmDir", new[] { typeof(string) });
+
     /// <summary>리플렉션 대상이 모두 있는가 (SSH.NET 업데이트로 내부 구조가 바뀌었는지 테스트가 확인)</summary>
     public static bool Supported =>
         (SessionProperty?.GetMethod != null || SessionField != null) && RemoveMethod != null && RenameMethod != null;
+
+    /// <summary>LStat 을 쓸 수 있는가 (없으면 링크 여부를 알 수 없음 — 쓰는 쪽은 덮어쓰기를 거부한다)</summary>
+    public static bool LStatSupported =>
+        (SessionProperty?.GetMethod != null || SessionField != null) && LStatMethod?.ReturnType == typeof(Renci.SshNet.Sftp.SftpFileAttributes);
+
+    /// <summary>RemoveDirectory 를 쓸 수 있는가 (없으면 MCP 폴더 삭제는 거부 — DeleteDirectory 는 REALPATH 로 링크를 따라간다)</summary>
+    public static bool RmDirSupported => (SessionProperty?.GetMethod != null || SessionField != null) && RmDirMethod != null;
+
+    /// <summary>
+    /// 경로를 그대로 SSH_FXP_RMDIR — SftpClient.DeleteDirectory 는 먼저 REALPATH 로 경로를 풀어,
+    /// 목록을 읽은 뒤 폴더가 (빈 폴더를 가리키는) 링크로 바뀌었으면 링크가 가리키는 다른 폴더를 지운다. 링크면 서버가 거부한다(ENOTDIR)
+    /// </summary>
+    public static void RemoveDirectory(SftpClient client, string path)
+    {
+        RequireAbsolute(path);
+        if (!RmDirSupported) throw new NotSupportedException("SSH_FXP_RMDIR is not available in this SSH.NET version.");
+        Invoke(RmDirMethod, Session(client), path);
+    }
+
+    /// <summary>
+    /// 경로를 그대로 SSH_FXP_LSTAT — 링크면 링크 자체의 속성(IsSymbolicLink)을 돌려준다.
+    /// SftpClient.Get/GetAttributes 는 REALPATH·STAT 으로 링크를 따라가 링크인지 알 수 없다. 없으면 SftpPathNotFoundException
+    /// </summary>
+    public static Renci.SshNet.Sftp.SftpFileAttributes LStat(SftpClient client, string path)
+    {
+        RequireAbsolute(path);
+        ArgumentNullException.ThrowIfNull(client);
+        if (!LStatSupported) throw new NotSupportedException("SSH_FXP_LSTAT is not available in this SSH.NET version.");
+        var session = (SessionProperty?.GetMethod != null ? SessionProperty.GetValue(client) : SessionField!.GetValue(client))
+                      ?? throw new SshConnectionException("Client not connected.");
+        try { return (Renci.SshNet.Sftp.SftpFileAttributes)LStatMethod!.Invoke(session, new object[] { path })!; }
+        catch (TargetInvocationException ex) when (ex.InnerException != null)
+        {
+            ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
+        }
+    }
 
     /// <summary>경로를 그대로 SSH_FXP_REMOVE — 링크면 링크 자체만 지운다 (원본은 그대로)</summary>
     public static void Remove(SftpClient client, string path)

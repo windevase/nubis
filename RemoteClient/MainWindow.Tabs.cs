@@ -313,6 +313,12 @@ public partial class MainWindow
     private void CloseTabs(IReadOnlyCollection<SessionTab> tabs)
     {
         if (tabs.Count == 0 || !ConfirmCloseTabs(tabs)) return;
+        CloseTabsNow(tabs);
+    }
+
+    /// <summary>확인 없이 여러 탭을 닫는다 (CloseTabs 의 확인 뒤 부분 — MCP close_sessions 는 승인 창이 확인을 대신한다)</summary>
+    private void CloseTabsNow(IReadOnlyCollection<SessionTab> tabs)
+    {
         // 확인 창(중첩 메시지 루프)이 떠 있는 동안 이미 닫힌 탭은 뺀다
         var closing = tabs.Where(_tabs.Contains).Distinct().ToList();
         if (closing.Count == 0) return;

@@ -1,0 +1,7 @@
+{
+  "탭 {0}개를 닫습니다. 아래 연결된 탭 {1}개는 연결을 끊으며, 터미널에서 실행 중인 프로그램은 종료될 수 있습니다.": "Closes {0} tabs. The {1} connected tabs below will be disconnected, and programs running in their terminals may be terminated.",
+  "끊긴 탭 {0}개를 닫습니다.": "Closes {0} disconnected tabs.",
+  "SFTP 로 편집 중인 파일 {0}개는 닫은 뒤 저장해도 서버에 올라가지 않습니다.": "{0} files being edited over SFTP will not be uploaded if saved after closing.",
+  "Claude 가 세션 탭 여러 개 닫기를 요청합니다": "Claude is requesting to close multiple session tabs",
+  "(탭 닫기)": "(close tab)"
+}
