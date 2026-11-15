@@ -96,6 +96,7 @@ public partial class LoginWindow : Window
         ShowError(null);
         OfflineButton.Visibility = Visibility.Collapsed;
         LoginButton.IsEnabled = false;
+        CancelButton.Content = L.T("취소");   // 코드를 받기 전에도 누르면 로그인만 취소된다 (OnCancel)
         CancelLogin();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -189,7 +190,9 @@ public partial class LoginWindow : Window
 
     private void OnCancel(object sender, RoutedEventArgs e)
     {
-        if (CodePanel.Visibility == Visibility.Visible) { _cts?.Cancel(); return; }   // 진행 중이면 취소만
+        // 진행 중이면 취소만 — 코드가 오기 전(로그인 버튼이 꺼진 채 서버 응답 대기)도 진행 중이다.
+        // 그때 Esc · 버튼이 창을 닫으면 앱 시작 로그인에서는 앱이 그대로 종료됐다
+        if (CodePanel.Visibility == Visibility.Visible || !LoginButton.IsEnabled) { _cts?.Cancel(); return; }
         DialogResult = false;
     }
 

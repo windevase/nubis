@@ -43,7 +43,19 @@ public partial class VaultPickerDialog : Window
         var text = VaultStore.Get(id) is { } v
             ? (string.IsNullOrWhiteSpace(v.Username) ? v.Name : $"{v.Name}  ({v.Username})")
             : empty;
-        return new System.Windows.Controls.TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = text };
+        var tb = new System.Windows.Controls.TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = text };
+        tb.ToolTipOpening += OnButtonContentToolTipOpening;
+        return tb;
+    }
+
+    /// <summary>다 보이는(잘리지 않은) 글자면 같은 문구 툴팁을 띄우지 않는다</summary>
+    private static void OnButtonContentToolTipOpening(object sender, System.Windows.Controls.ToolTipEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.TextBlock t) return;
+        var full = new System.Windows.Media.FormattedText(t.Text, System.Globalization.CultureInfo.CurrentUICulture, t.FlowDirection,
+            new System.Windows.Media.Typeface(t.FontFamily, t.FontStyle, t.FontWeight, t.FontStretch), t.FontSize,
+            System.Windows.Media.Brushes.Black, System.Windows.Media.VisualTreeHelper.GetDpi(t).PixelsPerDip);
+        if (full.WidthIncludingTrailingWhitespace <= t.ActualWidth + 0.5) e.Handled = true;
     }
 
     /// <summary>allowClear 로 연 창에서 "지정 해제" 를 누르면 Pick 이 돌려주는 값 (실제 계정 Id 는 Guid.Empty 가 아니다)</summary>
