@@ -135,3 +135,41 @@ public class K8sUiLogicTests
         Assert.Null(MainWindow.K8sVersion("error: unauthorized"));
     }
 }
+
+/// <summary>run_kubectl 의 대화형 명령 차단과 쿠버네티스 탭 설명</summary>
+[Collection("settings")]
+public class K8sMcpTests
+{
+    [Theory]
+    [InlineData("exec -it web -- sh")]
+    [InlineData("exec web -i -- sh")]
+    [InlineData("exec --stdin=true web -- sh")]
+    [InlineData("logs -f web")]
+    [InlineData("logs web --follow")]
+    [InlineData("get pods -w")]
+    [InlineData("get pods --watch-only")]
+    [InlineData("port-forward svc/web 8080:80")]
+    [InlineData("attach web")]
+    [InlineData("edit deploy/web")]
+    [InlineData("proxy")]
+    public void 대화형_명령은_run_kubectl_로_받지_않는다(string line) =>
+        Assert.NotNull(MainWindow.KubectlInteractiveReason(KubectlArgs.Split(line)));
+
+    [Theory]
+    [InlineData("exec web -- ls /")]
+    [InlineData("exec web -- sh -c 'tail -f x'")]   // -- 뒤는 컨테이너 안 명령
+    [InlineData("logs web --tail=100")]
+    [InlineData("get pods -o wide")]
+    [InlineData("rollout status deploy/web")]
+    public void 비대화형_명령은_받는다(string line) =>
+        Assert.Null(MainWindow.KubectlInteractiveReason(KubectlArgs.Split(line)));
+
+    [Fact]
+    public void 쿠버네티스_탭은_로컬_PowerShell_로_소개하지_않는다()
+    {
+        var text = MainWindow.ActiveContextText(3, "web-1", Protocol.Local, null, 0, SessionStatus.Connected, 2, "쿠버네티스 파드 셸/로그");
+        Assert.Contains("쿠버네티스 파드 셸/로그", text);
+        Assert.DoesNotContain("로컬 PowerShell", text);
+        Assert.Contains("로컬 PowerShell", MainWindow.ActiveContextText(3, "PowerShell", Protocol.Local, null, 0, SessionStatus.Connected, 2));
+    }
+}
