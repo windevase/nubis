@@ -98,6 +98,9 @@ public partial class SftpPanel
     public static string ResolvePathInput(string input, string cwd, string home)
     {
         var p = input.Trim();
+        // Windows OpenSSH 서버: 탐색기에서 복사한 "C:\Users\me" · "C:/x" 는 SFTP 경로 "/C:/Users/me" 로 (현재 폴더 기준 상대 경로로 붙지 않게)
+        if (p.Length >= 2 && char.IsAsciiLetter(p[0]) && p[1] == ':' && (p.Length == 2 || p[2] is '\\' or '/'))
+            p = "/" + p.Replace('\\', '/');
         if (p == "~") p = home;
         else if (p.StartsWith("~/", StringComparison.Ordinal)) p = Combine(home, p[2..]);
         else if (!p.StartsWith('/')) p = Combine(cwd.Length > 0 ? cwd : home, p);
@@ -138,31 +141,49 @@ public sealed class RemoteNameCache(Func<string, IEnumerable<string>?> list)
     /// <summary>이 개수 이상일 때만 쓴다 — 몇 개만 올릴 때 수만 개짜리 폴더 목록을 읽지 않게</summary>
     public const int BatchThreshold = 20;
 
-    /// <summary>폴더 → 이름들 (null = 폴더가 없음)</summary>
-    private readonly Dictionary<string, HashSet<string>?> _dirs = new(StringComparer.Ordinal);
+    /// <summary>
+    /// 폴더 → 이름들 (null = 폴더가 없음). 대소문자를 무시하는 집합 — 정확히 같은 이름은 Exact 로 따로 본다.
+    /// (Windows OpenSSH 처럼 대소문자를 가리지 않는 서버에서 "Foo.txt" 를 "없음"으로 판단하면, 덮어쓰기 확인 없이
+    /// "foo.txt" 에 바로 쓰고 실패 때 새 파일로 알고 지워 버린다 — 대소문자만 다른 이름은 "모름"으로 돌려 서버에 직접 묻게)
+    /// </summary>
+    private readonly Dictionary<string, (HashSet<string> Exact, HashSet<string> Folded)?> _dirs = new(StringComparer.Ordinal);
     private readonly HashSet<string> _unknown = new(StringComparer.Ordinal);
 
-    /// <summary>있으면 true, 없으면 false, 폴더 목록을 못 읽었으면 null</summary>
+    /// <summary>있으면 true, 없으면 false, 폴더 목록을 못 읽었거나 대소문자만 다른 이름이 있으면 null (부르는 쪽이 서버에 직접 묻는다)</summary>
     public bool? Exists(string path)
     {
         var (parent, name) = Split(path);
         if (_unknown.Contains(parent)) return null;
         if (!_dirs.TryGetValue(parent, out var set))
         {
-            try { set = list(parent) is { } names ? new HashSet<string>(names, StringComparer.Ordinal) : null; }
+            try { set = list(parent) is { } names ? MakeSet(names) : null; }
             catch { _unknown.Add(parent); return null; }
             _dirs[parent] = set;
         }
-        return set != null && set.Contains(name);
+        if (set is not { } s) return false;
+        if (s.Exact.Contains(name)) return true;
+        return s.Folded.Contains(name) ? null : false;
     }
 
     /// <summary>방금 만든 폴더 — 부모 목록에 넣고, 자신은 빈 폴더로 기억</summary>
     public void Created(string dir)
     {
         var (parent, name) = Split(dir);
-        if (_dirs.TryGetValue(parent, out var set)) (set ?? (_dirs[parent] = new HashSet<string>(StringComparer.Ordinal))).Add(name);
-        _dirs[dir.TrimEnd('/')] = new HashSet<string>(StringComparer.Ordinal);
+        if (_dirs.TryGetValue(parent, out var set))
+        {
+            var s = set ?? MakeSet([]);
+            s.Exact.Add(name);
+            s.Folded.Add(name);
+            _dirs[parent] = s;
+        }
+        _dirs[dir.TrimEnd('/')] = MakeSet([]);
         _unknown.Remove(dir.TrimEnd('/'));
+    }
+
+    private static (HashSet<string> Exact, HashSet<string> Folded) MakeSet(IEnumerable<string> names)
+    {
+        var exact = new HashSet<string>(names, StringComparer.Ordinal);
+        return (exact, new HashSet<string>(exact, StringComparer.OrdinalIgnoreCase));
     }
 
     private static (string Parent, string Name) Split(string path)

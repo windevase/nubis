@@ -84,6 +84,17 @@ public static class TerminalCwd
     /// </summary>
     public static string? PromptHost(string screen) => PromptMatch(screen)?.Groups["h"].Value;
 
+    /// <summary>
+    /// 화면(프롬프트 감시가 보낸 Enter 줄 ~ 커서 줄)의 마지막 줄, 곧 커서 줄에 글자가 있는가.
+    /// 명령 출력은 줄바꿈으로 끝나 커서가 빈 줄에 있다 — 그때 위쪽 출력 줄에 "root@db:~#" 같은 글자가 있어도
+    /// (cat·echo·history 출력) 새 프롬프트로 보지 않게 (sudo 전환·폴더 따라가기 오탐 방지). 새 프롬프트는 커서가 그 줄 끝에 있다.
+    /// </summary>
+    public static bool CursorLineHasText(string screen)
+    {
+        var lines = screen.Replace("\r", "").Split('\n');
+        return lines[^1].TrimEnd().Length > 0;
+    }
+
     private static readonly Regex PowerShellPrompt = new(@"^PS (?<p>[A-Za-z]:\\[^>]*|\\\\[^>]+|[A-Za-z]+::[^>]*)>\s*$", RegexOptions.Compiled);
 
     /// <summary>PowerShell 프롬프트("PS C:\Users\me>")의 현재 폴더. 프롬프트가 아니면 null</summary>

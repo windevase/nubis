@@ -173,6 +173,22 @@ public sealed class LoginState
     }
 
     /// <summary>
+    /// 로그아웃: 마지막 로그인 기록(login.json)을 지워 다음 실행 때 로그인 유지로 건너뛰지 않고 로그인 화면이 뜨게 한다.
+    /// 지웠으면(또는 원래 없으면) true — 호출하는 쪽(설정 화면)은 그 뒤 App.Restart() 로 다시 시작한다.
+    /// 지우지 못했으면 false (그대로 다시 시작하면 로그인 유지로 바로 들어가 로그아웃이 안 된 것처럼 보인다).
+    /// 기록을 지우므로 오프라인 허용으로도 들어갈 수 없다 — 다음 실행은 온라인 로그인이 필요하다.
+    /// </summary>
+    public static bool SignOut()
+    {
+        var account = "";
+        try { account = Load()?.Account ?? ""; } catch { }
+        Clear();
+        var ok = !File.Exists(FilePath);
+        try { AuditLog.Write("login", new[] { account }, "로그아웃", ok ? "성공" : "실패: login.json 을 지우지 못함"); } catch { }
+        return ok;
+    }
+
+    /// <summary>
     /// 같은 제공자·앱(Microsoft 는 테넌트까지)이고, 마지막 로그인이 span 안이면 true.
     /// 테넌트를 바꾸면 다른 테넌트에서 확인한 기록을 인정하지 않는다 — 테넌트 기록이 없는 예전 기록도 Microsoft 면 다시 로그인.
     /// </summary>

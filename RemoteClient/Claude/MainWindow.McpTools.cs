@@ -174,6 +174,10 @@ public partial class MainWindow
                 var mode = Arg(a, "address");
                 if (mode == "public" && !found[0].HasPublicIp) throw new McpToolException($"'{found[0].DisplayName}' 에는 공인 IP 가 없습니다.");
                 var tab = Connect(found[0], mode switch { "public" => true, "private" => false, _ => null });
+                // 승인 없이 접속(저장된 계정으로 로그인)하는 동작이라 감사 로그에는 남긴다 — 어떤 서버에 언제 Claude 가 탭을 열었는지 추적용
+                AuditLog.Write("open_session",
+                    new[] { $"{McpHelpers.VisibleControlChars(found[0].DisplayName)}  ({found[0].ProtocolText} {tab.Host?.Address ?? found[0].Address}:{tab.Host?.Port ?? found[0].Port})" },
+                    $"(탭 열기: session {tab.Id}{(mode is "public" or "private" ? $", {mode} 주소" : "")})", "실행");
                 if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
                 Activate();
                 var opened = $"세션을 열었습니다: session_id={tab.Id}, {found[0].DisplayName} ({found[0].ProtocolText} {found[0].Address}:{found[0].Port}).";
@@ -339,15 +343,9 @@ public partial class MainWindow
     /// </summary>
     private int CountDefaultPortMoves(int ssh, int rdp)
     {
+        // ApplyDefaultPorts 가 실제로 고르는 목록(CloudHostsOnDefaultPorts)을 그대로 세어 승인 창의 수와 바뀌는 수가 어긋나지 않게 한다
         var (oldSsh, oldRdp) = (HostEntry.PreferredPort(Protocol.Ssh), HostEntry.PreferredPort(Protocol.Rdp));
-        var n = 0;
-        foreach (var p in _profiles)
-            foreach (var h in _hosts.Where(h => h.CloudProfileId == p.Id))
-            {
-                if (ssh != oldSsh && p.SshPort == null && h.Protocol == Protocol.Ssh && h.Port == oldSsh) n++;
-                if (rdp != oldRdp && p.RdpPort == null && h.Protocol == Protocol.Rdp && h.Port == oldRdp) n++;
-            }
-        return n;
+        return CloudHostsOnDefaultPorts(oldSsh, oldRdp, ssh != oldSsh, rdp != oldRdp).Count();
     }
 
     // =================== MCP 도구 (2차) ===================

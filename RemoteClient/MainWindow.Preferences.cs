@@ -21,7 +21,7 @@ public partial class MainWindow
         SshAutoReconnectBox.IsChecked = s.SshAutoReconnect;
         SftpOpenFolderBox.IsChecked = s.SftpOpenFolderAfterDownload;
         CloudSyncStartBox.IsChecked = s.CloudSyncOnStart;
-        CloudSyncIntervalBox.Text = s.CloudSyncIntervalMinutes.ToString();
+        SetUnlessEditing(CloudSyncIntervalBox, s.CloudSyncIntervalMinutes.ToString());   // 입력 중인 값은 덮어쓰지 않는다
         DefSshVaultText.Text = DefaultVaultLabel(s.DefaultSshVaultId);
         DefRdpVaultText.Text = DefaultVaultLabel(s.DefaultRdpVaultId);
     }

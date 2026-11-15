@@ -450,8 +450,9 @@ internal static class McpCloudHelpers
         return new CandidatePage(matched, shown, Math.Max(0, matched.Count - offset - shown.Count));
     }
 
-    // 프로필 이름 · 테넌트 ID 로 허용하는 문자 (cmd 메타 문자 · 공백 · 따옴표 없음)
-    private static readonly Regex SafeArg = new(@"^[A-Za-z0-9][A-Za-z0-9._@+\-]{0,127}\z", RegexOptions.CultureInvariant);
+    // 프로필 이름 · 테넌트 ID 로 허용하는 문자 (cmd 메타 문자 · 공백 · 따옴표 없음).
+    // '/' 는 cmd 메타 문자가 아니고 AWS 프로필 이름(예: org/admin)에 쓰이므로 허용 — 첫 글자는 영숫자라 "/k" 같은 스위치로 읽히지 않는다
+    private static readonly Regex SafeArg = new(@"^[A-Za-z0-9][A-Za-z0-9._@+\-/]{0,127}\z", RegexOptions.CultureInvariant);
 
     // 로그인 명령 전체로 허용하는 문자 (공백 · 옵션 · 경로 구분자까지만, & | < > ^ % ! " ( ) 등 없음)
     private static readonly Regex SafeCommand = new(@"^[A-Za-z0-9 ._@+\-=:/]{1,300}\z", RegexOptions.CultureInvariant);

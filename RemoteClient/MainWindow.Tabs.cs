@@ -113,8 +113,10 @@ public partial class MainWindow
     {
         if (choice == 0)
         {
-            entry.Password = password;
-            SaveVault(entry);
+            // 저장된 개체를 직접 고치지 않고 사본으로 바꿔 넣는다 — 저장이 실패하면 메모리 값도 그대로 남는다
+            var copy = entry.Clone();
+            copy.Password = password;
+            if (!SaveVault(copy)) return;
             // 사용자명은 Vault 와 같으므로 호스트에는 비워 둔다 (계속 Vault 를 따름)
             if (string.IsNullOrWhiteSpace(saved.Username)) saved.Username = "";
         }
@@ -235,6 +237,7 @@ public partial class MainWindow
             case "claude": ToggleClaude(); break;
             case "localterm": OpenLocalTerminal(); break;
             case "closetab": if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur }); break;
+            case "reopentab": ReopenClosedTab(); break;
             case "search": FocusSearch(); break;
             default:
                 if (key.StartsWith("tab") && int.TryParse(key[3..], out var n)) SelectTabNumber(n);
@@ -271,6 +274,8 @@ public partial class MainWindow
     /// <summary>연결 중인 탭은 닫기 전에 확인 (Settings 에서 끌 수 있음). 닫아도 되면 true</summary>
     private bool ConfirmCloseTabs(IReadOnlyCollection<SessionTab> tabs)
     {
+        // SFTP 편집 중인 파일이 있으면 그 확인 하나로 대신한다 (설정으로 끌 수 없음)
+        if (ConfirmCloseWithSftpEdits(tabs, closingApp: false) is { } ok) return ok;
         var live = tabs.Count(t => t.Status == SessionStatus.Connected && t.Protocol != Protocol.Local);
         if (live == 0 || !SettingsStore.Current.ConfirmCloseTab) return true;
         var msg = tabs.Count == 1
@@ -289,6 +294,7 @@ public partial class MainWindow
     {
         var idx = _tabs.IndexOf(tab);
         var wasSelected = tab.IsSelected;
+        if (_tabs.Contains(tab)) RememberClosedTab(tab);   // "닫은 탭 다시 열기" (Ctrl+Shift+R)
         try { tab.Session.CloseSession(); } catch { }
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
@@ -333,6 +339,8 @@ public partial class MainWindow
         }
         else if (ctrl && shift && e.Key == Key.A) { ToggleClaude(); e.Handled = true; }
         else if (ctrl && shift && e.Key == Key.T) { OpenLocalTerminal(); e.Handled = true; }
+        // Ctrl+Shift+R : 마지막으로 닫은 탭 다시 열기 (입력란에서는 무시)
+        else if (ctrl && shift && e.Key == Key.R && Keyboard.FocusedElement is not TextBox and not PasswordBox) { ReopenClosedTab(); e.Handled = true; }
         else if (ctrl && shift && e.Key == Key.W)
         {
             if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur });
@@ -439,6 +447,8 @@ public partial class MainWindow
         Add(L.T("오른쪽 탭 모두 닫기"), () => CloseTabs(_tabs.Skip(idx + 1).ToList()), idx < _tabs.Count - 1);
         Add(L.T("끊긴 탭 모두 다시 연결"), () => ReconnectAll(disconnected), disconnected.Count > 0);
         Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
+        menu.Items.Add(new Separator());
+        Add(L.T("닫은 탭 다시 열기 (Ctrl+Shift+R)"), ReopenClosedTab, CanReopenClosedTab);
     }
 
     /// <summary>

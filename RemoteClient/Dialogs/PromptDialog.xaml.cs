@@ -28,6 +28,8 @@ public partial class PromptDialog : Window
             var dot = initial.LastIndexOf('.');
             dlg.InputBox.Select(0, dot > 0 ? dot : initial.Length);
         };
+        // 주인 창이 최소화돼 있으면 CenterOwner 가 화면 밖(-32000) 기준이 되므로 먼저 되돌린다 (MessageDialog 와 같음)
+        Dialog.RestoreIfMinimized(dlg.Owner);
         return dlg.ShowDialog() == true ? dlg.InputBox.Text.Trim() : null;
     }
 

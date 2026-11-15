@@ -354,7 +354,7 @@ public sealed class OciProvider : ICloudProvider
 
     /// <summary>
     /// 테넌시 OCID 의 realm(ocid1.tenancy.oc1..) 에 맞는 도메인. OCI SDK 의 realm 표와 같은 규칙:
-    /// oc1 = oraclecloud.com, oc2·oc3 = oraclegovcloud.com, oc4 = oraclegovcloud.uk, oc19(EU 소버린) = oraclecloud.eu,
+    /// oc1 = oraclecloud.com, oc2·oc3 = oraclegovcloud.com, oc4 = oraclegovcloud.uk, oc19(EU 소버린) = oraclecloud.eu, oc22 = psn-pco.it,
     /// 그 밖의 ocN(oc8 · oc9 · oc10 · oc14 ...) = oraclecloudN.com. 형식을 모르면 상용(oraclecloud.com)
     /// </summary>
     internal static string RealmDomain(string? tenancyOcid)
@@ -367,6 +367,7 @@ public sealed class OciProvider : ICloudProvider
             "oc2" or "oc3" => "oraclegovcloud.com",
             "oc4" => "oraclegovcloud.uk",
             "oc19" => "oraclecloud.eu",
+            "oc22" => "psn-pco.it",   // 이탈리아 PSN 소버린 (ocN 규칙의 예외)
             _ when realm.Length > 2 && realm.StartsWith("oc", StringComparison.Ordinal) &&
                    int.TryParse(realm.AsSpan(2), System.Globalization.NumberStyles.None,
                        System.Globalization.CultureInfo.InvariantCulture, out var n) && n >= 5 => $"oraclecloud{n}.com",

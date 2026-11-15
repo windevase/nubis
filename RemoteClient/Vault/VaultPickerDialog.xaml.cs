@@ -32,11 +32,30 @@ public partial class VaultPickerDialog : Window
         EmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>고른 계정 Id, 취소하면 null</summary>
-    public static Guid? Pick(Window owner, Guid? current, Protocol protocol, string? subtitle = null)
+    /// <summary>allowClear 로 연 창에서 "지정 해제" 를 누르면 Pick 이 돌려주는 값 (실제 계정 Id 는 Guid.Empty 가 아니다)</summary>
+    public static readonly Guid Cleared = Guid.Empty;
+
+    // "지정 해제" 로 닫았는지
+    private bool _cleared;
+
+    /// <summary>
+    /// 고른 계정 Id, 취소하면 null.
+    /// allowClear 이고 지금 지정된 계정(current)이 있으면 "지정 해제" 버튼을 보이며, 누르면 <see cref="Cleared"/> 를 돌려준다
+    /// (allowClear 를 넘기지 않는 호출은 예전처럼 계정 Id 또는 null 만 받는다).
+    /// </summary>
+    public static Guid? Pick(Window owner, Guid? current, Protocol protocol, string? subtitle = null, bool allowClear = false)
     {
         var dlg = new VaultPickerDialog(current, protocol, subtitle) { Owner = owner };
-        return dlg.ShowDialog() == true && dlg.EntryList.SelectedItem is VaultEntry e ? e.Id : null;
+        if (allowClear && current != null) dlg.ClearButton.Visibility = Visibility.Visible;
+        if (dlg.ShowDialog() != true) return null;
+        if (dlg._cleared) return Cleared;
+        return dlg.EntryList.SelectedItem is VaultEntry e ? e.Id : null;
+    }
+
+    private void OnClear(object sender, RoutedEventArgs e)
+    {
+        _cleared = true;
+        DialogResult = true;
     }
 
     private void OnFilterChanged(object sender, System.Windows.Controls.TextChangedEventArgs e) =>

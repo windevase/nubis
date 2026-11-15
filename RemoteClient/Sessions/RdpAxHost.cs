@@ -23,10 +23,21 @@ public sealed class RdpAxHost : AxHost
     public event Action<int>? Disconnected;
     public event Action<int>? FatalError;
     public event Action? LeftFullScreen;
+    /// <summary>네트워크가 끊겨 컨트롤이 스스로 다시 연결하는 중 (사유 코드, 시도 횟수)</summary>
+    public event Action<int, int>? AutoReconnecting;
+    /// <summary>자동 재연결 성공</summary>
+    public event Action? AutoReconnected;
 
     // 지금 탭이 연결을 시작한 세션인가. 풀에서 재사용한 컨트롤에 이전 세션의 늦은 OnDisconnected 가 도착해도
     // 새 탭이 "연결 종료" 로 바뀌지 않게, 연결을 시작한 뒤의 첫 OnDisconnected 만 전달한다.
     private bool _sessionActive;
+
+    // 반납할 때 연결을 끊었고 그 OnDisconnected 가 아직 오지 않았다. Connected 속성이 먼저 0 이 되고 이벤트가 뒤에 올 수 있어,
+    // 이 사이에 다른 탭이 컨트롤을 가져가 BeginSession 하면 이전 세션의 이벤트가 새 세션의 끊김으로 처리되고
+    // 새 세션의 진짜 끊김은 버려진다 → 이벤트가 올 때까지(최대 StaleWait) 풀에서 내주지 않는다.
+    private bool _staleDisconnectPending;
+    private DateTime _releasedAt;
+    private static readonly TimeSpan StaleWait = TimeSpan.FromSeconds(10);
 
     /// <summary>OnFatalError 를 받은 컨트롤 — 내부 상태를 믿을 수 없으므로 다시 쓰지 않고 풀에도 넣지 않는다</summary>
     public bool Faulted { get; private set; }
@@ -81,6 +92,7 @@ public sealed class RdpAxHost : AxHost
     public void ClearHandlers()
     {
         Connecting = null; Connected = null; LoginComplete = null; Disconnected = null; FatalError = null; LeftFullScreen = null;
+        AutoReconnecting = null; AutoReconnected = null;
     }
 
     /// <summary>
@@ -107,6 +119,9 @@ public sealed class RdpAxHost : AxHost
         [DispId(4)] void OnDisconnected(int discReason);
         [DispId(6)] void OnLeaveFullScreenMode();
         [DispId(10)] void OnFatalError(int errorCode);
+        // mstsax.idl: OnAutoReconnecting(long disconnectReason, long attemptCount, [out] AutoReconnectContinueState*) — 0 = 자동으로 계속
+        [DispId(17)] void OnAutoReconnecting(int disconnectReason, int attemptCount, out int pArcContinueStatus);
+        [DispId(33)] void OnAutoReconnected();
     }
 
     // ---------------------------------------------------------------
@@ -128,7 +143,12 @@ public sealed class RdpAxHost : AxHost
             if (ax.Faulted) { ax.Shutdown(); continue; }
             int state;
             try { state = (int)ax.Ocx.Connected; } catch { ax.Shutdown(); continue; }
-            if (state == 0) { found = ax; break; }
+            if (state == 0 && IsReusable(ax._staleDisconnectPending, DateTime.UtcNow - ax._releasedAt))
+            {
+                ax._staleDisconnectPending = false;
+                found = ax;
+                break;
+            }
             skipped.Add(ax);   // 아직 연결을 끊는 중 — 다음에 쓴다
         }
         foreach (var s in skipped) Pool.Push(s);
@@ -140,12 +160,28 @@ public sealed class RdpAxHost : AxHost
         ax.ClearHandlers();
         ax._sessionActive = false;   // 이제부터 오는 OnDisconnected 는 이전 세션 것 — 다음 탭에 전달하지 않는다
         try { if ((bool)ax.Ocx.FullScreen) ax.Ocx.FullScreen = false; } catch { }
-        try { if ((int)ax.Ocx.Connected != 0) ax.Ocx.Disconnect(); } catch { }
+        ax._releasedAt = DateTime.UtcNow;
+        try
+        {
+            if ((int)ax.Ocx.Connected != 0)
+            {
+                ax._staleDisconnectPending = true;   // 이 Disconnect 의 OnDisconnected 가 올 때까지 다른 탭에 내주지 않는다
+                ax.Ocx.Disconnect();
+            }
+        }
+        catch { }
         // 풀에 보관하는 동안 이전 탭의 비밀번호가 컨트롤에 남지 않게 지운다 (다음 연결은 Connect 에서 항상 다시 설정)
         try { ax.Ocx.AdvancedSettings9.ClearTextPassword = ""; } catch { }
         if (ax.IsDisposed || ax.Faulted || Pool.Count >= MaxPooled) { ax.Shutdown(); return; }
         Pool.Push(ax);   // 부모에서 떼어도 WinForms 주차 창이 핸들을 유지한다
     }
+
+    /// <summary>
+    /// 연결이 끊긴(Connected = 0) 풀의 컨트롤을 다시 내줘도 되는가. 반납 때 끊은 연결의 OnDisconnected 를 아직 못 받았으면
+    /// 기다린다 — 단 이벤트가 끝내 오지 않는 경우 풀 자리를 계속 차지하지 않게 StaleWait 가 지나면 내준다.
+    /// </summary>
+    internal static bool IsReusable(bool staleDisconnectPending, TimeSpan sinceRelease) =>
+        !staleDisconnectPending || sinceRelease >= StaleWait;
 
     [ClassInterface(ClassInterfaceType.None)]
     public sealed class EventSink : IMsTscAxEvents
@@ -157,9 +193,22 @@ public sealed class RdpAxHost : AxHost
         public void OnLoginComplete() => _owner.LoginComplete?.Invoke();
         public void OnDisconnected(int discReason)
         {
-            if (!_owner._sessionActive) return;   // 이전 세션(풀 반납 전)의 늦은 이벤트
+            if (!_owner._sessionActive)
+            {
+                _owner._staleDisconnectPending = false;   // 반납 때 끊은 이전 세션의 이벤트 — 이제 다시 내줘도 된다
+                return;
+            }
             _owner._sessionActive = false;
             _owner.Disconnected?.Invoke(discReason);
+        }
+        public void OnAutoReconnecting(int disconnectReason, int attemptCount, out int pArcContinueStatus)
+        {
+            pArcContinueStatus = 0;   // autoReconnectContinueAutomatic — 컨트롤이 알아서 계속 시도 (기존 동작 그대로)
+            if (_owner._sessionActive) _owner.AutoReconnecting?.Invoke(disconnectReason, attemptCount);
+        }
+        public void OnAutoReconnected()
+        {
+            if (_owner._sessionActive) _owner.AutoReconnected?.Invoke();
         }
         public void OnFatalError(int errorCode)
         {

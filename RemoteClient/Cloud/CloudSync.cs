@@ -50,16 +50,35 @@ public static class CloudSync
     public static (int added, int updated, int removed) ApplyResult(CloudProfile p, CloudFetchResult result, List<HostEntry> hosts,
         ICollection<HostEntry>? removedHosts = null) =>
         Apply(p, result.Items, hosts, removeMissing: !result.HasUnexpectedErrors, removedHosts: removedHosts,
-            protectedRegions: result.DeniedRegions);
+            protectedRegions: result.DeniedRegions, missGrace: SyncMissGrace);
+
+    /// <summary>실제 동기화(ApplyResult)에서 호스트·숨긴 인스턴스를 지우기 전에 필요한 "빠짐없는 조회에서 연속으로 안 보인" 횟수</summary>
+    public const int SyncMissGrace = 2;
 
     /// <summary>
     /// 조회 결과를 호스트 목록에 반영한다. 이름·주소·상태 등 클라우드 정보는 갱신하고,
     /// 사용자가 바꾼 프로토콜·포트·계정은 유지한다. 클라우드에서 사라진 인스턴스는 제거한다 (removeMissing 일 때, protectedRegions 의 호스트 제외).
     /// 조회 결과의 중복 InstanceId 는 첫 번째만 반영하고, 같은 인스턴스를 가리키는 기존 호스트가 여럿이면 첫 번째만 남긴다(삭제 허용 시).
+    /// missGrace: 사라진 서버를 지우기 전에 필요한 연속 미확인 횟수 (1 = 바로 지움). 횟수는 p.MissCounts 에 남는다.
     /// </summary>
     public static (int added, int updated, int removed) Apply(CloudProfile p, List<CloudInstance> instances, List<HostEntry> hosts,
-        bool removeMissing = true, ICollection<HostEntry>? removedHosts = null, IReadOnlyCollection<string>? protectedRegions = null)
+        bool removeMissing = true, ICollection<HostEntry>? removedHosts = null, IReadOnlyCollection<string>? protectedRegions = null,
+        int missGrace = 1)
     {
+        // 이번 조회에 보인 인스턴스는 (부분 조회여도) 존재하는 것이므로 연속 미확인 횟수를 지운다
+        var present = new HashSet<string>(instances.Select(i => i.InstanceId).Where(id => id.Length > 0), StringComparer.Ordinal);
+        foreach (var id in present) p.MissCounts.Remove(id);
+
+        // 빠짐없는 조회에서 안 보인 인스턴스: 연속 미확인 횟수를 올리고, missGrace 에 이르렀을 때만 지워도 된다고 답한다
+        bool MissedEnough(string id)
+        {
+            if (missGrace <= 1) { p.MissCounts.Remove(id); return true; }
+            var n = p.MissCounts.GetValueOrDefault(id) + 1;
+            if (n >= missGrace) { p.MissCounts.Remove(id); return true; }
+            p.MissCounts[id] = n;
+            return false;
+        }
+
         var groups = hosts.Where(h => h.CloudProfileId == p.Id && h.CloudInstanceId != null)
             .GroupBy(h => h.CloudInstanceId!).ToList();
         // 같은 프로필·인스턴스로 호스트가 여럿이면 첫 번째만 갱신하고, 나머지는 중복으로 보고 제거 대상 (삭제가 허용될 때만)
@@ -146,18 +165,29 @@ public static class CloudSync
             {
                 if (h.CloudProfileId != p.Id || IsProtected(h)) return false;
                 if (h.CloudInstanceId != null && seen.Contains(h.CloudInstanceId) && !duplicates.Contains(h)) return false;
+                // 조회 결과에 아예 없는 서버는 연속으로 안 보였을 때만 지운다 — 목록 API 가 잠깐 빠뜨린 경우 보호.
+                // 중복 호스트·ID 없는 옛 호스트·결과에는 있지만 숨긴 인스턴스의 호스트는 사라진 것이 아니므로 바로 지운다
+                if (h.CloudInstanceId != null && !duplicates.Contains(h) && !present.Contains(h.CloudInstanceId) &&
+                    !MissedEnough(h.CloudInstanceId)) return false;
                 removedHosts?.Add(h);
                 return true;
             })
             : 0;
 
         // 숨긴 인스턴스 목록 정리: 빠짐없이 조회된 경우에만, 클라우드에서 없어진(종료된) 인스턴스 ID 를 뺀다 (목록이 계속 커지지 않게).
-        // 인스턴스 ID 는 다시 쓰이지 않으므로 지워도 숨긴 서버가 다시 나타나지 않는다
+        // 인스턴스 ID 는 다시 쓰이지 않으므로 지워도 숨긴 서버가 다시 나타나지 않는다.
+        // 잠깐 빠진 것을 종료로 오인해 숨김이 풀리면 다음 동기화에 지운 서버가 다시 생기므로 호스트 삭제와 같은 연속 미확인 기준을 쓴다
         if (removeMissing && denied == null && p.HiddenInstances.Count > 0)
         {
-            var alive = new HashSet<string>(instances.Select(i => i.InstanceId));
-            p.HiddenInstances.RemoveAll(id => !alive.Contains(id));
+            p.HiddenInstances.RemoveAll(id => !present.Contains(id) && MissedEnough(id));
         }
+
+        // 남은 호스트·숨긴 인스턴스에 해당하지 않는 횟수는 버린다 (지워졌거나 사용자가 지운 호스트)
+        var tracked = new HashSet<string>(p.HiddenInstances);
+        foreach (var h in hosts)
+            if (h.CloudProfileId == p.Id && h.CloudInstanceId != null) tracked.Add(h.CloudInstanceId);
+        foreach (var id in p.MissCounts.Keys.Where(id => !tracked.Contains(id)).ToList()) p.MissCounts.Remove(id);
+        p.PendingRemoval = hosts.Count(h => h.CloudProfileId == p.Id && h.CloudInstanceId != null && p.MissCounts.ContainsKey(h.CloudInstanceId));
 
         p.LastSync = DateTime.Now;
         return (added, updated, removed);

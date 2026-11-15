@@ -174,21 +174,26 @@ public static class SshAuth
         // password 를 먼저 하면, 2단계 인증(PAM 의 OTP·Push 등)을 keyboard-interactive 로만 받는 서버에서 password 방식이
         // 다음 질문에 답하지 못해 실패하고, 그 실패 때문에 이어지는 keyboard-interactive 까지 거부된다 (OpenSSH 는 되는데 Nubis 만 실패).
         var methods = new List<AuthenticationMethod>();
+        // ssh-rsa(SHA-1) 서명을 낼지는 서버 배너(ServerVersion)를 보고 정한다 — 배너는 인증 전에 받으므로 키 목록을 인증할 때 고른다
+        ConnectionInfo? ciRef = null;
+        string? ServerVersion() => ciRef?.ServerVersion;
         if (LoadKey(host, password) is { } key)
         {
-            // 지정한 키: SHA-2 서명 먼저, ssh-rsa(SHA-1)는 옛 서버용으로 맨 뒤 (SSH.NET 기본 순서는 ssh-rsa 가 처음)
-            methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(PickAlgorithms(key.HostKeyAlgorithms, allowSha1Rsa: true))));
+            // 지정한 키: SHA-2 서명 먼저, ssh-rsa(SHA-1)는 옛 서버용으로 맨 뒤 (SSH.NET 기본 순서는 ssh-rsa 가 처음).
+            // rsa-sha2 를 모르는 옛 OpenSSH(7.2 미만)면 ssh-rsa 를 먼저 (모르는 알고리즘 시도로 실패 횟수를 쓰지 않게)
+            methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(key.HostKeyAlgorithms.ToList(), specifiedKey: true, ServerVersion)));
         }
         else
         {
             // 키를 지정하지 않았으면 OpenSSH 처럼 ssh-agent 의 키 → ~/.ssh 기본 키 순으로.
-            // 같은 키(에이전트에 올린 id_rsa 등)를 두 번 내밀지 않고 ssh-rsa(SHA-1)는 빼서(OpenSSH 8.8+ 기본) 공개키 시도 횟수를 줄인다 —
-            // 서버의 MaxAuthTries(기본 6)를 공개키 시도로 다 써 버리면 비밀번호·OTP 까지 가지 못하고 끊긴다
+            // 같은 키(에이전트에 올린 id_rsa 등)를 두 번 내밀지 않고, rsa-sha2 를 아는 OpenSSH(7.2+)에는 ssh-rsa(SHA-1)를 내밀지 않아 공개키 시도 횟수를 줄인다 —
+            // 서버의 MaxAuthTries(기본 6)를 공개키 시도로 다 써 버리면 비밀번호·OTP 까지 가지 못하고 끊긴다.
+            // 옛 OpenSSH·다른 SSH 서버(네트워크 장비 등)는 ssh-rsa 만 받을 수 있어 남겨 둔다 (2차 점검에서 빼 버려 기본 id_rsa 로 붙던 옛 서버가 안 되던 문제)
             var algs = new List<HostAlgorithm>();
             if (SshAgent.KeySource() is { } agent) algs.AddRange(agent.HostKeyAlgorithms);
             foreach (var k in LoadDefaultKeys()) algs.AddRange(k.HostKeyAlgorithms);
-            var picked = PickAlgorithms(algs, allowSha1Rsa: false);
-            if (picked.Count > 0) methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(picked)));
+            if (PickAlgorithms(algs, Sha1Rsa.Last).Count > 0)
+                methods.Add(new PrivateKeyAuthenticationMethod(user, new AlgorithmSource(algs, specifiedKey: false, ServerVersion)));
         }
         var state = new KbdAuth.State();
         if (!string.IsNullOrEmpty(password) || prompter != null)
@@ -205,23 +210,60 @@ public static class SshAuth
         }
         if (methods.Count == 0) throw new InvalidOperationException("인증 정보(비밀번호 또는 키)가 없습니다.");
         var ci = new ConnectionInfo(tunnel?.LocalHost ?? host.Address, tunnel?.LocalPort ?? host.Port, user, methods.ToArray()) { Timeout = TimeSpan.FromSeconds(timeoutSec) };
+        ciRef = ci;
         if (prompter?.Banner is { } banner)
             ci.AuthenticationBanner += (_, e) => { if (!string.IsNullOrWhiteSpace(e.BannerMessage)) banner(e.BannerMessage); };
         return ci;
     }
 
-    /// <summary>공개키 인증에 내밀 서명 알고리즘 목록을 그대로 담는 키 소스 (PickAlgorithms 로 정리한 것)</summary>
-    private sealed class AlgorithmSource(IReadOnlyCollection<HostAlgorithm> algs) : IPrivateKeySource
+    /// <summary>
+    /// 공개키 인증에 내밀 서명 알고리즘 목록 — 읽을 때(= SSH.NET 이 인증할 때, 서버 배너를 받은 뒤) 서버에 맞춰 PickAlgorithms 로 정리한다.
+    /// 배너를 아직 모르면 ssh-rsa 를 맨 뒤에 둔다 (옛 서버 호환)
+    /// </summary>
+    private sealed class AlgorithmSource(IReadOnlyList<HostAlgorithm> algs, bool specifiedKey, Func<string?> serverVersion) : IPrivateKeySource
     {
-        public IReadOnlyCollection<HostAlgorithm> HostKeyAlgorithms { get; } = algs;
+        public IReadOnlyCollection<HostAlgorithm> HostKeyAlgorithms => PickAlgorithms(algs, Sha1RsaFor(serverVersion(), specifiedKey));
     }
+
+    /// <summary>ssh-rsa(SHA-1) 서명을 어떻게 낼지</summary>
+    public enum Sha1Rsa
+    {
+        /// <summary>내밀지 않음 (rsa-sha2 를 아는 서버)</summary>
+        Drop,
+        /// <summary>SHA-2 서명을 다 시도한 뒤 맨 뒤에 (서버를 모를 때)</summary>
+        Last,
+        /// <summary>SHA-2 보다 먼저 (rsa-sha2 를 모르는 옛 서버)</summary>
+        First,
+    }
+
+    private static readonly Regex OpenSshVersion = new(@"OpenSSH_(?:for_Windows_)?(\d+)\.(\d+)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// 서버 배너(예: "SSH-2.0-OpenSSH_9.6p1", "SSH-2.0-OpenSSH_for_Windows_9.5")로 ssh-rsa 정책을 정한다.
+    /// OpenSSH 7.2 이상은 rsa-sha2-256/512 공개키 인증을 받으므로 ssh-rsa 가 필요 없고(8.8 부터는 기본으로 거부), 7.2 미만은 ssh-rsa 만 안다.
+    /// 다른 SSH 서버(dropbear·네트워크 장비 등)·배너를 모를 때는 SHA-2 를 먼저 시도하고 ssh-rsa 를 맨 뒤에.
+    /// 지정한 키(specifiedKey)는 rsa-sha2 를 아는 서버에도 맨 뒤에 남긴다 (사용자가 고른 키라 시도 하나를 더 써도 된다 — 기존 동작)
+    /// </summary>
+    public static Sha1Rsa Sha1RsaFor(string? serverVersion, bool specifiedKey)
+    {
+        var m = serverVersion == null ? Match.Empty : OpenSshVersion.Match(serverVersion);
+        if (!m.Success) return Sha1Rsa.Last;
+        var major = int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var minor = int.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var knowsSha2 = major > 7 || (major == 7 && minor >= 2);
+        return !knowsSha2 ? Sha1Rsa.First : specifiedKey ? Sha1Rsa.Last : Sha1Rsa.Drop;
+    }
+
+    /// <summary>예전 호출 형태: allowSha1Rsa 면 ssh-rsa 를 맨 뒤로, 아니면 뺀다</summary>
+    public static List<HostAlgorithm> PickAlgorithms(IEnumerable<HostAlgorithm> algs, bool allowSha1Rsa) =>
+        PickAlgorithms(algs, allowSha1Rsa ? Sha1Rsa.Last : Sha1Rsa.Drop);
 
     /// <summary>
     /// 공개키 인증에서 시도할 (서명 알고리즘, 공개키) 목록 정리 — 순서 유지, 같은 알고리즘·같은 공개키 blob 은 한 번만
-    /// (ssh-agent 와 ~/.ssh 에 같은 키가 있을 때). ssh-rsa·ssh-rsa 인증서(SHA-1 서명)는 allowSha1Rsa 면 맨 뒤로, 아니면 뺀다.
+    /// (ssh-agent 와 ~/.ssh 에 같은 키가 있을 때). ssh-rsa·ssh-rsa 인증서(SHA-1 서명)는 policy 에 따라 빼거나 맨 뒤·맨 앞으로.
     /// SSH.NET 은 알고리즘마다 서버에 한 번씩 물어 실패 횟수가 쌓이므로(MaxAuthTries) 중복을 줄여야 비밀번호까지 간다.
     /// </summary>
-    public static List<HostAlgorithm> PickAlgorithms(IEnumerable<HostAlgorithm> algs, bool allowSha1Rsa)
+    public static List<HostAlgorithm> PickAlgorithms(IEnumerable<HostAlgorithm> algs, Sha1Rsa policy)
     {
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<HostAlgorithm>();
@@ -234,12 +276,13 @@ public static class SshAuth
             if (!seen.Add(a.Name + " " + Convert.ToBase64String(data))) continue;
             if (a.Name is "ssh-rsa" or "ssh-rsa-cert-v01@openssh.com")
             {
-                if (allowSha1Rsa) sha1.Add(a);
+                if (policy != Sha1Rsa.Drop) sha1.Add(a);
                 continue;
             }
             result.Add(a);
         }
-        result.AddRange(sha1);
+        if (policy == Sha1Rsa.First) result.InsertRange(0, sha1);
+        else result.AddRange(sha1);
         return result;
     }
 
@@ -432,7 +475,10 @@ public static class SshAuth
     /// 호스트·Vault 에 키가 없을 때 OpenSSH 처럼 ~/.ssh 의 기본 키를 시도한다 (ssh host 는 되는데 Nubis 는 비밀번호를 묻는 차이 방지).
     /// 암호가 걸린 키·읽을 수 없는 키는 건너뛴다 (묻지 않음 — 쓰려면 호스트나 Vault 에 키와 암호를 지정).
     /// </summary>
-    public static IPrivateKeySource[] LoadDefaultKeys()
+    public static IPrivateKeySource[] LoadDefaultKeys() => LoadDefaultKeys(null);
+
+    /// <param name="encrypted">암호가 걸려 건너뛴 기본 키 파일 이름(id_ed25519 등)을 담는다 — 실패 안내용</param>
+    public static IPrivateKeySource[] LoadDefaultKeys(ICollection<string>? encrypted)
     {
         var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
         var keys = new List<IPrivateKeySource>();
@@ -440,11 +486,54 @@ public static class SshAuth
         {
             var path = System.IO.Path.Combine(dir, name);
             if (!System.IO.File.Exists(path)) continue;
-            try { keys.Add(new PrivateKeyFile(path)); }
-            catch { /* 암호가 걸렸거나 지원하지 않는 형식 */ }
+            try
+            {
+                var bytes = System.IO.File.ReadAllBytes(path);
+                // 암호 걸린 PKCS#8 은 SSH.NET 이 "암호 필요" 예외를 내지 않으므로 먼저 본다 (OpenKey 와 같은 판단)
+                if (System.Text.Encoding.ASCII.GetString(bytes).Contains("-----BEGIN ENCRYPTED PRIVATE KEY-----", StringComparison.Ordinal))
+                {
+                    encrypted?.Add(name);
+                    continue;
+                }
+                keys.Add(new PrivateKeyFile(new System.IO.MemoryStream(bytes)));
+            }
+            catch (SshPassPhraseNullOrEmptyException) { encrypted?.Add(name); }
+            catch { /* 읽을 수 없거나 지원하지 않는 형식 */ }
         }
         return keys.ToArray();
     }
+
+    /// <summary>
+    /// 암호가 걸려 자동으로 시도하지 못한 기본 키(~/.ssh/id_*) 중 ssh-agent 에도 올라가 있지 않은 것의 이름.
+    /// 키 인증이 실패했을 때 "기본 키가 있는데 왜 안 쓰나" 를 안내하는 데 쓴다 (SkippedKeysHint). 에이전트 확인은 짧게만 기다린다.
+    /// </summary>
+    public static List<string> SkippedEncryptedDefaultKeys()
+    {
+        var names = new List<string>();
+        LoadDefaultKeys(names);
+        if (names.Count == 0) return names;
+        var dir = DefaultKeyDir ?? System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        var agentBlobs = SshAgent.PipeExists()
+            ? SshAgent.ListKeys(SshAgent.ListTimeoutMs).Select(k => Convert.ToBase64String(k.Blob)).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
+        if (agentBlobs.Count == 0) return names;
+        // 같은 이름의 .pub 공개키가 에이전트에 있으면 에이전트로 이미 시도한 키 — 안내에서 뺀다
+        return names.Where(n =>
+        {
+            try
+            {
+                var parts = System.IO.File.ReadAllText(System.IO.Path.Combine(dir, n + ".pub")).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+                return !(parts.Length >= 2 && agentBlobs.Contains(parts[1]));
+            }
+            catch { return true; }   // .pub 가 없거나 읽지 못함 — 알 수 없으니 안내한다
+        }).ToList();
+    }
+
+    /// <summary>건너뛴 암호 걸린 기본 키 안내 (없으면 null)</summary>
+    public static string? SkippedKeysHint(IReadOnlyCollection<string> names) =>
+        names.Count == 0 ? null
+        : L.F("~/.ssh 의 {0} 은(는) 암호가 걸려 있어 자동으로 시도하지 않았습니다. 쓰려면 ssh-agent 에 올리거나(ssh-add) 호스트·Vault 에 키와 키 암호를 등록하세요.",
+            string.Join(", ", names));
 
     public static string HostKeyId(HostEntry h) => $"{h.Address}:{h.Port}";
     /// <summary>
@@ -538,6 +627,70 @@ public static class SshAuth
             return L.T("사용자가 이 서버의 호스트키를 거부한 적이 있습니다. 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.");
         return known == fp ? null : L.F("호스트키가 저장된 값과 다릅니다 ({0} → {1}). Known Hosts 에서 확인 후 삭제하세요.", known, fp);
     }
+}
+
+/// <summary>
+/// 흔한 SSH.NET·소켓 예외 → 사용자에게 보일 한 줄 설명 (화면 표시용, 번역됨). 호출하는 쪽이 "연결 실패: " 등을 앞에 붙인다.
+/// 이 앱이 만든 예외(키 읽기·입력 취소·에이전트 서명)는 이미 설명 문구라 그대로. 모르는 예외는 원래 메시지 첫 줄.
+/// </summary>
+public static class SshErrors
+{
+    public static string Describe(Exception ex)
+    {
+        // AggregateException·TargetInvocationException 등 감싼 예외는 안쪽을 본다
+        while (ex is AggregateException { InnerException: { } a }) ex = a;
+        while (ex is System.Reflection.TargetInvocationException { InnerException: { } t }) ex = t;
+        var first = FirstLine(ex.Message);
+        switch (ex)
+        {
+            case SshKeyLoadException or AuthPromptCancelledException or SshAgentSignException:
+                return first;
+            case SshPassPhraseNullOrEmptyException:
+                return L.T("SSH 키에 암호가 걸려 있는데 키 암호(또는 비밀번호)가 저장되어 있지 않습니다.");
+            case SshAuthenticationException:
+                return L.F("인증에 실패했습니다 ({0}).", first);
+            case SftpPermissionDeniedException:
+                return L.T("원격 경로에 권한이 없습니다.");
+            case SftpPathNotFoundException:
+                return L.T("원격 경로가 없습니다.");
+            case SshOperationTimeoutException or TimeoutException:
+                return L.T("서버 응답 시간이 초과되었습니다.");
+            case SshConnectionException ce:
+                return ce.DisconnectReason switch
+                {
+                    Renci.SshNet.Messages.Transport.DisconnectReason.KeyExchangeFailed =>
+                        L.F("키 교환에 실패했습니다 — 호스트키를 신뢰하지 않았거나 서버와 맞는 암호화 방식이 없습니다 ({0}).", first),
+                    Renci.SshNet.Messages.Transport.DisconnectReason.HostKeyNotVerifiable =>
+                        L.T("호스트키를 확인할 수 없어 연결을 끊었습니다."),
+                    Renci.SshNet.Messages.Transport.DisconnectReason.TooManyConnections =>
+                        L.T("서버의 동시 접속 수가 가득 찼습니다. 잠시 뒤 다시 시도하세요."),
+                    Renci.SshNet.Messages.Transport.DisconnectReason.ProtocolVersionNotSupported =>
+                        L.T("SSH 서버가 아니거나 지원하지 않는 SSH 버전입니다."),
+                    Renci.SshNet.Messages.Transport.DisconnectReason.ConnectionLost =>
+                        L.T("서버와의 연결이 끊겼습니다."),
+                    _ => ex.InnerException is System.Net.Sockets.SocketException se ? Socket(se) : L.F("서버가 연결을 끊었습니다 ({0}).", first),
+                };
+            case System.Net.Sockets.SocketException se:
+                return Socket(se);
+        }
+        if (ex.InnerException is System.Net.Sockets.SocketException inner) return Socket(inner);
+        return first;
+    }
+
+    private static string Socket(System.Net.Sockets.SocketException se) => se.SocketErrorCode switch
+    {
+        System.Net.Sockets.SocketError.ConnectionRefused => L.T("서버가 연결을 거부했습니다 (포트가 닫혔거나 SSH 서비스가 꺼져 있음)."),
+        System.Net.Sockets.SocketError.TimedOut => L.T("연결 시간이 초과되었습니다 (주소·방화벽·보안 그룹·VPN 을 확인하세요)."),
+        System.Net.Sockets.SocketError.HostNotFound or System.Net.Sockets.SocketError.NoData or System.Net.Sockets.SocketError.TryAgain =>
+            L.T("서버 주소를 찾을 수 없습니다 (DNS 이름을 확인하세요)."),
+        System.Net.Sockets.SocketError.NetworkUnreachable or System.Net.Sockets.SocketError.HostUnreachable or System.Net.Sockets.SocketError.NetworkDown =>
+            L.T("서버에 닿을 수 없습니다 (네트워크·VPN·라우팅을 확인하세요)."),
+        System.Net.Sockets.SocketError.ConnectionReset or System.Net.Sockets.SocketError.ConnectionAborted =>
+            L.T("서버와의 연결이 끊겼습니다."),
+        _ => FirstLine(se.Message),
+    };
+
+    private static string FirstLine(string s) => s.Split('\n')[0].TrimEnd('\r');
 }
 
 /// <summary>keyboard-interactive 응답 판단 (UI·SSH.NET 과 무관, 테스트 대상)</summary>

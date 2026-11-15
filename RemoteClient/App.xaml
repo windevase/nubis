@@ -35,6 +35,8 @@
         <SolidColorBrush x:Key="DialogBg" Color="#1B1E2C"/>
         <SolidColorBrush x:Key="InputHoverLine" Color="#3A4060"/>
         <SolidColorBrush x:Key="DialogText" Color="#C9CDDB"/>
+        <!-- 경고 · 진행 중 표시 (노랑) — 승인 대기 · 입력 오류 안내 · 실행 중 점 -->
+        <SolidColorBrush x:Key="Warn" Color="#F5B740"/>
 
         <!-- ===== 키보드 포커스 표시 (Tab 으로 이동할 때만 보임 — 마우스 클릭에는 나타나지 않는다) ===== -->
         <Style x:Key="FocusRing">
@@ -95,6 +97,11 @@
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
                             </Trigger>
+                            <!-- 사용할 수 없는 입력란은 흐리게 (마우스를 올려도 테두리 강조 없음 — 트리거 순서상 마지막이 이긴다) -->
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Line}"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -125,6 +132,10 @@
                             </Trigger>
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="bd" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Line}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

@@ -70,6 +70,7 @@ public partial class VaultEntryDialog : Window
             // 파일에서 읽은 개인키는 화면에 펼쳐 보이지 않는다 (화면 공유·녹화·어깨 너머로 새지 않게). 칸에 직접 붙여 넣으면 그 값이 우선
             KeyBox.Text = "";
             _importedKey = text;
+            _keyTagBeforeImport ??= KeyBox.Tag;
             KeyBox.Tag = L.F("파일에서 가져옴: {0} (내용은 표시하지 않음)", Path.GetFileName(dlg.FileName));
             ClearKeyBox.IsChecked = false;
             if (NameBox.Text.Trim().Length == 0) NameBox.Text = Path.GetFileNameWithoutExtension(dlg.FileName);
@@ -80,11 +81,16 @@ public partial class VaultEntryDialog : Window
 
     /// <summary>"파일에서 가져오기" 로 읽은 개인키 (KeyBox 에는 보이지 않음)</summary>
     private string? _importedKey;
+    /// <summary>가져오기 전 키 칸 안내 문구 (가져온 키를 버리면 되돌린다)</summary>
+    private object? _keyTagBeforeImport;
 
     /// <summary>키 칸에 직접 입력·붙여 넣으면 파일에서 가져온 키는 버린다</summary>
     private void OnKeyTextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
-        if (KeyBox.Text.Length > 0 && _importedKey != null) _importedKey = null;
+        if (KeyBox.Text.Length == 0 || _importedKey == null) return;
+        _importedKey = null;
+        // 안내 문구도 되돌린다 — 그대로 두면 칸을 다시 비웠을 때 "파일에서 가져옴" 이 보여 키가 들어간 것으로 착각한다
+        if (_keyTagBeforeImport != null) KeyBox.Tag = _keyTagBeforeImport;
     }
 
     private void ShowError(string text)

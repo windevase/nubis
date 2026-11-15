@@ -40,7 +40,7 @@ public partial class MainWindow
             {
                 source = new { type = "string", @enum = new[] { "table", "ssh_config", "mremoteng", "ansible", "ad" } },
                 text = new { type = "string", description = "붙여 넣은 내용 (table: 표 · ansible: 인벤토리 · ssh_config / mremoteng 도 가능). path 와 함께 쓰지 않음" },
-                path = new { type = "string", description = "이 PC 의 파일 경로 (ssh_config / mremoteng 는 생략 시 기본 위치). Nubis 데이터 폴더·개인키는 읽지 않음" },
+                path = new { type = "string", description = "이 PC 의 파일 경로 (ssh_config / mremoteng 는 생략 시 기본 위치). Nubis 데이터 폴더·개인키·네트워크 경로(UNC)는 읽지 않음" },
                 domain = new { type = "string", description = "ad: 도메인 DNS 이름 (예: corp.example.com). 생략 시 이 PC 의 도메인" },
                 server = new { type = "string", description = "ad: 도메인 컨트롤러 주소 (생략 시 도메인 이름으로 DNS 조회, 'host:port' 가능)" },
                 search_base = new { type = "string", description = "ad: 검색 기준 DN (생략 시 도메인 루트)" },

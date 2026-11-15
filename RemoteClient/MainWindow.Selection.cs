@@ -238,7 +238,8 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 홈 화면 단축키: Ctrl+N 새 호스트 (검색창에서도), Ctrl+A 전체 선택, Esc 선택 해제, Delete 선택 삭제 (입력 칸에 포커스가 없을 때)
+    /// 홈 화면 단축키: Ctrl+N 새 호스트 (검색창에서도), Ctrl+A 전체 선택, Esc 선택 해제, Delete 선택 삭제 (입력 칸에 포커스가 없을 때).
+    /// 선택한 카드가 없으면 키보드로 고른 카드에 방향키 · Enter · F2 · Delete (HandleCardKey)
     /// </summary>
     private bool HandleSelectionKey(KeyEventArgs e)
     {
@@ -248,9 +249,11 @@ public partial class MainWindow
         if (Keyboard.FocusedElement is TextBox or PasswordBox) return false;
         var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
         if (ctrl && e.Key == Key.A) { SelectAllVisible(); return true; }
-        if (_selected.Count == 0) return false;
-        if (e.Key == Key.Escape) { ClearSelection(); return true; }
-        if (e.Key == Key.Delete) { DeleteSelected(); return true; }
-        return false;
+        if (_selected.Count > 0)
+        {
+            if (e.Key == Key.Escape) { ClearSelection(); return true; }
+            if (e.Key == Key.Delete) { DeleteSelected(); return true; }
+        }
+        return HandleCardKey(e);
     }
 }

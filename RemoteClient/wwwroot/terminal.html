@@ -16,12 +16,18 @@
   #find input:focus { border-color: #20C5A0; }
   #find button { background: transparent; color: #C9CDDB; border: 0; border-radius: 5px; cursor: pointer; padding: 3px 7px; font-size: 13px; }
   #find button:hover { background: #262B40; }
+  /* 연결이 끊겼을 때 보이는 "다시 연결" 막대 */
+  #reconnect { position: absolute; bottom: 14px; right: 18px; z-index: 10; display: none; }
+  #reconnect button { background: #20C5A0; color: #10131C; border: 0; border-radius: 6px; cursor: pointer; padding: 6px 14px;
+                      font: 600 12px "Segoe UI", "Malgun Gothic", sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
+  #reconnect button:hover { background: #4BE0BC; }
 </style>
 </head>
 <body>
 <div id="t"></div>
 <div id="find"><input id="findText" spellcheck="false"><span id="findCount"></span>
   <button id="findPrev" title="Shift+Enter">&#x25B2;</button><button id="findNext" title="Enter">&#x25BC;</button><button id="findClose" title="Esc">&#x2715;</button></div>
+<div id="reconnect"><button id="reconnectBtn" title="Enter"></button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
@@ -111,6 +117,7 @@
     if (ev.ctrlKey && ev.code === 'Tab') { post({ t: 'hotkey', k: ev.shiftKey ? 'prevtab' : 'nexttab' }); return false; }
     if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyA') { post({ t: 'hotkey', k: 'claude' }); return false; }
     if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyT') { post({ t: 'hotkey', k: 'localterm' }); return false; }
+    if (ev.ctrlKey && ev.shiftKey && ev.code === 'KeyR') { post({ t: 'hotkey', k: 'reopentab' }); return false; }   // 닫은 탭 다시 열기
     return true;
   });
 
@@ -119,7 +126,12 @@
   function readBuffer(n) {
     const b = term.buffer.active;
     const end = b.baseY + b.cursorY;
-    const start = Math.max(0, end - n + 1);
+    const out = readLines(b, Math.max(0, end - n + 1), end);
+    while (out.length && out[out.length - 1] === '') out.pop();
+    return out.join('\n');
+  }
+  // start ~ end 줄을 읽되 화면 폭을 넘어 접힌 줄(isWrapped)은 앞줄에 이어 붙인다 (readBuffer · 프롬프트 감시 공용)
+  function readLines(b, start, end) {
     const out = [];
     for (let y = start; y <= end; y++) {
       const line = b.getLine(y);
@@ -130,18 +142,19 @@
       if (line.isWrapped && y > start && out.length) out[out.length - 1] += s;
       else out.push(s);
     }
-    while (out.length && out[out.length - 1] === '') out.pop();
-    return out.join('\n');
+    return out;
   }
   // (설정) 선택하면 바로 복사 · 우클릭은 항상 붙여넣기 — PuTTY · mRemoteNG 방식.
-  // 드래그·더블클릭(단어)·트리플클릭(줄) 선택이 끝나 마우스 왼쪽 버튼을 뗄 때 복사하고, 선택 표시는 남겨 둔다
-  el.addEventListener('mouseup', e => {
+  // 드래그·더블클릭(단어)·트리플클릭(줄) 선택이 끝나 마우스 왼쪽 버튼을 뗄 때 복사하고, 선택 표시는 남겨 둔다.
+  // 드래그하다 터미널 영역 밖에서 버튼을 떼도 복사되게 문서 전체에서 받는다 (찾기 상자·다시 연결 버튼은 제외)
+  document.addEventListener('mouseup', e => {
     if (!copyOnSelect || e.button !== 0) return;
+    if (e.target && e.target.closest && e.target.closest('#find, #reconnect')) return;
     setTimeout(() => { const s = term.getSelection(); if (s) post({ t: 'copy', d: s }); }, 0);
   });
   document.addEventListener('contextmenu', e => {
     e.preventDefault();
-    if (e.target.closest && e.target.closest('#find')) return;
+    if (e.target.closest && e.target.closest('#find, #reconnect')) return;
     if (copyOnSelect) { term.clearSelection(); requestPaste(); return; }
     const s = term.getSelection();
     if (s) { post({ t: 'copy', d: s }); term.clearSelection(); }
@@ -383,14 +396,22 @@
     const b = term.buffer.active;
     const cur = b.baseY + b.cursorY;
     if (cur <= watchMark.line) return;   // 아직 Enter 줄에 머무름
-    const out = [];
-    for (let y = Math.max(watchMark.line, cur - 50); y <= cur; y++) {
-      const line = b.getLine(y);
-      if (line) out.push(line.translateToString(true));
-    }
+    // 접힌 긴 프롬프트도 한 줄로 (마지막 줄 = 커서 줄. 비어 있으면 아직 새 프롬프트가 아니다 — 앱이 판단)
+    const out = readLines(b, Math.max(watchMark.line, cur - 50), cur);
     post({ t: 'screen', d: out.join('\n') });
   }
   function stopWatch() { if (watchMark) watchMark.dispose(); watchMark = null; }
+
+  // ===================== 끊김 막대 (다시 연결) =====================
+  // 연결이 끊기면 터미널 아래쪽에 버튼을 보인다 — Enter 키·탭 우클릭 말고도 눌러서 다시 연결할 수 있게
+  const reconnectBar = document.getElementById('reconnect');
+  const reconnectBtn = document.getElementById('reconnectBtn');
+  function showReconnect(label) {
+    reconnectBtn.textContent = label;
+    reconnectBar.style.display = label ? 'flex' : 'none';
+  }
+  function hideReconnect() { reconnectBar.style.display = 'none'; }
+  reconnectBtn.addEventListener('click', () => { hideReconnect(); post({ t: 'reconnect' }); term.focus(); });
   function afterWrite() {
     queueScan();
     if (watchMark && !watchQueued) { watchQueued = true; requestAnimationFrame(sendWatch); }
@@ -399,7 +420,10 @@
   window.chrome.webview.addEventListener('message', e => {
     const m = e.data;
     switch (m.t) {
-      case 'out': term.write(m.d, afterWrite); break;
+      // 다 그린 뒤 글자 수를 앱에 돌려준다 — 앱은 안 그려진 분량이 많으면 보내기를 멈춘다 (흐름 제어)
+      case 'out': { const n = m.d.length; term.write(m.d, () => { post({ t: 'ack', n }); afterWrite(); }); break; }
+      case 'offline': showReconnect(String(m.label || '')); break;
+      case 'online': hideReconnect(); break;
       case 'watch':
         // 이미 지켜보는 중이면(앞 명령의 프롬프트가 오기 전에 다음 명령을 친 경우) 시작 줄은 그대로 두고 시간만 늘린다
         if (!watchMark || watchMark.isDisposed || performance.now() > watchUntil) { stopWatch(); watchMark = term.registerMarker(0); }

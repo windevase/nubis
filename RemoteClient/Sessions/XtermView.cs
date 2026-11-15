@@ -127,6 +127,9 @@ public sealed class XtermView : UserControl
         // 안 보이는 탭은 브라우저 엔진 메모리 사용을 낮춘다
         IsVisibleChanged += (_, _) =>
         {
+            // 숨겨지면 멈춰 둔 출력을 그대로 보내고 읽기 스레드를 풀어 준다 (흐름 제어는 보이는 동안만)
+            _visible = IsVisible;
+            ResetThrottle();
             try
             {
                 if (_web.CoreWebView2 != null)
@@ -238,6 +241,7 @@ public sealed class XtermView : UserControl
             case CoreWebView2ProcessFailedKind.BrowserProcessExited:
                 // 브라우저 프로세스가 죽으면 이 WebView2 는 되살릴 수 없다. 다음에 여는 탭은 새 환경으로 만든다
                 _failed = true;
+                _room.Set();   // 더 그려지지 않는다 — 출력을 기다리던 읽기 스레드를 풀어 준다
                 IsReady = false;
                 _env = null;
                 ShowNotice(L.T("터미널 화면(WebView2 브라우저 프로세스)이 종료되었습니다.\n탭을 닫고 다시 여세요."));
@@ -250,6 +254,7 @@ public sealed class XtermView : UserControl
         if (_recoveries.Count >= MaxRecoveries)
         {
             _failed = true;
+            _room.Set();
             IsReady = false;
             ShowNotice(L.T("터미널 화면이 계속 비정상 종료되어 다시 불러오기를 멈췄습니다.\n탭을 닫고 다시 여세요."));
             return;
@@ -261,6 +266,7 @@ public sealed class XtermView : UserControl
         catch
         {
             _failed = true;
+            _room.Set();
             ShowNotice(L.T("터미널 화면이 비정상 종료되어 다시 불러오지 못했습니다.\n탭을 닫고 다시 여세요."));
         }
     }
@@ -311,7 +317,9 @@ public sealed class XtermView : UserControl
                 if (!IsReady && !_failed)
                 {
                     IsReady = true;
-                    ApplySettings();
+                    // 새 페이지 — 옛 페이지에 보낸 출력의 그리기 응답은 오지 않는다. 이 탭의 글자 크기 조절도 되돌린다
+                    ResetFlow();
+                    ApplySettings(includeZoom: true);
                     if (!_settingsHooked)
                     {
                         _settingsHooked = true;
@@ -324,9 +332,13 @@ public sealed class XtermView : UserControl
                         : "";
                     if (_pending.Length > 0 || notice.Length > 0)
                     {
-                        Post(new { t = "out", d = notice + _pending.ToString() });
+                        var first = notice + _pending.ToString();
                         _pending.Clear();
+                        lock (_outLock) { _unacked += first.Length; UpdateRoomLocked(); }
+                        if (!PostOut(first)) lock (_outLock) { _unacked = Math.Max(0, _unacked - first.Length); UpdateRoomLocked(); }
                     }
+                    // 다시 불러온 페이지에도 "다시 연결" 막대를 되살린다
+                    if (_reconnectLabel != null) Post(new { t = "offline", label = _reconnectLabel });
                     // 복구면 세션을 다시 시작하지 않고(Ready 는 처음 한 번만) 새 화면 크기만 알린다
                     if (recovered) Resized?.Invoke(Cols, Rows);
                     else Ready?.Invoke();
@@ -371,6 +383,16 @@ public sealed class XtermView : UserControl
                 catch { }
                 break;
 
+            case "ack":
+                // 페이지가 출력 조각을 다 그렸다 (흐름 제어)
+                if (m.TryGetProperty("n", out var an) && an.TryGetInt32(out var ackN) && ackN > 0) OnAck(ackN);
+                break;
+
+            case "reconnect":
+                // 끊김 막대의 "다시 연결" 버튼
+                if (_reconnectLabel != null) ReconnectRequested?.Invoke();
+                break;
+
             case "zoom":
                 // 이 탭의 글자 크기 조절(Ctrl+휠 등) — 렌더러 복구로 페이지를 다시 불러와도 유지
                 if (m.TryGetProperty("z", out var z) && z.TryGetInt32(out var zv)) _zoom = Math.Clamp(zv, -6, 24);
@@ -411,9 +433,13 @@ public sealed class XtermView : UserControl
         return Dialog.Show(Window.GetWindow(this), message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, preview) == MessageBoxResult.Yes;
     }
 
-    private void OnSettingsChanged() => Dispatcher.BeginInvoke(ApplySettings);
+    private void OnSettingsChanged() => Dispatcher.BeginInvoke(() => ApplySettings());
 
-    private void ApplySettings()
+    /// <param name="includeZoom">
+    /// 페이지를 새로 불러왔을 때만 기억해 둔 글자 크기 조절값을 보낸다 — 설정 변경 때마다 보내면 방금 Ctrl+휠로 바꾼 값(아직 'zoom' 메시지가
+    /// 오기 전)을 옛 값으로 되돌릴 수 있다. 페이지는 살아 있는 동안 자기 값을 유지한다
+    /// </param>
+    private void ApplySettings(bool includeZoom = false)
     {
         var s = SettingsStore.Current;
         var theme = TerminalThemes.Get(s.TerminalTheme);
@@ -424,8 +450,29 @@ public sealed class XtermView : UserControl
         {
             t = "settings", theme = theme.ToXterm(), fontSize = s.FontSize, fontFamily = s.FontFamily, autoContrast = s.AutoContrast,
             hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste, copyOnSelect = s.CopyOnSelect,
-            zoom = _zoom,
+            zoom = includeZoom ? _zoom : (int?)null,
         });
+    }
+
+    /// <summary>끊김 막대에 보일 버튼 문구 (보이는 중일 때만, 렌더러 복구 뒤 되살리기용)</summary>
+    private string? _reconnectLabel;
+
+    /// <summary>끊김 막대의 버튼을 눌렀다 (UI 스레드)</summary>
+    public event Action? ReconnectRequested;
+
+    /// <summary>터미널 아래쪽에 "다시 연결"(로컬은 "다시 시작") 버튼 막대를 보인다 (UI 스레드)</summary>
+    public void ShowReconnect(string label)
+    {
+        _reconnectLabel = label;
+        Post(new { t = "offline", label });
+    }
+
+    /// <summary>끊김 막대를 숨긴다 (UI 스레드)</summary>
+    public void HideReconnect()
+    {
+        if (_reconnectLabel == null) return;
+        _reconnectLabel = null;
+        Post(new { t = "online" });
     }
 
     /// <summary>이 탭의 글자 크기 조절값 (페이지가 알려 줌, 설정 글꼴 크기에 더한다)</summary>
@@ -441,17 +488,70 @@ public sealed class XtermView : UserControl
     private readonly object _outLock = new();
     private bool _flushQueued;
 
+    // ---------- 출력 흐름 제어 ----------
+    // 화면(xterm.js)이 그리는 속도보다 출력이 빨리 오면(cat 큰 파일, yes 등) WebView 메시지가 쌓여 화면·앱이 멈추고 Ctrl+C 도 늦게 닿는다.
+    // 페이지가 다 그린 조각마다 'ack'(글자 수)를 돌려주고, 아직 안 그려진 글자가 HighWater 를 넘으면 더 보내지 않고 _outBuf 에 모아 둔다.
+    // _outBuf 는 HeldMax 를 넘으면 앞부분(이미 스크롤백 밖으로 밀려날 분량)을 버린다. 로컬 터미널은 WaitForRoom 으로 읽기 자체를 멈춘다.
+
+    /// <summary>페이지에 보냈지만 아직 그려지지 않은 글자 수 (_outLock)</summary>
+    private int _unacked;
+    /// <summary>그리기를 기다리느라 보내기를 멈춘 상태 — ack 가 오면 이어서 보낸다 (_outLock)</summary>
+    private bool _throttled;
+    /// <summary>출력을 더 받아도 되는가 (로컬 터미널 읽기 스레드가 기다린다). 닫히면 항상 열어 둔다</summary>
+    private readonly System.Threading.ManualResetEventSlim _room = new(true);
+
+    /// <summary>화면이 보이는 중 (IsVisible 을 다른 스레드에서도 읽을 수 있게 둔 값)</summary>
+    private volatile bool _visible;
+
+    internal const int HighWater = 256 * 1024;
+    internal const int LowWater = 64 * 1024;
+    internal const int ChunkMax = 64 * 1024;
+    internal const int HeldMax = 4_000_000;
+
+    /// <summary>
+    /// 화면이 출력을 따라올 때까지 기다린다 (최대 ms). 받아도 되면 true. 백그라운드 읽기 스레드 전용 —
+    /// 화면이 닫혔거나 준비 전(모아 두기)이면 바로 true.
+    /// </summary>
+    public bool WaitForRoom(int ms) => _room.Wait(ms);
+
+    /// <summary>
+    /// 문자열 앞에서 최대 max 글자를 떼어 낼 길이. 서로게이트 쌍 가운데서 자르지 않는다
+    /// (ESC 시퀀스는 xterm.js 가 이어지는 조각과 이어 해석하므로 중간에서 잘려도 된다)
+    /// </summary>
+    public static int ChunkLength(System.Text.StringBuilder sb, int max)
+    {
+        if (sb.Length <= max) return sb.Length;
+        var n = max;
+        if (n > 0 && char.IsHighSurrogate(sb[n - 1])) n--;
+        return n;
+    }
+
+    /// <summary>받아도 되는지 다시 계산 (_outLock 안에서). 이력(hysteresis)을 둬 자주 열고 닫히지 않게</summary>
+    private void UpdateRoomLocked()
+    {
+        var backlog = (long)_outBuf.Length + _unacked;
+        if (_closed || _failed || !_visible || backlog < HighWater) _room.Set();
+        else if (backlog > HighWater * 2L) _room.Reset();
+    }
+
     /// <summary>
     /// 터미널에 출력 (어느 스레드에서 불러도 됨).
     /// 출력이 쏟아질 때 조각마다 화면으로 보내지 않도록, UI 스레드가 처리할 때까지 들어온 출력을 묶어서 한 번에 보낸다.
     /// </summary>
     public void Write(string text)
     {
-        if (text.Length == 0) return;
+        if (text.Length == 0 || _closed) return;
         lock (_outLock)
         {
             _outBuf.Append(text);
-            if (_flushQueued) return;
+            if (_outBuf.Length > HeldMax)
+            {
+                // 화면이 한참 뒤처짐 — 앞부분은 어차피 스크롤백(1만 줄) 밖으로 밀려날 분량이라 버린다 (메모리 상한)
+                var cut = PendingCut(_outBuf.ToString(), HeldMax / 4 * 3);
+                _outBuf.Remove(0, cut).Insert(0, "\x1b[0m");
+            }
+            UpdateRoomLocked();
+            if (_flushQueued || _throttled) return;   // 멈춘 동안은 ack 가 이어서 보낸다
             _flushQueued = true;
         }
         Dispatcher.BeginInvoke(FlushOutput, System.Windows.Threading.DispatcherPriority.Background);
@@ -459,16 +559,17 @@ public sealed class XtermView : UserControl
 
     private void FlushOutput()
     {
-        string text;
-        lock (_outLock)
-        {
-            text = _outBuf.ToString();
-            _outBuf.Clear();
-            _flushQueued = false;
-        }
-        if (text.Length == 0) return;
         if (!IsReady)
         {
+            string text;
+            lock (_outLock)
+            {
+                text = _outBuf.ToString();
+                _outBuf.Clear();
+                _flushQueued = false;
+                UpdateRoomLocked();
+            }
+            if (text.Length == 0) return;
             // 탭이 아직 한 번도 보이지 않아 터미널이 준비 전 — 모아 뒀다가 준비되면 출력 (최대 2MB)
             _pending.Append(text);
             if (_pending.Length > PendingMax)
@@ -480,7 +581,73 @@ public sealed class XtermView : UserControl
             }
             return;
         }
-        Post(new { t = "out", d = text });
+        // 화면이 따라오는 만큼만 조각(ChunkMax)으로 나눠 보낸다
+        while (true)
+        {
+            string chunk;
+            lock (_outLock)
+            {
+                _flushQueued = false;
+                if (_outBuf.Length == 0) { _throttled = false; UpdateRoomLocked(); return; }
+                // 안 보이는 탭은 멈추지 않는다 — 숨은 페이지는 브라우저가 타이머를 늦춰 그리기 응답이 느리다
+                // (로컬 탭의 빌드 출력 등이 숨어 있는 동안 막히지 않게. 예전처럼 그대로 보낸다)
+                if (_unacked >= HighWater && _visible) { _throttled = true; UpdateRoomLocked(); return; }
+                var n = ChunkLength(_outBuf, ChunkMax);
+                chunk = _outBuf.ToString(0, n);
+                _outBuf.Remove(0, n);
+                _unacked += n;
+                UpdateRoomLocked();
+            }
+            if (!PostOut(chunk))
+            {
+                // 보내지 못함(닫힘 등) — 그리기 응답이 오지 않으므로 세지 않는다
+                lock (_outLock) { _unacked = Math.Max(0, _unacked - chunk.Length); UpdateRoomLocked(); }
+                return;
+            }
+        }
+    }
+
+    /// <summary>페이지가 출력 조각을 다 그렸다 (UI 스레드)</summary>
+    private void OnAck(int n)
+    {
+        bool resume;
+        lock (_outLock)
+        {
+            _unacked = Math.Max(0, _unacked - n);
+            resume = _throttled && _unacked < LowWater;
+            if (resume) { _throttled = false; _flushQueued = true; }
+            UpdateRoomLocked();
+        }
+        if (resume) FlushOutput();
+    }
+
+    /// <summary>페이지를 새로 불러옴(처음·렌더러 복구) — 그리기 응답을 기다리던 수는 버린다</summary>
+    private void ResetFlow() => ResetThrottle(clearUnacked: true);
+
+    /// <summary>멈춰 둔 출력을 다시 보내기 시작한다 (보임 상태 변경·페이지 새로 불러옴)</summary>
+    private void ResetThrottle(bool clearUnacked = false)
+    {
+        bool flush;
+        lock (_outLock)
+        {
+            if (clearUnacked) _unacked = 0;
+            flush = _throttled || (_outBuf.Length > 0 && !_flushQueued);
+            _throttled = false;
+            if (flush) _flushQueued = true;
+            UpdateRoomLocked();
+        }
+        if (flush) Dispatcher.BeginInvoke(FlushOutput, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    private bool PostOut(string text)
+    {
+        if (_closed || _web.CoreWebView2 == null) return false;
+        try
+        {
+            _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(new { t = "out", d = text }));
+            return true;
+        }
+        catch { return false; }
     }
 
     private const int PendingMax = 2_000_000;
@@ -521,6 +688,8 @@ public sealed class XtermView : UserControl
     {
         if (_closed) return;
         _closed = true;
+        // 화면이 따라오길 기다리던 읽기 스레드를 풀어 준다 (닫힌 뒤 출력은 버려진다)
+        _room.Set();
         SettingsStore.Changed -= OnSettingsChanged;
         _web.Dispose();
     }

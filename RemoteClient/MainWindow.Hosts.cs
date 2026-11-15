@@ -58,9 +58,9 @@ public partial class MainWindow
         // 직접 등록한 호스트: Group 별 (지정된 그룹 먼저, 미지정은 "Hosts"). 대소문자만 다른 그룹 이름은 하나로.
         // 그룹 키(접힘 상태 저장)·표시 이름은 호스트 순서·검색 결과와 상관없이 늘 같은 표기로 (CanonicalGroupNames)
         var canon = CanonicalGroupNames(_hosts);
-        // 예전 표기(대소문자만 다른 이름)로 저장된 접힘 상태는 지금 표기로 옮긴다
-        foreach (var k in _collapsedLocal.Where(k => k.StartsWith("L:", StringComparison.Ordinal)).ToList())
-            if (canon.TryGetValue(k[2..], out var cn) && cn != k[2..]) { _collapsedLocal.Remove(k); _collapsedLocal.Add("L:" + cn); }
+        // 예전 표기(대소문자만 다른 이름)로 저장된 접힘 상태는 지금 표기로 옮기고 바로 저장한다
+        // (저장하지 않으면 그룹을 한 번 접고 펼 때까지 설정에는 예전 키가 남아 다음 실행에서 다시 옮겨야 했다)
+        if (MigrateCollapsedKeys(_collapsedLocal, canon)) SaveGroupState();
         groups.AddRange(filtered.Where(h => !h.IsCloud)
             .GroupBy(h => string.IsNullOrWhiteSpace(h.Group) ? "" : h.Group.Trim(), StringComparer.CurrentCultureIgnoreCase)
             .Select(g => (Name: canon.TryGetValue(g.Key, out var n) ? n : g.Key, Hosts: g))
@@ -138,6 +138,22 @@ public partial class MainWindow
             .Select(h => string.IsNullOrWhiteSpace(h.Group) ? "" : h.Group.Trim())
             .GroupBy(n => n, StringComparer.CurrentCultureIgnoreCase)
             .ToDictionary(g => g.Key, g => g.OrderBy(n => n, StringComparer.Ordinal).First(), StringComparer.CurrentCultureIgnoreCase);
+
+    /// <summary>
+    /// 직접 등록한 그룹의 접힘 키("L:이름")를 지금 표기(CanonicalGroupNames)로 옮긴다. 바뀌었으면 true (저장 필요)
+    /// </summary>
+    internal static bool MigrateCollapsedKeys(HashSet<string> collapsed, IReadOnlyDictionary<string, string> canon)
+    {
+        var changed = false;
+        foreach (var k in collapsed.Where(k => k.StartsWith("L:", StringComparison.Ordinal)).ToList())
+        {
+            if (!canon.TryGetValue(k[2..], out var cn) || cn == k[2..]) continue;
+            collapsed.Remove(k);
+            collapsed.Add("L:" + cn);
+            changed = true;
+        }
+        return changed;
+    }
 
     // ----- 일괄 작업 결과 같은 짧은 안내 (호스트 수 · 선택 막대 옆에 몇 초 보였다가 사라짐) -----
     private string _countBase = "";
@@ -258,7 +274,23 @@ public partial class MainWindow
     {
         if (HostOf(sender) is not { } h) return;
         if (e.ClickCount == 1 && HandleCardSelectClick(h, ScreenIndexOf(sender as DependencyObject, h))) { e.Handled = true; return; }
+        if (e.ClickCount == 1 && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            // 그냥 클릭한 카드를 키보드로 고른 카드로 — 이어서 방향키 이동 · Enter 연결 · F2 편집 · Delete 삭제 (HandleCardKey).
+            // 검색창에 입력 중이면 포커스는 그대로 둔다 (검색창에서도 Enter · F2 · ↑↓ 가 이 카드에 적용됨)
+            var clicked = CardRowOf(sender as DependencyObject);
+            SetHighlight(h, clicked == null ? -1 : CardRows().IndexOf(clicked), scroll: false);
+            if (Keyboard.FocusedElement is not (TextBox or PasswordBox)) HostRows.Focus();
+        }
         if (e.ClickCount == 2 && Keyboard.Modifiers == ModifierKeys.None) { Connect(h); e.Handled = true; }
+    }
+
+    /// <summary>카드가 들어 있는 카드 줄 (모르면 null)</summary>
+    private static CardRow? CardRowOf(DependencyObject? card)
+    {
+        for (var d = card; d != null; d = VisualTreeHelper.GetParent(d))
+            if (d is FrameworkElement { DataContext: CardRow cr }) return cr;
+        return null;
     }
 
     /// <summary>
@@ -267,9 +299,7 @@ public partial class MainWindow
     /// </summary>
     private int ScreenIndexOf(DependencyObject? card, HostEntry h)
     {
-        CardRow? clicked = null;
-        for (var d = card; d != null && clicked == null; d = VisualTreeHelper.GetParent(d))
-            if (d is FrameworkElement { DataContext: CardRow cr }) clicked = cr;
+        var clicked = CardRowOf(card);
         if (clicked == null) return -1;
         var offset = 0;
         foreach (var row in CardRows())
@@ -440,6 +470,14 @@ public partial class MainWindow
         var applied = r.ApplyTo(_hosts);
         SaveHosts();
         RefreshHosts();
-        ImportHostsDialog.ShowSummary(this, applied);
+        // "가져온 호스트 보기": 검색을 비우고 추가·갱신된 호스트를 선택 상태로 보여 준다 (선택 막대에서 바로 일괄 작업 가능)
+        if (ImportHostsDialog.ShowSummary(this, applied))
+        {
+            if (SearchBox.Text.Length > 0) SearchBox.Clear();
+            ClearSelection();
+            foreach (var h in _hosts.Where(h => applied.AddedIds.Contains(h.Id) || applied.UpdatedIds.Contains(h.Id)))
+                SetSelected(h, true);
+            UpdateSelectionBar();
+        }
     }
 }

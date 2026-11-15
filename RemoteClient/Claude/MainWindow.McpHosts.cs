@@ -240,16 +240,29 @@ public partial class MainWindow
             return (spec.Length > 0 ? $"'{spec}' 와 일치하는 프로필이 없습니다.\n" : "") + "프로필 목록 (profile 에 이름 또는 'all'):\n" + list;
         }
 
+        // Claude 가 요청을 취소하면: 이 호출이 시작한 동기화는 취소하고(SyncProfileAsync 의 cancel),
+        // 사용자·자동 동기화가 이미 진행 중이던 것은 그대로 두고 기다리기만 그만둔다 (WaitAsync)
+        var ct = McpRequest.Token;
         using var gate = new SemaphoreSlim(4);
-        await Task.WhenAll(targets.Select(async p =>
+        try
         {
-            await gate.WaitAsync();
-            // 이미 동기화 중인 프로필은 그 동기화가 끝날 때까지 기다린다 (SyncProfileAsync 가 진행 중인 작업을 돌려줌)
-            try { await await OnUi(() => SyncProfileAsync(p)); } finally { gate.Release(); }
-        }));
-        // 변경 요약(LastResult)과 경고·실패(StatusText: 실패한 리전 · 제거된 호스트 · 점프 호스트 의존성)를 함께 보고
-        var result = await OnUi(() => string.Join("\n", targets.Select(p =>
-            Line(p) + string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s)))));
+            await Task.WhenAll(targets.Select(async p =>
+            {
+                await gate.WaitAsync(ct);
+                // 이미 동기화 중인 프로필은 그 동기화가 끝날 때까지 기다린다 (SyncProfileAsync 가 진행 중인 작업을 돌려줌)
+                try { await (await OnUi(() => SyncProfileAsync(p, ct))).WaitAsync(ct); } finally { gate.Release(); }
+            }));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            AuditLog.Write("cloud_sync", targets.Select(p => $"[{p.ProviderText}] {p.GroupName}"), "sync", "취소");
+            throw new McpToolException("Claude 쪽에서 요청이 취소되었습니다.");
+        }
+        // 변경 요약(LastResult)과 경고·실패(StatusText: 실패한 리전 · 제거된 호스트 · 점프 호스트 의존성)를 함께 보고.
+        // 동기화 중에 사용자가 제거한 프로필은 따로 표시 (예전 결과처럼 보이지 않게)
+        var result = await OnUi(() => string.Join("\n", targets.Select(p => !_profiles.Contains(p)
+            ? $"[{p.ProviderText}] {p.GroupName} ({p.Name}) — 동기화 중 사용자가 프로필을 제거함"
+            : Line(p) + string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s)))));
         AuditLog.Write("cloud_sync", targets.Select(p => $"[{p.ProviderText}] {p.GroupName}"), "sync", "조회·반영");
         return "동기화 결과:\n" + result;
     }

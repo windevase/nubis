@@ -33,8 +33,80 @@ public partial class MainWindow
 
     // =================== 패널 ===================
 
-    private void OnToggleClaude(object sender, RoutedEventArgs e) => ToggleClaude();
+    private void OnToggleClaude(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button b) _claudeToggle ??= b;
+        ToggleClaude();
+    }
     private void OnCloseClaude(object sender, RoutedEventArgs e) => ToggleClaude(false);
+
+    // =================== 제목 표시줄 Claude 버튼의 "실행 중" 표시 ===================
+    // 패널을 닫아도 claude 프로세스는 계속 돌며 MCP 요청(승인 창 포함)을 보낼 수 있다 — 버튼에 점·툴팁으로 알린다.
+    // XAML 연결: 버튼에 x:Name 이 없어 Claude 로고 이미지로 찾는다. MainWindow.xaml 에서 버튼에 x:Name 을 주거나
+    // ClaudeRunningInBackground 에 바인딩하려면 ClaudeBackgroundChanged 이벤트를 쓰면 된다 (이 경우 FindClaudeToggle 은 그 이름을 쓰게 바꾼다).
+
+    private System.Windows.Controls.Button? _claudeToggle;
+    private System.Windows.Shapes.Ellipse? _claudeRunningDot;
+    private object? _claudeToggleTip;
+    private bool _claudeBackgroundShown;
+
+    /// <summary>claude 프로세스가 실행 중인가 (패널 열림 여부와 무관)</summary>
+    public bool IsClaudeRunning => _claudeView?.Status == SessionStatus.Connected;
+
+    /// <summary>패널은 닫혔지만 claude 가 실행 중 — 제목 표시줄 버튼에 표시하는 상태</summary>
+    public bool ClaudeRunningInBackground => ClaudeBackgroundState(IsClaudeRunning, ClaudeColumn.Width.Value > 0);
+
+    /// <summary>표시 판단 (UI 와 무관, 테스트용): 실행 중이고 패널이 닫혀 있을 때만</summary>
+    internal static bool ClaudeBackgroundState(bool running, bool panelOpen) => running && !panelOpen;
+
+    /// <summary>ClaudeRunningInBackground 가 바뀔 때 (UI 스레드)</summary>
+    public event Action<bool>? ClaudeBackgroundChanged;
+
+    private System.Windows.Controls.Button? FindClaudeToggle()
+    {
+        if (_claudeToggle != null) return _claudeToggle;
+        static System.Windows.Controls.Button? Walk(object node)
+        {
+            if (node is System.Windows.Controls.Button { Content: System.Windows.Controls.Panel sp } btn &&
+                sp.Children.OfType<System.Windows.Controls.Image>().Any(i => ReferenceEquals(i.Source, BrandIcons.ClaudeMark)))
+                return btn;
+            if (node is not DependencyObject d) return null;
+            foreach (var child in LogicalTreeHelper.GetChildren(d))
+                if (Walk(child) is { } found) return found;
+            return null;
+        }
+        return _claudeToggle = Walk(this);
+    }
+
+    /// <summary>제목 표시줄 Claude 버튼의 실행 중 표시를 지금 상태로 맞춘다 (패널 열기·닫기, claude 시작·종료 때 호출)</summary>
+    private void UpdateClaudeIndicator()
+    {
+        var on = ClaudeRunningInBackground;
+        try
+        {
+            if (FindClaudeToggle() is { Content: System.Windows.Controls.Panel sp } btn)
+            {
+                if (_claudeRunningDot == null)
+                {
+                    _claudeRunningDot = new System.Windows.Shapes.Ellipse
+                    {
+                        Width = 7, Height = 7, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center,
+                        Fill = new SolidColorBrush(Color.FromRgb(0x4C, 0xC3, 0x8A)), Visibility = Visibility.Collapsed,
+                    };
+                    sp.Children.Add(_claudeRunningDot);
+                    _claudeToggleTip = btn.ToolTip;
+                }
+                _claudeRunningDot.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+                btn.ToolTip = on ? L.T("Claude Code 패널 (Ctrl+Shift+A) — 패널은 닫혀 있지만 Claude 가 실행 중입니다") : _claudeToggleTip;
+            }
+        }
+        catch { }
+        if (on != _claudeBackgroundShown)
+        {
+            _claudeBackgroundShown = on;
+            ClaudeBackgroundChanged?.Invoke(on);
+        }
+    }
 
     private void ToggleClaude(bool? open = null)
     {
@@ -63,6 +135,7 @@ public partial class MainWindow
             ClaudeSplitter.Visibility = Visibility.Collapsed;
             ClaudePanel.Visibility = Visibility.Collapsed;
         }
+        UpdateClaudeIndicator();
     }
 
     private void OnOpenAuditLog(object sender, RoutedEventArgs e)
@@ -82,6 +155,7 @@ public partial class MainWindow
             _claudeView = null;
         }
         EnsureClaude();
+        UpdateClaudeIndicator();
     }
 
     private void EnsureClaude()
@@ -124,6 +198,7 @@ public partial class MainWindow
         view.StatusChanged += s =>
         {
             if (s == SessionStatus.Disconnected && _claudeView == view) _mcp?.CancelAll();
+            if (_claudeView == view) UpdateClaudeIndicator();
         };
         ClaudeHost.Content = _claudeView;
     }
@@ -209,7 +284,10 @@ public partial class MainWindow
             });
         }
         var s = sb.ToString();
-        return s.Length > ContextTitleMax ? s[..ContextTitleMax] + "…" : s;
+        if (s.Length <= ContextTitleMax) return s;
+        // 서로게이트 쌍(이모지 등) 가운데서 자르면 짝 없는 반쪽이 UTF-8 로 쓸 때 깨진 문자가 되므로 한 글자 앞에서 자른다
+        var cut = char.IsHighSurrogate(s[ContextTitleMax - 1]) ? ContextTitleMax - 1 : ContextTitleMax;
+        return s[..cut] + "…";
     }
 
     private void ShutdownClaude()

@@ -97,6 +97,9 @@ public partial class SftpPanel
             var part = local + ".part";
             await using (var fs = File.Create(part))
                 await c.DownloadFileAsync(item.FullName, fs, progress, ct);
+            // 받는 사이 탭이 닫힘(Close 가 _edits 를 비운 뒤) — 여기서 세션을 만들면 감시가 새고(ActiveEditDirs 영구 보유),
+            // 닫힌 탭의 파일이 편집기로 열려 저장해도 아무 데도 올라가지 않는다
+            if (_closed) throw new OperationCanceledException();
             File.Move(part, local);
             MarkFromInternet(local);
 
@@ -196,7 +199,9 @@ public partial class SftpPanel
     /// 탭을 닫을 때(연결 잠금을 잡은 백그라운드에서): 저장했지만 아직 올리지 않은 편집을 올린다.
     /// 서버 파일이 바뀌었으면 묻지 못하므로 올리지 않는다. 올리지 못했으면 사용자에게 보일 사유(로컬 파일 위치 포함), 아니면 null
     /// </summary>
-    private static async Task<string?> FlushEditOnCloseAsync(SftpClient? c, EditSession s)
+    /// <param name="locked">연결 잠금을 잡았음 — 못 잡았으면(다른 업로드가 멈춰 있음) 같은 연결에 겹쳐 쓰지 않고 올리지 못한 것으로 알린다</param>
+    /// <param name="ct">닫기 전체 시간 제한 (CloseBudget) — 지나면 남은 것은 올리지 않고 알린다</param>
+    private static async Task<string?> FlushEditOnCloseAsync(SftpClient? c, EditSession s, bool locked, CancellationToken ct)
     {
         try
         {
@@ -210,17 +215,22 @@ public partial class SftpPanel
             }
             var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
             if (hash == s.Hash) return null;   // 이미 올렸거나 바뀐 것 없음
+            if (!locked || ct.IsCancellationRequested)
+                return L.F("{0}\n→ 시간 안에 올리지 못했습니다. ({1})", s.Remote, s.Local);
             if (c is not { IsConnected: true })
                 return L.F("{0}\n→ 연결이 끊겨 올리지 못했습니다. ({1})", s.Remote, s.Local);
-            var attr = await Task.Run(() => TryGetAttributes(c, s.Remote));
+            // GetAttributes 는 취소를 모른다(응답 대기 최대 60초) — 기다리기만 멈추고, 연결은 Close 가 곧 닫는다
+            var attr = await Task.Run(() => TryGetAttributes(c, s.Remote)).WaitAsync(ct);
             if (attr != null && (attr.LastWriteTimeUtc != s.RemoteMtime || attr.Size != s.RemoteSize))
                 return L.F("{0}\n→ 편집을 시작한 뒤 서버 파일이 바뀌어 올리지 않았습니다. ({1})", s.Remote, s.Local);
-            using var timeout = new CancellationTokenSource(EditUploadTimeout(data.Length));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(EditUploadTimeout(data.Length));
             await UploadOneAsync(c, () => new MemoryStream(data, writable: false), s.Remote,
                 new Progress<Renci.SshNet.UploadFileProgressReport>(_ => { }), timeout.Token);
             s.Hash = hash;
             return null;
         }
+        catch (OperationCanceledException) { return L.F("{0}\n→ 시간 안에 올리지 못했습니다. ({1})", s.Remote, s.Local); }
         catch (Exception ex) { return $"{s.Remote}\n→ {ex.Message} ({s.Local})"; }
     }
 

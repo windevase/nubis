@@ -121,7 +121,7 @@ public partial class MainWindow : Window
 
     private void OnNavChanged(object sender, RoutedEventArgs e)
     {
-        if (HostsPage == null || SettingsPage == null || CloudPage == null || VaultPage == null) return;   // InitializeComponent 중
+        if (HostsPage == null || SettingsPage == null || SettingsView == null || CloudPage == null || VaultPage == null) return;   // InitializeComponent 중
         var known = NavKnown.IsChecked == true;
         var settings = NavSettings.IsChecked == true;
         var cloud = NavCloud.IsChecked == true;
@@ -130,6 +130,7 @@ public partial class MainWindow : Window
         KnownPage.Visibility = known ? Visibility.Visible : Visibility.Collapsed;
         CloudPage.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;
+        SettingsView.Visibility = SettingsPage.Visibility;   // 고정 머리글(제목 · 섹션 바로가기)과 스크롤 영역을 함께
         VaultPage.Visibility = vault ? Visibility.Visible : Visibility.Collapsed;
         if (known) RefreshKnownHosts();
         if (settings) RefreshSettingsPage(reloadLogin: true);
@@ -171,9 +172,14 @@ public partial class MainWindow : Window
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)
     {
+        // SFTP 로 편집 중인 파일이 있으면 설정과 상관없이 묻는다 (닫은 뒤 저장분은 올라가지 않음) — 이 확인이 세션 확인을 대신한다
+        if (ConfirmCloseWithSftpEdits(_tabs, closingApp: true) is { } ok)
+        {
+            if (!ok) { e.Cancel = true; return; }
+        }
         // 로컬 PowerShell 은 세지 않고, 탭 닫기 확인을 끈 설정(ConfirmCloseTab)도 따른다
-        var live = LiveRemoteSessionCount(_tabs.Select(t => (t.Protocol, t.Status)));
-        if (live > 0 && SettingsStore.Current.ConfirmCloseTab && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
+        else if (LiveRemoteSessionCount(_tabs.Select(t => (t.Protocol, t.Status))) is var live &&
+            live > 0 && SettingsStore.Current.ConfirmCloseTab && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             e.Cancel = true;

@@ -171,11 +171,13 @@
                         ToolTip="{l:Tr '모든 탭 보기'}"/>
                 <Button Style="{StaticResource IconButton}" Content="&#xE710;" Width="30" Height="30" Margin="0,0,6,0"
                         WindowChrome.IsHitTestVisibleInChrome="True" Click="OnNewLocalTerminal" ToolTip="{l:Tr '로컬 PowerShell (Ctrl+Shift+T)'}"/>
-                <Button Style="{StaticResource GhostButton}" Height="30" Padding="12,0" Margin="0,0,10,0"
-                        WindowChrome.IsHitTestVisibleInChrome="True" Click="OnToggleClaude" ToolTip="{l:Tr 'Claude Code 패널 (Ctrl+Shift+A)'}">
+                <Button x:Name="ClaudeToggleButton" Style="{StaticResource GhostButton}" Height="30" Padding="12,0" Margin="0,0,10,0"
+                        WindowChrome.IsHitTestVisibleInChrome="True" Click="OnToggleClaude" ToolTip="{l:Tr 'Claude Code 패널 (Ctrl+Shift+A)'}"
+                        AutomationProperties.Name="Claude">
                     <StackPanel Orientation="Horizontal">
                         <Image Source="{x:Static local:BrandIcons.ClaudeMark}" Width="15" Height="15" VerticalAlignment="Center"/>
                         <TextBlock Text="Claude" Margin="6,0,0,0" FontSize="12" VerticalAlignment="Center"/>
+                        <!-- "실행 중" 점은 Claude\MainWindow.ClaudePanel.cs UpdateClaudeIndicator 가 이 StackPanel 끝에 붙인다 -->
                     </StackPanel>
                 </Button>
                 <Button Style="{StaticResource TitleButton}" Content="&#xE921;" Click="OnMinimize"
@@ -686,32 +688,37 @@
                 </ScrollViewer>
 
                 <!-- Settings 페이지 -->
-                <ScrollViewer x:Name="SettingsPage" Grid.Column="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
-                              Padding="28,24,16,28">
+                <!-- 제목 · 섹션 바로가기는 스크롤해도 위에 남는다. 표시 여부는 OnNavChanged 가 SettingsPage(스크롤 영역)와 함께 바꾼다 -->
+                <DockPanel x:Name="SettingsView" Grid.Column="1" Visibility="Collapsed">
+                    <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="28,24,16,8">
+                        <StackPanel>
+                            <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
+                            <!-- 섹션 바로가기 — Tag = 이동할 제목의 x:Name. 지금 보고 있는 섹션은 강조 (OnSettingsScrollChanged) -->
+                            <WrapPanel x:Name="SettingsJumpBar" Margin="0,12,0,0">
+                                <WrapPanel.Resources>
+                                    <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                                        <Setter Property="Padding" Value="10,4"/>
+                                        <Setter Property="FontSize" Value="12"/>
+                                        <Setter Property="Margin" Value="0,0,6,6"/>
+                                    </Style>
+                                </WrapPanel.Resources>
+                                <Button Content="{l:Tr '언어 · Language'}" Tag="SecLang" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '기본 Vault 계정'}" Tag="SecVault" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '터미널 테마'}" Tag="SecTheme" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '터미널 글꼴'}" Tag="SecFont" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '터미널 사용'}" Tag="SecTermUse" Click="OnSettingsJump"/>
+                                <Button Content="SSH" Tag="SecSsh" Click="OnSettingsJump"/>
+                                <Button Content="SFTP" Tag="SecSftp" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '기본 포트'}" Tag="SecPorts" Click="OnSettingsJump"/>
+                                <Button Content="{l:Tr '시작 화면 로그인'}" Tag="SecLogin" Click="OnSettingsJump"/>
+                                <Button Content="Claude" Tag="SecClaude" Click="OnSettingsJump"/>
+                                <Button Content="RDP" Tag="SecRdp" Click="OnSettingsJump"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+                <ScrollViewer x:Name="SettingsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
+                              Padding="28,0,16,28" ScrollChanged="OnSettingsScrollChanged">
                     <StackPanel>
-                        <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-                        <!-- 섹션 바로가기 (페이지가 길어 스크롤 대신) — Tag = 이동할 제목의 x:Name -->
-                        <WrapPanel Margin="0,12,0,0">
-                            <WrapPanel.Resources>
-                                <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
-                                    <Setter Property="Padding" Value="10,4"/>
-                                    <Setter Property="FontSize" Value="12"/>
-                                    <Setter Property="Margin" Value="0,0,6,6"/>
-                                </Style>
-                            </WrapPanel.Resources>
-                            <Button Content="{l:Tr '언어 · Language'}" Tag="SecLang" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '기본 Vault 계정'}" Tag="SecVault" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '터미널 테마'}" Tag="SecTheme" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '터미널 글꼴'}" Tag="SecFont" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '터미널 사용'}" Tag="SecTermUse" Click="OnSettingsJump"/>
-                            <Button Content="SSH" Tag="SecSsh" Click="OnSettingsJump"/>
-                            <Button Content="SFTP" Tag="SecSftp" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '기본 포트'}" Tag="SecPorts" Click="OnSettingsJump"/>
-                            <Button Content="{l:Tr '시작 화면 로그인'}" Tag="SecLogin" Click="OnSettingsJump"/>
-                            <Button Content="Claude" Tag="SecClaude" Click="OnSettingsJump"/>
-                            <Button Content="RDP" Tag="SecRdp" Click="OnSettingsJump"/>
-                        </WrapPanel>
-
                         <TextBlock x:Name="SecLang" Text="{l:Tr '언어 · Language'}" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,4"/>
                         <TextBlock Text="{l:Tr '화면 언어를 바꾸면 Nubis 를 다시 시작해야 적용됩니다.'}" Foreground="{StaticResource SubText}" Margin="0,0,0,10"/>
                         <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1" Width="280" HorizontalAlignment="Left">
@@ -726,10 +733,12 @@
                         <TextBlock x:Name="SecVault" Text="{l:Tr '기본 Vault 계정'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
                         <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
                                    Text="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 이 계정으로 로그인합니다. 우선순위: 호스트에 고른 계정 → 호스트에 직접 입력한 값 → 클라우드 프로필 기본 계정 → 여기 기본 계정. 호스트 목록에서 그룹을 우클릭하면 그룹 전체에 다른 계정을 지정할 수 있습니다.'}"/>
-                        <Grid MaxWidth="640" HorizontalAlignment="Stretch">
+                        <!-- Grid 자체에 MaxWidth 를 주면 넓은 창에서 Stretch 가 가운데 정렬로 바뀌어 줄이 오른쪽으로 밀린다 —
+                             폭 제한은 계정 이름 칸(*)에만 두고 남는 폭은 오른쪽에 비워 둔다 (섹션 글과 왼쪽 맞춤) -->
+                        <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="130"/>
-                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*" MaxWidth="380"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <Grid.RowDefinitions>
@@ -826,7 +835,7 @@
                                     </Border>
                                     <DataTemplate.Triggers>
                                         <Trigger SourceName="card" Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="card" Property="BorderBrush" Value="#3A4060"/>
+                                            <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource InputHoverLine}"/>
                                         </Trigger>
                                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                             <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
@@ -1026,6 +1035,7 @@
 
                     </StackPanel>
                 </ScrollViewer>
+                </DockPanel>
 
                 <!-- 호스트 편집 패널 (오른쪽 슬라이드) -->
                 <Grid x:Name="EditorLayer" Grid.Column="1" Visibility="Collapsed">
@@ -1102,6 +1112,9 @@
                                         <TextBlock Text="{l:Tr '점프 서버 (선택)'}" Style="{StaticResource FieldLabel}"/>
                                         <Button x:Name="EdJumpButton" Style="{StaticResource GhostButton}" Height="38" HorizontalAlignment="Stretch"
                                                 HorizontalContentAlignment="Left" Click="OnPickJump"/>
+                                        <!-- 이 호스트를 점프 서버로 쓰는 다른 호스트가 있는데 이 호스트에도 점프 서버를 지정하면 (한 단계만 지원) -->
+                                        <TextBlock x:Name="JumpWarning" FontSize="11" Foreground="#F5B740" Margin="2,6,0,0" TextWrapping="Wrap"
+                                                   Visibility="Collapsed"/>
                                         <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
                                                    Text="{l:Tr '이 서버에 바로 닿지 않으면 거쳐 갈 SSH 호스트를 고르세요 (ssh 의 ProxyJump). 점프 서버의 계정·Vault·OTP 설정을 그대로 씁니다.'}"/>
                                     </StackPanel>

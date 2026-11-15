@@ -54,6 +54,17 @@ public sealed class CloudProfile : INotifyPropertyChanged
     /// <summary>사용자가 목록에서 삭제한 인스턴스 (동기화해도 다시 추가하지 않음)</summary>
     public List<string> HiddenInstances { get; set; } = new();
 
+    /// <summary>
+    /// 빠짐없는 동기화에서 연속으로 보이지 않은 횟수 (인스턴스 ID → 횟수). 클라우드 목록 API 가 잠깐 항목을 빠뜨려도
+    /// 호스트(계정·포트 설정 포함)가 바로 지워지지 않게, 두 번 연속 안 보였을 때만 지운다 (CloudSync.ApplyResult).
+    /// 다시 보이면 지운다. 숨긴 인스턴스 목록 정리에도 같은 기준을 쓴다
+    /// </summary>
+    public Dictionary<string, int> MissCounts { get => _missCounts; set => _missCounts = value ?? new(); }
+    private Dictionary<string, int> _missCounts = new();
+
+    /// <summary>직전 동기화에서 안 보였지만 아직 지우지 않은 호스트 수 (다음 빠짐없는 동기화에서도 안 보이면 제거). 화면 표시용</summary>
+    [JsonIgnore] public int PendingRemoval { get; set; }
+
     [JsonIgnore]
     public string DefaultPassword
     {
@@ -77,7 +88,8 @@ public sealed class CloudProfile : INotifyPropertyChanged
     [JsonIgnore] public string StatusText { get => _status; set { _status = value; OnChanged(); } }
     [JsonIgnore] public int HostCount { get => _hostCount; set { _hostCount = value; OnChanged(); OnChanged(nameof(SummaryText)); } }
     [JsonIgnore] public int RunningCount { get => _runningCount; set { _runningCount = value; OnChanged(); OnChanged(nameof(SummaryText)); } }
-    [JsonIgnore] public string SyncButtonText => IsSyncing ? L.T("동기화 중...") : L.T("동기화");
+    // 동기화 중에 누르면 취소된다 (MainWindow.SyncOrCancelAsync) — 버튼 글자도 그 동작을 보여 준다
+    [JsonIgnore] public string SyncButtonText => IsSyncing ? L.T("취소") : L.T("동기화");
     /// <summary>직전 동기화의 변경 요약 (예: "추가 3 · 제거 1")</summary>
     [JsonIgnore] public string LastResult { get; set; } = "";
     [JsonIgnore]
@@ -167,7 +179,9 @@ public sealed record CloudFetchResult(List<CloudInstance> Items, List<string> Er
     public List<string> DeniedRegions { get; init; } = new();
 
     /// <summary>권한 거부 리전을 뺀 실제 조회 실패가 있는지 (있으면 어느 호스트도 지우면 안 된다)</summary>
-    public bool HasUnexpectedErrors => Errors.Count > DeniedRegions.Count;
+    // 거부 리전은 리전마다 Errors 에 한 줄씩 들어가므로 개수로 비교한다. 같은 리전이 두 번 들어가도 실제 오류를 가리지 않게 중복은 한 번만 센다
+    public bool HasUnexpectedErrors =>
+        Errors.Count > DeniedRegions.Distinct(StringComparer.OrdinalIgnoreCase).Count();
 }
 
 public interface ICloudProvider
