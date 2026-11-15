@@ -125,12 +125,15 @@ public partial class MainWindow : Window
 
     private void OnNavChanged(object sender, RoutedEventArgs e)
     {
-        if (HostsPage == null || SettingsPage == null || SettingsView == null || CloudPage == null || VaultPage == null) return;   // InitializeComponent 중
+        if (HostsPage == null || SettingsPage == null || SettingsView == null || CloudPage == null || VaultPage == null || K8sPage == null) return;   // InitializeComponent 중
         var known = NavKnown.IsChecked == true;
         var settings = NavSettings.IsChecked == true;
         var cloud = NavCloud.IsChecked == true;
         var vault = NavVault.IsChecked == true;
-        HostsPage.Visibility = !known && !settings && !cloud && !vault ? Visibility.Visible : Visibility.Collapsed;
+        var k8s = NavK8s.IsChecked == true;
+        HostsPage.Visibility = !known && !settings && !cloud && !vault && !k8s ? Visibility.Visible : Visibility.Collapsed;
+        K8sPage.Visibility = k8s ? Visibility.Visible : Visibility.Collapsed;
+        if (k8s) RefreshK8s();
         KnownPage.Visibility = known ? Visibility.Visible : Visibility.Collapsed;
         CloudPage.Visibility = cloud ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = settings ? Visibility.Visible : Visibility.Collapsed;

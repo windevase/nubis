@@ -441,8 +441,12 @@ public sealed class SessionTab : INotifyPropertyChanged
     /// <summary>원본 호스트 (로컬 터미널이면 null)</summary>
     public HostEntry? Host { get; init; }
     public ISessionView Session => (ISessionView)View;
+    /// <summary>쿠버네티스 탭이면 클러스터 Id (클러스터 터미널 · 파드 셸 · 로그). Protocol 은 Local (이 PC 의 프로세스)</summary>
+    public Guid? K8sClusterId { get; init; }
+    /// <summary>파드 셸·로그 탭 (닫은 탭 다시 열기 대상이 아님)</summary>
+    public bool K8sPod { get; init; }
 
-    public string Glyph => Protocol switch
+    public string Glyph => K8sClusterId != null ? (K8sPod ? "" : "") : Protocol switch
     {
         Protocol.Ssh => "",
         Protocol.Rdp => "",
