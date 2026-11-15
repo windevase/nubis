@@ -125,6 +125,8 @@ public sealed class LoginState
     public bool OrgMember { get; set; }
     /// <summary>그때 확인한 Organization 이름 (설정의 GitHubOrg 를 바꾸면 인정하지 않는다)</summary>
     public string Org { get; set; } = "";
+    /// <summary>Microsoft: 로그인한 때의 테넌트 설정 (다른 제공자는 빈 값). 예전 기록에는 없다 → Microsoft 면 다시 로그인</summary>
+    public string Tenant { get; set; } = "";
 
     public string ProfileKey => Profiles.Key(Provider, AccountId, Account);
 
@@ -145,17 +147,27 @@ public sealed class LoginState
         {
             Provider = cfg.Provider, ClientId = cfg.ClientId, Account = who.Account, AccountId = who.Id, LastSuccessUtc = nowUtc,
             OrgMember = orgMember && org.Length > 0, Org = orgMember ? org : "",
+            Tenant = TenantOf(cfg),
         };
     }
+
+    /// <summary>기록·비교에 쓰는 테넌트 값: Microsoft 만 (앞뒤 공백 제거), 다른 제공자는 빈 값</summary>
+    private static string TenantOf(LoginConfig cfg) =>
+        cfg.Provider == LoginProviderKind.Microsoft ? (cfg.Tenant ?? "").Trim() : "";
 
     public static void Clear()
     {
         try { File.Delete(FilePath); } catch { }
     }
 
-    /// <summary>같은 제공자·앱이고, 마지막 로그인이 hours 시간 안이면 true</summary>
+    /// <summary>
+    /// 같은 제공자·앱(Microsoft 는 테넌트까지)이고, 마지막 로그인이 span 안이면 true.
+    /// 테넌트를 바꾸면 다른 테넌트에서 확인한 기록을 인정하지 않는다 — 테넌트 기록이 없는 예전 기록도 Microsoft 면 다시 로그인.
+    /// </summary>
     public bool Within(LoginConfig cfg, TimeSpan span, DateTime nowUtc) =>
         span > TimeSpan.Zero && Provider == cfg.Provider && ClientId == cfg.ClientId && Account.Length > 0 &&
+        (cfg.Provider != LoginProviderKind.Microsoft ||
+         (TenantOf(cfg).Length > 0 && string.Equals((Tenant ?? "").Trim(), TenantOf(cfg), StringComparison.OrdinalIgnoreCase))) &&
         LastSuccessUtc <= nowUtc && nowUtc - LastSuccessUtc <= span;
 
     /// <summary>

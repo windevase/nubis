@@ -19,9 +19,20 @@ public sealed class XtermView : UserControl
 {
     private static Task<CoreWebView2Environment>? _env;
 
+    /// <summary>터미널 페이지가 올라가는 가상 호스트 (wwwroot 폴더 매핑)</summary>
+    private const string PageHost = "app.local";
+    private const string PageUrl = "https://" + PageHost + "/terminal.html";
+    /// <summary>렌더러가 이 시간 안에 이만큼 죽으면 다시 불러오기를 멈춘다 (무한 재시작 방지)</summary>
+    private const int MaxRecoveries = 3;
+    private static readonly TimeSpan RecoveryWindow = TimeSpan.FromMinutes(1);
+
     private readonly WebView2 _web = new();
-    private readonly System.Text.StringBuilder _pending = new();   // 화면 준비 전 출력 (숨은 탭)
+    private readonly System.Text.StringBuilder _pending = new();   // 화면 준비 전 출력 (숨은 탭, 렌더러 복구 중)
+    private readonly System.Collections.Generic.List<DateTime> _recoveries = new();
     private bool _closed;
+    private bool _settingsHooked;
+    private bool _recovering;   // 렌더러가 죽어 페이지를 다시 불러오는 중 (다음 "ready" 는 복구)
+    private bool _failed;       // 복구를 포기함 — 안내 문구만 보임
 
     public uint Cols { get; private set; } = 120;
     public uint Rows { get; private set; } = 30;
@@ -114,13 +125,7 @@ public sealed class XtermView : UserControl
         {
             // 실패한 환경을 붙들고 있으면 앱을 다시 켤 때까지 모든 터미널이 안 열리므로 다음 시도에서 새로 만든다
             _env = null;
-            Content = new TextBlock
-            {
-                Text = L.F("터미널 화면(WebView2)을 초기화하지 못했습니다.\n{0}\n\nMicrosoft Edge WebView2 런타임 설치 여부를 확인한 뒤 탭을 다시 여세요.", ex.Message),
-                Foreground = (Brush)Application.Current.Resources["SubText"],
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(24),
-            };
+            ShowNotice(L.F("터미널 화면(WebView2)을 초기화하지 못했습니다.\n{0}\n\nMicrosoft Edge WebView2 런타임 설치 여부를 확인한 뒤 탭을 다시 여세요.", ex.Message));
             return;
         }
         if (_closed) return;
@@ -131,14 +136,141 @@ public sealed class XtermView : UserControl
         core.Settings.IsZoomControlEnabled = false;
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.AreDevToolsEnabled = false;
-        core.SetVirtualHostNameToFolderMapping("app.local",
+        core.SetVirtualHostNameToFolderMapping(PageHost,
             Path.Combine(AppContext.BaseDirectory, "wwwroot"), CoreWebView2HostResourceAccessKind.DenyCors);
         core.WebMessageReceived += OnWebMessage;
-        core.Navigate("https://app.local/terminal.html");
+        core.ProcessFailed += OnProcessFailed;
+        core.NewWindowRequested += OnNewWindowRequested;
+        core.NavigationStarting += OnNavigationStarting;
+        core.Navigate(PageUrl);
+    }
+
+    /// <summary>앱의 터미널 페이지(https://app.local/...)인지. 다른 출처의 메시지·이동은 받지 않는다</summary>
+    public static bool IsAppPage(string? uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && u.IsDefaultPort
+        && string.Equals(u.Host, PageHost, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>http/https 링크면 정규화한 주소, 아니면 null (javascript:, file: 등은 열지 않는다)</summary>
+    public static string? WebLink(string? uri) =>
+        Uri.TryCreate(uri, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttp || u.Scheme == Uri.UriSchemeHttps)
+            ? u.AbsoluteUri : null;
+
+    /// <summary>
+    /// 붙여넣을 텍스트에서 터미널 제어 문자를 뺀다: C0(탭·CR·LF 제외, ESC 포함)·DEL·C1(0x80-0x9F).
+    /// ESC 가 빠지므로 "\x1b[201~" 로 bracketed paste 를 빠져나가 명령을 실행시킬 수 없다. 뺀 글자가 있으면 removed = true
+    /// </summary>
+    public static string SanitizePaste(string text, out bool removed)
+    {
+        removed = false;
+        System.Text.StringBuilder? sb = null;
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            var control = (c < '\x20' && c != '\t' && c != '\r' && c != '\n') || (c >= '\x7F' && c <= '\x9F');
+            if (control)
+            {
+                sb ??= new System.Text.StringBuilder(text.Length).Append(text, 0, i);
+                removed = true;
+            }
+            else sb?.Append(c);
+        }
+        return sb?.ToString() ?? text;
+    }
+
+    /// <summary>터미널 대신 안내 문구를 보여 준다 (초기화 실패·복구 포기)</summary>
+    private void ShowNotice(string text)
+    {
+        Content = new TextBlock
+        {
+            Text = text,
+            Foreground = (Brush)Application.Current.Resources["SubText"],
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(24),
+        };
+    }
+
+    /// <summary>
+    /// 렌더러(모든 터미널 탭이 하나를 공유)가 죽거나 멈추면 페이지를 다시 불러온다.
+    /// 그동안 출력은 화면 준비 전처럼 모아 두고, 다시 "ready" 가 오면 설정을 재적용해 이어서 그린다.
+    /// </summary>
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        if (_closed || _failed) return;
+        var now = DateTime.UtcNow;
+        switch (e.ProcessFailedKind)
+        {
+            case CoreWebView2ProcessFailedKind.RenderProcessExited:
+                break;
+            case CoreWebView2ProcessFailedKind.RenderProcessUnresponsive:
+                // 방금 다시 불러오기 시작했으면 반복되는 멈춤 알림은 넘긴다 (계속 멈춰 있으면 10초 뒤 다시 시도 → 한도에서 포기)
+                if (_recovering && _recoveries.Count > 0 && now - _recoveries[^1] < TimeSpan.FromSeconds(10)) return;
+                break;
+            case CoreWebView2ProcessFailedKind.BrowserProcessExited:
+                // 브라우저 프로세스가 죽으면 이 WebView2 는 되살릴 수 없다. 다음에 여는 탭은 새 환경으로 만든다
+                _failed = true;
+                IsReady = false;
+                _env = null;
+                ShowNotice(L.T("터미널 화면(WebView2 브라우저 프로세스)이 종료되었습니다.\n탭을 닫고 다시 여세요."));
+                return;
+            default:
+                return;   // GPU·유틸리티 프로세스 등은 WebView2 가 알아서 다시 띄운다
+        }
+
+        _recoveries.RemoveAll(t => now - t > RecoveryWindow);
+        if (_recoveries.Count >= MaxRecoveries)
+        {
+            _failed = true;
+            IsReady = false;
+            ShowNotice(L.T("터미널 화면이 계속 비정상 종료되어 다시 불러오기를 멈췄습니다.\n탭을 닫고 다시 여세요."));
+            return;
+        }
+        _recoveries.Add(now);
+        IsReady = false;
+        _recovering = true;
+        try { _web.CoreWebView2?.Navigate(PageUrl); }
+        catch
+        {
+            _failed = true;
+            ShowNotice(L.T("터미널 화면이 비정상 종료되어 다시 불러오지 못했습니다.\n탭을 닫고 다시 여세요."));
+        }
+    }
+
+    /// <summary>앱 페이지 밖으로의 이동은 막는다 (파일 끌어 놓기 등으로 다른 페이지가 열리지 않게)</summary>
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (!IsAppPage(e.Uri)) e.Cancel = true;
+    }
+
+    /// <summary>새 창(OSC 8 링크 등)은 앱 안 팝업으로 열지 않고, http/https 만 확인 후 기본 브라우저로 연다</summary>
+    private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        e.Handled = true;
+        var uri = e.Uri;
+        // WebView2 이벤트 처리 중에 모달 창을 띄우지 않도록 한 박자 늦춘다
+        Dispatcher.BeginInvoke(new Action(() => OpenLink(uri)));
+    }
+
+    private void OpenLink(string? uri)
+    {
+        if (_closed || WebLink(uri) is not { } link) return;
+        var owner = Window.GetWindow(this);
+        if (Dialog.Show(owner, L.T("터미널의 링크를 기본 브라우저로 열까요?\n아래 주소가 맞는지 확인하세요."), L.T("링크 열기"),
+                MessageBoxButton.YesNo, MessageBoxImage.Question, link) != MessageBoxResult.Yes)
+        {
+            FocusTerminal();
+            return;
+        }
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(link) { UseShellExecute = true }); }
+        catch (Exception ex)
+        {
+            Dialog.Show(owner, L.F("링크를 열지 못했습니다.\n{0}", ex.Message), L.T("링크 열기"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // 앱 페이지가 아닌 곳(혹시 열린 다른 문서)에서 온 메시지는 무시 — 키 입력·붙여넣기로 이어질 수 있다
+        if (!IsAppPage(e.Source)) return;
         using var doc = JsonDocument.Parse(e.WebMessageAsJson);
         var m = doc.RootElement;
         switch (m.GetProperty("t").GetString())
@@ -146,19 +278,37 @@ public sealed class XtermView : UserControl
             case "ready":
                 Cols = m.GetProperty("cols").GetUInt32();
                 Rows = m.GetProperty("rows").GetUInt32();
-                if (!IsReady)
+                if (!IsReady && !_failed)
                 {
                     IsReady = true;
                     ApplySettings();
-                    SettingsStore.Changed += OnSettingsChanged;
-                    if (_pending.Length > 0)
+                    if (!_settingsHooked)
                     {
-                        Post(new { t = "out", d = _pending.ToString() });
+                        _settingsHooked = true;
+                        SettingsStore.Changed += OnSettingsChanged;
+                    }
+                    var recovered = _recovering;
+                    _recovering = false;
+                    var notice = recovered
+                        ? "\x1b[33m" + L.T("터미널 화면이 비정상 종료되어 다시 불러왔습니다. 이전 화면 내용은 지워졌습니다.") + "\x1b[0m\r\n"
+                        : "";
+                    if (_pending.Length > 0 || notice.Length > 0)
+                    {
+                        Post(new { t = "out", d = notice + _pending.ToString() });
                         _pending.Clear();
                     }
-                    Ready?.Invoke();
+                    // 복구면 세션을 다시 시작하지 않고(Ready 는 처음 한 번만) 새 화면 크기만 알린다
+                    if (recovered) Resized?.Invoke(Cols, Rows);
+                    else Ready?.Invoke();
                 }
                 break;
+
+            case "link":
+            {
+                var uri = m.TryGetProperty("d", out var d) ? d.GetString() : null;
+                Dispatcher.BeginInvoke(new Action(() => OpenLink(uri)));
+                break;
+            }
 
             case "resize":
                 Cols = m.GetProperty("cols").GetUInt32();
@@ -178,10 +328,14 @@ public sealed class XtermView : UserControl
                 try
                 {
                     if (!Clipboard.ContainsText()) break;
-                    var text = Clipboard.GetText().Replace("\r\n", "\r").Replace('\n', '\r');
-                    // 여러 줄은 줄마다 바로 실행될 수 있어 확인 (서버가 bracketed paste 를 켰으면 실행되지 않으므로 묻지 않음)
+                    // 제어 문자(ESC 등)는 빼고 붙여넣는다 — 남겨 두면 "\x1b[201~" 로 bracketed paste 를 빠져나가 실행될 수 있다
+                    var text = SanitizePaste(Clipboard.GetText(), out var stripped).Replace("\r\n", "\r").Replace('\n', '\r');
+                    if (text.Length == 0) { FocusTerminal(); break; }
+                    // 여러 줄은 줄마다 바로 실행될 수 있어 확인 (서버가 bracketed paste 를 켰으면 실행되지 않으므로 묻지 않음).
+                    // 제어 문자가 들어 있던 텍스트는 의도적으로 만든 것일 수 있어 설정·bracketed paste 와 관계없이 항상 확인
                     var bracketed = m.TryGetProperty("bp", out var bp) && bp.ValueKind == JsonValueKind.True;
-                    if (!bracketed && SettingsStore.Current.ConfirmMultilinePaste && !ConfirmPaste(text)) { FocusTerminal(); break; }
+                    var ask = stripped || (!bracketed && SettingsStore.Current.ConfirmMultilinePaste);
+                    if (ask && !ConfirmPaste(text, stripped)) { FocusTerminal(); break; }
                     Post(new { t = "paste", d = text });
                 }
                 catch { }
@@ -201,14 +355,25 @@ public sealed class XtermView : UserControl
         }
     }
 
-    /// <summary>여러 줄(마지막 줄바꿈 포함) 붙여넣기 확인. 붙여넣어도 되면 true</summary>
-    private bool ConfirmPaste(string text)
+    /// <summary>
+    /// 여러 줄(마지막 줄바꿈 포함) 붙여넣기 확인. strippedControl 이면(제어 문자를 뺀 텍스트) 한 줄이어도 묻는다.
+    /// 붙여넣어도 되면 true
+    /// </summary>
+    private bool ConfirmPaste(string text, bool strippedControl = false)
     {
         var lines = text.TrimEnd('\r').Split('\r');
-        if (lines.Length <= 1 && !text.EndsWith('\r')) return true;
+        var multi = lines.Length > 1 || text.EndsWith('\r');
+        if (!multi && !strippedControl) return true;
         var preview = string.Join("\n", lines.Take(12)) + (lines.Length > 12 ? "\n..." : "");
-        return Dialog.Show(Window.GetWindow(this), L.F("{0}줄을 붙여넣을까요?\n줄마다 Enter 가 들어가 바로 실행될 수 있습니다.", lines.Length),
-            L.T("여러 줄 붙여넣기"), MessageBoxButton.YesNo, MessageBoxImage.Warning, preview) == MessageBoxResult.Yes;
+        var message = multi ? L.F("{0}줄을 붙여넣을까요?\n줄마다 Enter 가 들어가 바로 실행될 수 있습니다.", lines.Length) : "";
+        var title = L.T("여러 줄 붙여넣기");
+        if (strippedControl)
+        {
+            message = L.T("붙여넣을 텍스트에 터미널 제어 문자(ESC 등)가 들어 있어 제거했습니다.\n제거한 내용으로 붙여넣을까요?")
+                + (multi ? "\n\n" + message : "");
+            title = L.T("제어 문자가 포함된 붙여넣기");
+        }
+        return Dialog.Show(Window.GetWindow(this), message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning, preview) == MessageBoxResult.Yes;
     }
 
     private void OnSettingsChanged() => Dispatcher.BeginInvoke(ApplySettings);
@@ -223,7 +388,7 @@ public sealed class XtermView : UserControl
         Post(new
         {
             t = "settings", theme = theme.ToXterm(), fontSize = s.FontSize, fontFamily = s.FontFamily, autoContrast = s.AutoContrast,
-            hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste,
+            hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste, copyOnSelect = s.CopyOnSelect,
         });
     }
 

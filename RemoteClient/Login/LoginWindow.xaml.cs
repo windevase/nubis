@@ -22,6 +22,8 @@ public partial class LoginWindow : Window
 
     /// <summary>허용된 계정으로 로그인했으면 그 계정</summary>
     public LoginIdentity? Result { get; private set; }
+    /// <summary>Result 가 GitHub Organization 멤버 확인으로 허용됐는지</summary>
+    public bool ResultOrgMember { get; private set; }
 
     private LoginWindow(LoginConfig cfg, bool test)
     {
@@ -64,11 +66,16 @@ public partial class LoginWindow : Window
         return ok && profileKey != null;
     }
 
-    /// <summary>Settings 의 테스트 로그인: 허용된 계정으로 로그인하면 그 계정, 아니면 null</summary>
-    public static LoginIdentity? Test(Window owner, LoginConfig cfg)
+    /// <summary>
+    /// Settings 의 테스트 로그인: 허용된 계정으로 로그인하면 그 계정, 아니면 null.
+    /// login.json 은 쓰지 않는다 — 설정을 실제로 저장할 때 호출하는 쪽이 LoginState.Save(who, cfg, orgMember) 로 기록한다.
+    /// </summary>
+    public static LoginIdentity? Test(Window owner, LoginConfig cfg, out bool orgMember)
     {
         var w = new LoginWindow(cfg, test: true) { Owner = owner, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false };
-        return w.ShowDialog() == true ? w.Result : null;
+        var ok = w.ShowDialog() == true && w.Result != null;
+        orgMember = ok && w.ResultOrgMember;
+        return ok ? w.Result : null;
     }
 
     private void ShowError(string? text)
@@ -102,9 +109,15 @@ public partial class LoginWindow : Window
                 throw new LoginException(L.F("허용되지 않은 계정입니다: {0}", who.Account) +
                                          (_cfg.GitHubOrg.Trim().Length > 0 && _cfg.Provider == LoginProviderKind.GitHub ? L.F(" (Organization '{0}' 멤버가 아님)", _cfg.GitHubOrg) : ""));
             Result = who;
+            ResultOrgMember = orgMember;
             _profileKey = who.ProfileKey;
-            // Organization 멤버로 허용된 기록도 남긴다 — 로그인 유지·오프라인 허용 기간 안에서는 다시 확인하지 않고 인정
-            try { LoginState.Save(who, _cfg, orgMember); } catch { }
+            // Organization 멤버로 허용된 기록도 남긴다 — 로그인 유지·오프라인 허용 기간 안에서는 다시 확인하지 않고 인정.
+            // 테스트 로그인은 기록하지 않는다 (설정을 저장하지 않으면 다른 계정의 기록으로 다음 실행 때 로그인 화면 없이 들어가게 됨).
+            // 테스트 결과는 Settings 가 설정을 실제로 저장할 때 기록한다.
+            if (!_test)
+            {
+                try { LoginState.Save(who, _cfg, orgMember); } catch { }
+            }
             AuditLog.Write("login", new[] { $"{LoginConfig.ProviderLabel(who.Provider)} {who.Account}" }, _test ? "테스트 로그인" : "앱 시작 로그인", "성공");
             DialogResult = true;
         }

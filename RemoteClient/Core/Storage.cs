@@ -384,6 +384,8 @@ public sealed class AppSettings
     /// vim·htop 같은 전체 화면 프로그램 안에서는 Ctrl+V 를 프로그램에 그대로 보낸다
     /// </summary>
     public bool SmartCopyPaste { get; set; } = true;
+    /// <summary>터미널: 마우스로 선택하면 바로 복사, 우클릭은 항상 붙여넣기 (PuTTY · mRemoteNG 방식)</summary>
+    public bool CopyOnSelect { get; set; }
     /// <summary>SSH 연결이 끊기면 자동으로 다시 연결 (0 = 끔)</summary>
     public bool SshAutoReconnect { get; set; }
     /// <summary>클라우드 자동 동기화: 앱 시작 시 · N분마다 (0 = 끔)</summary>

@@ -121,10 +121,13 @@ public partial class MainWindow
                 // 읽기 전용 자동 승인: 설정을 켰고 + 원격(SSH) 탭이고 + 셸 프롬프트가 보이고(비밀번호 질문·vim 등에 들어가지 않게) + 한 줄 읽기 전용 명령 + Enter
                 // + 제어 문자 없음(Ctrl-U 등으로 줄을 지우고 바꾸지 못하게).
                 // 로컬 탭은 gc ~\.ssh\id_rsa 같은 '읽기 전용' 명령으로 이 PC 의 비밀 파일을 화면에 띄워 read_terminal 로 읽을 수 있어 제외
-                // OS 가 Windows 로 보이는 SSH 대상(Windows OpenSSH — 기본 셸 cmd/PowerShell)은 sh 기준 판정이 맞지 않아 항상 승인
+                // OS 가 Windows 로 보이거나 OS 를 모르는(직접 추가한 호스트 등) SSH 대상은 Windows OpenSSH(기본 셸 cmd/PowerShell)일 수 있어
+                // sh 기준 판정이 맞지 않으므로 항상 승인
                 var auto = McpHelpers.CanAutoApproveTerminalInput(SettingsStore.Current.AutoApproveReadOnly, text, enter,
                     atPromptBefore, t => ReadOnlyCommands.IsReadOnly(t, shell), localTerminal: tab.Protocol == Protocol.Local,
-                    windowsHost: McpHelpers.IsWindowsOs(tab.Host?.Os));
+                    windowsHost: McpHelpers.ShellNotKnownSh(tab.Host?.Os,
+                        // 탭의 호스트는 연결 전에 만든 사본이라, 접속 뒤 배너 판별은 저장된 호스트에서 읽는다
+                        _hosts.FirstOrDefault(x => x.Id == tab.Host?.Id)?.SshBannerOs ?? tab.Host?.SshBannerOs));
                 // 승인 창은 제어 문자를 \xNN 으로 보여 준다 (ApprovalDialog)
                 if (!auto && !await AskApprovalAsync("send_to_terminal", L.T("Claude 가 터미널 입력을 요청합니다"),
                         L.T("아래 세션의 터미널에 텍스트를 입력합니다."), new[] { target }, text))

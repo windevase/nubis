@@ -99,6 +99,28 @@ public static class ReadOnlyCommands
 
     private static string At(List<string> a, int i) => i >= 0 && i < a.Count ? a[i] : "";
 
+    /// <summary>
+    /// UNC·장치 경로로 보이는 글자열(\\, //, \/, /\ — Windows 는 / 를 \ 로 바꿔 해석)이 따옴표 안 포함 어디든 있다.
+    /// \\서버\공유 는 읽기만 해도 그 서버로 NTLM 인증(해시)을 보낸다 (Get-ChildItem \\1.2.3.4\s, dir \\x\s, reg query \\x\HKLM)
+    /// </summary>
+    private static bool HasUncPath(string s) => Regex.IsMatch(s, @"[\\/]{2}");
+
+    /// <summary>
+    /// PowerShell 에서 토큰을 이어 붙여 문자열을 만드는 형태 (따옴표 문자열은 \u0001 하나로 바꿔 본다):
+    /// '\'"\h\s" · 'x'.y · \'\h\s' · $a$a · $a\h\s · x$a · ('\')\h\s · $$ · $^ · $? 같은 자동 변수.
+    /// 인자 모드에서는 이어 붙은 토큰이 한 문자열이 되어 UNC 경로 등을 판별기 몰래 만들 수 있다
+    /// </summary>
+    private static bool PsAdjacentToken(string command)
+    {
+        var m = QuotedRx.Replace(command, "\u0001");
+        return Regex.IsMatch(m, "\u0001[^\\s;|{}(),=\\]]")            // 문자열 뒤에 바로 다른 토큰
+               || Regex.IsMatch(m, "[^\\s;|{}(),=!>\\u0001]\u0001")    // 다른 토큰 뒤에 바로 문자열
+               || Regex.IsMatch(m, @"\$(?>[\w:]+)[^\s;|{}(),.=\]\[]")  // 변수 뒤에 바로 다른 토큰 ($a$a, $a\h). 이름은 끝까지 (되돌아가 $ab|c 로 보지 않게)
+               || Regex.IsMatch(m, @"[^\s;|{}(),=!>\[]\$")             // 다른 토큰 뒤에 바로 변수 (\$a)
+               || Regex.IsMatch(m, @"\$(?![A-Za-z_(])")                // $$ · $^ · $? 등 자동 변수
+               || Regex.IsMatch(m, @"\)[^\s;|{}()\].,=]");             // 괄호 식 뒤에 바로 다른 토큰
+    }
+
     /// <summary>-abc 같은 짧은 옵션(묶음 포함)</summary>
     private static bool IsShortOpt(string x) => x.Length > 1 && x[0] == '-' && x[1] != '-';
 
@@ -168,6 +190,7 @@ public static class ReadOnlyCommands
         "md5sum", "sha1sum", "sha256sum", "sha512sum", "cksum", "getenforce", "sestatus", "true", "false", "test", "[",
         "sleep", "cd", "history", "uniq", "arch", "tty", "locale", "ulimit", "jq", "base64",
         "chronyc", "ntpq", "ethtool", "mount", "swapon", "numfmt", "seq",
+        "clear",   // 화면만 지운다 (clear; ls 처럼 조회 앞에 붙여 쓰는 경우가 많다)
     };
 
     private static readonly HashSet<string> ShSubcommands = new(StringComparer.Ordinal)
@@ -192,6 +215,9 @@ public static class ReadOnlyCommands
     /// <summary>경로로 부른 명령은 시스템 실행 파일 폴더만 (/tmp/x/ls 처럼 이름만 같은 다른 프로그램 방지)</summary>
     private static readonly string[] SafeBinDirs = { "/bin/", "/usr/bin/", "/sbin/", "/usr/sbin/", "/usr/local/bin/", "/usr/local/sbin/" };
 
+    /// <summary>큰따옴표 안에서 허용하는 변수 확장: "$HOME" · "$USER" (이름 뒤에 글자가 이어지면 다른 변수), 문자열 끝의 $ (글자 그대로)</summary>
+    private static readonly Regex ShSafeVarRx = new(@"\$(?:(?:HOME|USER)(?!\w)|$)", RegexOptions.Compiled);
+
     private static bool CheckSh(string command, out string reason)
     {
         reason = "";
@@ -201,6 +227,12 @@ public static class ReadOnlyCommands
         foreach (var inner in DoubleQuotedInner(command))
             if (inner.IndexOfAny(new[] { '`', '\\', '!' }) >= 0 || inner.Contains("$(") || inner.Contains("${") || inner.Contains("$["))
             { reason = "큰따옴표 안 명령 치환·확장"; return false; }
+        // 변수 확장: $_ (직전 명령의 마지막 인자) · $1 · $OLDPWD · $IFS 등은 이 판별기가 보지 못한 값(-exec, link set … 등)으로 바뀐다
+        //  (echo -exec; find / $_ sh -c 'id' ';' → find / -exec sh -c 'id' ';').
+        // 작은따옴표 밖의 $ 는 모두 거부. 단 큰따옴표 안의 "$HOME" · "$USER" (이 명령 안에서 바꿀 수 없음)와 끝의 $ (글자 그대로)만 허용
+        foreach (var inner in DoubleQuotedInner(command))
+            if (ShSafeVarRx.Replace(inner, "").Contains('$')) { reason = "큰따옴표 안 변수 확장"; return false; }
+        if (bare.Contains('$')) { reason = "따옴표 밖 변수 확장($)"; return false; }
         // 따옴표 밖: 명령/프로세스 치환, ${..}·$[..] 확장, $'..' (안에서 \' 이스케이프), 백슬래시 이스케이프, 히스토리 확장(!), 중괄호 확장
         if (bare.IndexOfAny(new[] { '`', '\\', '!', '{', '}' }) >= 0 || bare.Contains("$(") || bare.Contains("${") || bare.Contains("$[") ||
             bare.Contains("$''") || bare.Contains("<(") || bare.Contains(">(") || bare.Contains("<<"))
@@ -330,9 +362,10 @@ public static class ReadOnlyCommands
             case "apt":
             case "apt-cache":
             {
-                // -o 로 APT 설정(훅 등)을 바꾸거나 -c 로 다른 설정 파일을 읽지 못하게
-                if (a.Any(x => x.StartsWith("-o", StringComparison.Ordinal) || x.StartsWith("-c", StringComparison.Ordinal) ||
-                               LongPrefix(x, "option", "config-file"))) return false;
+                // -o 로 APT 설정(훅 등)을 바꾸거나 -c 로 다른 설정 파일을 읽지 못하게.
+                // -p/--pkg-cache · -s/--src-cache 는 캐시 파일 경로 — 캐시를 다시 만들 때 그 경로에 쓴다 (sudo 면 아무 파일이나 덮어씀).
+                // 묶음(-qo, -qp)도 거부
+                if (a.Any(x => ShortHas(x, "ocps") || LongPrefix(x, "option", "config-file", "pkg-cache", "src-cache"))) return false;
                 if (!SubStart(a, out var i, new[] { "-q", "--quiet" })) return false;
                 var sub = At(a, i);
                 var ok = cmd == "apt"
@@ -473,7 +506,8 @@ public static class ReadOnlyCommands
             case "lastlog":
                 return !a.Any(x => ShortHas(x, "CS") || LongPrefix(x, "clear", "set"));
             case "blkid":
-                return !a.Any(x => ShortHas(x, "g") || LongPrefix(x, "garbage-collect"));
+                // -g 캐시 정리, -c <파일> 캐시 파일 지정 · -w <파일> 캐시 쓰기 (sudo blkid -c /etc/fstab 은 fstab 을 캐시로 덮어씀)
+                return !a.Any(x => ShortHas(x, "gcw") || LongPrefix(x, "garbage-collect", "cache-file", "write-cache"));
             default:
                 return true;
         }
@@ -584,6 +618,21 @@ public static class ReadOnlyCommands
         if (bare.Contains('`') || bare.Contains("${") || bare.Contains("<#") || bare.Contains("--%"))
         { reason = "이스케이프·블록 주석·특수 구문"; return false; }
         if (bare.Contains("::")) { reason = ".NET 정적 메서드 호출"; return false; }
+        if (HasUncPath(command)) { reason = "UNC 경로 (원격 서버로 NTLM 인증 전송)"; return false; }
+        // UNC 경로를 식으로 만들어 넘기는 길도 막는다 (literal \\ 검사를 피함):
+        //  '\'+'\h\s' · '{0}{0}h\s' -f '\' · '\'*2 · [char]92 · [wmi]/[adsi] 형식 변환 · $pwd.Path[2] 색인 ·
+        //  이어 붙은 토큰 '\'"\h\s" · \'\h\s' · $a$a · $a\h\s · ('\')\h\s · 큰따옴표 안 "$a$a\h"
+        if (bare.Contains('+')) { reason = "문자열 연결(+)"; return false; }
+        if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:f|[ic]?replace|[ic]?split|join)(?![\w-])", RegexOptions.IgnoreCase))
+        { reason = "문자열 연산자(-f, -join, -replace, -split)"; return false; }
+        if (Regex.IsMatch(bare, @"(?:['"")]|\$[\w:]+)\s*\*\s*[\d($'""]")) { reason = "문자열 반복(*)"; return false; }
+        if (Regex.IsMatch(bare, @"\[\s*[A-Za-z]")) { reason = "형식 리터럴([type])"; return false; }
+        if (Regex.IsMatch(bare, @"(?:\$[\w:]+|\))(?:\.\w+)*\[")) { reason = "색인([n])"; return false; }
+        if (DoubleQuotedInner(command).Any(i => i.Contains('$'))) { reason = "큰따옴표 안 변수 확장"; return false; }
+        if (PsAdjacentToken(command)) { reason = "이어 붙은 토큰 (문자열·변수 연결)"; return false; }
+        // -ComputerName · -CimSession · -Session 은 원격 컴퓨터에 접속(인증)한다 (gwmi -ComputerName 공격자 서버 → NTLM 해시 전송)
+        if (Regex.IsMatch(bare, @"(?<![\w$-])-(?:cn|co(?:m(?:p(?:u(?:t(?:e(?:r(?:n(?:a(?:m(?:e)?)?)?)?)?)?)?)?)?)?|cims\w*|pssession\w*|session\w*)(?![\w-])", RegexOptions.IgnoreCase))
+        { reason = "원격 컴퓨터 지정(-ComputerName·-CimSession·-Session)"; return false; }
         // .Method( ) 와 .'Method'( ) · ."Method"( ) · .$name( ) 같은 동적 멤버 호출
         if (Regex.IsMatch(bare, @"\.\s*[A-Za-z_]\w*\s*\(") || Regex.IsMatch(bare, @"\.\s*['$(]")) { reason = "메서드 호출"; return false; }
         var noAmp = Regex.Replace(bare, @"\d?>&\d", " ").Replace("&&", "  ");
@@ -634,7 +683,15 @@ public static class ReadOnlyCommands
             if (first.Equals("sc", StringComparison.OrdinalIgnoreCase)) { reason = "PowerShell 5.1 의 sc 는 Set-Content 별칭 (sc.exe 로)"; return false; }
             if (PsAliases.Contains(first)) continue;
             var exe = first.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? first[..^4] : first;
-            if (WinNative.Contains(exe)) { if (!WinArgsOk(exe, t.Skip(1).ToList())) { reason = $"쓰기 가능한 옵션: {seg}"; return false; } continue; }
+            if (WinNative.Contains(exe))
+            {
+                // 기본 명령의 인자는 글자 그대로만. 괄호·배열·변수·스플랫으로 넘긴 값은 위 구간 나누기에서 따로 떨어져
+                // 식으로 건너뛰어지므로 WinArgsOk 가 보지 못한다 — net user ('bob','pw','/add') · $a='bob','pw','/add'; net user $a · net user @a
+                if (bare.IndexOfAny(new[] { '$', '@', '(', ')', '{', '}', ',', '[' }) >= 0)
+                { reason = $"기본 명령에 식·변수·배열 인자: {seg}"; return false; }
+                if (!WinArgsOk(exe, t.Skip(1).ToList())) { reason = $"쓰기 가능한 옵션: {seg}"; return false; }
+                continue;
+            }
             reason = $"허용 목록에 없는 명령: {first}";
             return false;
         }
@@ -649,6 +706,7 @@ public static class ReadOnlyCommands
         var bare = StripQuoted(command, cmd: true);   // cmd 는 큰따옴표만 따옴표
         if (HasUnbalancedQuotes(command, cmd: true)) { reason = "따옴표 짝이 맞지 않음"; return false; }
         if (bare.Contains('^')) { reason = "이스케이프(^)"; return false; }   // ^" ^& 로 따옴표·구분자 해석이 어긋남
+        if (HasUncPath(command)) { reason = "UNC 경로 (원격 서버로 NTLM 인증 전송)"; return false; }
         // %VAR% 확장은 파싱 전에 (따옴표 안에서도) 일어난다 → 단순 %이름% 만 허용, %VAR:a=b% · %VAR:~n% 치환과 !지연 확장! 거부
         if (command.Contains('!')) { reason = "지연 확장(!)"; return false; }
         if (Regex.Replace(command, @"%[A-Za-z_][\w()]*%", "").Contains('%')) { reason = "변수 치환·부분 문자열 확장(%)"; return false; }
@@ -679,11 +737,15 @@ public static class ReadOnlyCommands
         string A(int i) => i < a.Count ? a[i].ToLowerInvariant() : "";
         bool Has(params string[] xs) => a.Any(x => xs.Any(y => x.Equals(y, StringComparison.OrdinalIgnoreCase)));
         bool HasRx(string pattern) => a.Any(x => Regex.IsMatch(x, pattern, RegexOptions.IgnoreCase));
+        // 원격 컴퓨터 지정은 그 서버로 NTLM 인증을 보낸다 (공격자 서버면 해시 유출): /node: (wmic), /server: (query·quser),
+        // /computer: (w32tm), /s 서버 (tasklist·systeminfo·schtasks·getmac·driverquery — findstr 의 /s 는 하위 폴더라 제외)
+        if (HasRx(@"^[-/](node|server|computer)(:|$)")) return false;
+        if (exe.ToLowerInvariant() is "tasklist" or "systeminfo" or "schtasks" or "getmac" or "driverquery" && HasRx(@"^[-/]s$")) return false;
         switch (exe.ToLowerInvariant())
         {
             case "ipconfig": return !HasRx(@"^[-/](release|renew|flushdns|registerdns|setclassid)");
-            case "sc": return A(0) is "query" or "queryex" or "qc" or "qdescription" or "qfailure" or "qtriggerinfo" or "qprivs" or "qsidtype" or "enumdepend" or "getdisplayname" or "getkeyname"
-                              || (a.Count > 1 && A(0).StartsWith(@"\\") && A(1) is "query" or "queryex" or "qc" or "qdescription");   // sc \\server query
+            // sc \\server query 는 UNC 검사(HasUncPath)에서 이미 거부된다
+            case "sc": return A(0) is "query" or "queryex" or "qc" or "qdescription" or "qfailure" or "qtriggerinfo" or "qprivs" or "qsidtype" or "enumdepend" or "getdisplayname" or "getkeyname";
             case "reg": return A(0) == "query";
             case "schtasks": return A(0) is "/query" or "-query" && !HasRx(@"^[-/](create|delete|change|run|end)");
             case "wmic":

@@ -9,7 +9,8 @@ using Renci.SshNet.Common;
 
 namespace Nubis;
 
-public sealed record ExecResult(HostEntry Host, bool Ok, int? ExitCode, string Output, string Error, long ElapsedMs);
+/// <param name="Note">실행 방식 안내 (예: 열린 탭의 연결로 실행) — 오류가 아니므로 stderr 와 따로 보여 준다</param>
+public sealed record ExecResult(HostEntry Host, bool Ok, int? ExitCode, string Output, string Error, long ElapsedMs, string? Note = null);
 
 /// <summary>여러 서버에 비대화형 명령을 병렬 실행 (Claude run_command 용)</summary>
 public static class SshExec
@@ -28,16 +29,56 @@ public static class SshExec
         return s[..head] + $"\n... (출력이 길어 가운데 {s.Length - max}자 생략) ...\n" + s[^tail..];
     }
 
-    public static async Task<List<ExecResult>> RunAsync(IEnumerable<HostEntry> hosts, string command, int timeoutSec, CancellationToken ct)
+    /// <param name="shared">호스트 Id → 열린 터미널 탭의 로그인된 연결. 있으면 새로 접속하지 않고 그 연결에 명령 채널만 연다 (OTP 서버도 다시 인증 없이)</param>
+    public static async Task<List<ExecResult>> RunAsync(IEnumerable<HostEntry> hosts, string command, int timeoutSec, CancellationToken ct,
+        IReadOnlyDictionary<Guid, (SshClient Client, string User)>? shared = null)
     {
         using var gate = new SemaphoreSlim(10);
         var tasks = hosts.Select(async h =>
         {
             await gate.WaitAsync(ct);
-            try { return await Task.Run(() => RunOne(h, command, timeoutSec), ct); }
+            try
+            {
+                return await Task.Run(() =>
+                    shared != null && shared.TryGetValue(h.Id, out var s) && RunShared(h, s.Client, s.User, command, timeoutSec) is { } r
+                        ? r : RunOne(h, command, timeoutSec), ct);
+            }
             finally { gate.Release(); }
         });
         return (await Task.WhenAll(tasks)).ToList();
+    }
+
+    /// <summary>
+    /// 열린 터미널 탭의 SSH 연결 위에 exec 채널을 열어 실행한다. 연결은 터미널 것이라 닫지 않는다.
+    /// 탭 연결이 그사이 끊겼으면 null — 호출하는 쪽이 새 연결로 넘어간다 (명령은 아직 실행되지 않았음).
+    /// 채널 열기 실패(서버의 세션 수 제한 등)를 포함해 Execute 이후의 오류는 결과로 돌려주고 다시 실행하지 않는다
+    /// </summary>
+    private static ExecResult? RunShared(HostEntry h, SshClient client, string user, string command, int timeoutSec)
+    {
+        var sw = Stopwatch.StartNew();
+        SshCommand cmd;
+        try
+        {
+            if (!client.IsConnected) return null;
+            cmd = client.CreateCommand(command);
+        }
+        catch { return null; }
+        using (cmd)
+        {
+            var note = $"열린 터미널 탭의 연결로 실행 — 계정 {user}";
+            cmd.CommandTimeout = TimeSpan.FromSeconds(timeoutSec);
+            try { cmd.Execute(); }
+            catch (SshOperationTimeoutException)
+            {
+                return new ExecResult(h, false, null, Trim(cmd.Result), $"{timeoutSec}초 안에 끝나지 않아 중단했습니다.", sw.ElapsedMilliseconds, note);
+            }
+            catch (Exception ex)
+            {
+                // 채널을 열기 전에 실패했을 수도, 실행 중에 끊겼을 수도 있어 새 연결로 다시 실행하지 않는다 (중복 실행 방지)
+                return new ExecResult(h, false, null, Trim(cmd.Result), "실행 중 오류 — " + ex.Message, sw.ElapsedMilliseconds, note);
+            }
+            return new ExecResult(h, cmd.ExitStatus == 0, cmd.ExitStatus, Trim(cmd.Result), Trim(cmd.Error).Trim(), sw.ElapsedMilliseconds, note);
+        }
     }
 
     private static ExecResult RunOne(HostEntry h, string command, int timeoutSec)
@@ -67,12 +108,15 @@ public static class SshExec
                 try
                 {
                     c.Connect();
+                    SshServerOs.Report(h, c);
                     client = c;
                     usedAddress = addr;
                     break;
                 }
                 catch (Exception ex)
                 {
+                    // 배너는 인증 전에 받으므로 인증(OTP 요구 등)에서 실패해도 서버 OS 는 기억한다
+                    if (reachedAuth) SshServerOs.Report(h, c);
                     c.Dispose();
                     if (hostKeyError != null) return new ExecResult(h, false, null, "", $"{addr}: {hostKeyError}", sw.ElapsedMilliseconds);
                     if (ex is SshAuthenticationException) return new ExecResult(h, false, null, "", $"{addr}: 인증 실패 — {ex.Message}", sw.ElapsedMilliseconds);

@@ -17,9 +17,13 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private readonly TextBlock _overlayTitle = new();
     private readonly TextBlock _overlayText = new();
     private readonly DispatcherTimer _resizeTimer = new() { Interval = TimeSpan.FromMilliseconds(600) };
+    // 로그인 직후에는 세션이 해상도 변경을 아직 받지 못해 실패할 때가 있어 잠시 뒤 한 번 더 시도한다
+    private readonly DispatcherTimer _displayRetryTimer = new() { Interval = TimeSpan.FromMilliseconds(1500) };
     private Button? _reconnectButton;
 
     private bool _initialized, _closed, _loggedIn;
+    // 인증 실패(비밀번호 오류·계정 잠김 등)로 끊겼으면 저장된 비밀번호가 있어도 다음 연결 때 반드시 다시 묻는다 (같은 비밀번호 재시도로 계정이 잠기지 않게)
+    private bool _forcePrompt;
     private string? _user, _password;
     private SessionStatus _status = SessionStatus.Connecting;
 
@@ -51,7 +55,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _rdp.LoginComplete += () =>
         {
             _loggedIn = true;
-            UpdateDisplay();
+            _forcePrompt = false;
+            if (!TryUpdateDisplay()) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
             // 로그인에 성공한 계정만 저장
             if (_pendingSave && _user != null && _password != null)
             {
@@ -66,8 +71,21 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _rdp.FatalError += code => OnDisconnected(-code);
 
         _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
-        SizeChanged += (_, _) => { if (_loggedIn) { _resizeTimer.Stop(); _resizeTimer.Start(); } };
+        _displayRetryTimer.Tick += (_, _) => { _displayRetryTimer.Stop(); UpdateDisplay(); };   // 재시도도 실패하면 SmartSizing 으로 대체
+        SizeChanged += (_, _) => RestartResizeTimer();
         Loaded += (_, _) => { if (!_initialized) { _initialized = true; Dispatcher.BeginInvoke(Connect, DispatcherPriority.Loaded); } };
+    }
+
+    private void RestartResizeTimer()
+    {
+        if (_loggedIn && !_closed) { _resizeTimer.Stop(); _resizeTimer.Start(); }
+    }
+
+    /// <summary>DPI 가 다른 모니터로 창을 옮기면 DIP 크기는 그대로라 SizeChanged 가 오지 않는다 → 원격 해상도·배율을 다시 맞춘다</summary>
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        RestartResizeTimer();
     }
 
     private Border BuildOverlay()
@@ -148,18 +166,27 @@ public sealed class RdpSessionView : UserControl, ISessionView
         if (_closed) return;
 
         // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로 다시 읽는다
-        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh)) _user = null;
+        // 계정이 새로 바뀌었으면 인증 실패 때의 비밀번호가 아니므로 저장된 값으로 바로 시도한다
+        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh)) { _user = null; _forcePrompt = false; }
 
-        if (_user == null)
+        if (_user == null || _forcePrompt)
         {
-            _user = _host.Username;
-            _password = _host.Password;
-            if (string.IsNullOrWhiteSpace(_user) || string.IsNullOrEmpty(_password))
+            if (_user == null)
+            {
+                _user = _host.Username;
+                _password = _host.Password;
+            }
+            // 인증 실패 뒤에는 저장된 비밀번호가 있어도 묻는다 (사용자 이름만 채워서)
+            if (_forcePrompt || string.IsNullOrWhiteSpace(_user) || string.IsNullOrEmpty(_password))
             {
                 var cred = CredentialDialog.Ask(Window.GetWindow(this), $"{_host.DisplayName} ({_host.Address})", _user, _saveCredentials != null);
+                // 대화상자(중첩 메시지 루프)가 떠 있는 동안 탭이 닫혔을 수 있다 (MCP close_session 등) — 컨트롤은 이미 풀에 반납됨
+                if (_closed) return;
                 if (cred == null)
                 {
-                    _user = null;
+                    // 인증 실패 뒤 취소했으면 사용자 이름은 남겨 다음에도 다시 묻고, 틀린 비밀번호는 버린다
+                    if (_forcePrompt) _password = null;
+                    else _user = null;
                     SetStatus(SessionStatus.Disconnected);
                     ShowOverlay(L.T("연결 취소됨"), L.T("인증 정보 입력이 취소되었습니다."));
                     return;
@@ -179,7 +206,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         {
             _rdp.CreateControl();
             var ocx = _rdp.Ocx;
-            var (w, h, _) = DesktopSize();
+            var (w, h, scale) = DesktopSize();
 
             ocx.Server = _host.Address;
             var user = _user ?? "";
@@ -189,6 +216,9 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
             ocx.DesktopWidth = w;
             ocx.DesktopHeight = h;
+            // 첫 연결부터 화면 배율을 맞춘다 (고 DPI 모니터에서 원격 글자가 작게 보이지 않게). 지원하지 않는 버전이면 무시
+            _rdp.TrySetExtendedProperty("DesktopScaleFactor", (uint)scale);
+            _rdp.TrySetExtendedProperty("DeviceScaleFactor", 100u);
             // mstsc 기본 설정(문서\Default.rdp)을 그대로 따른다
             var d = RdpDefaults.Load();
             ocx.ColorDepth = d.ColorDepth;
@@ -258,15 +288,19 @@ public sealed class RdpSessionView : UserControl, ISessionView
     }
 
     /// <summary>로그인 후·창 크기 변경 시 원격 해상도를 창에 맞춘다 (Windows 8.1/2012R2 이상 서버).</summary>
-    private void UpdateDisplay()
+    private void UpdateDisplay() => TryUpdateDisplay();
+
+    /// <returns>실패(예외)면 false. 할 일이 없을 때(연결 전·닫힘)는 true</returns>
+    private bool TryUpdateDisplay()
     {
-        if (_closed || !_loggedIn || _status != SessionStatus.Connected) return;
+        if (_closed || !_loggedIn || _status != SessionStatus.Connected) return true;
         var (w, h, scale) = DesktopSize();
         try
         {
             _rdp.Ocx.UpdateSessionDisplaySettings((uint)w, (uint)h, (uint)w, (uint)h, 0u, (uint)scale, 100u);
+            return true;
         }
-        catch { /* 지원하지 않는 서버는 SmartSizing 으로 대체 */ }
+        catch { return false; /* 지원하지 않는 서버는 SmartSizing 으로 대체 */ }
     }
 
     private void OnDisconnected(int reason)
@@ -288,8 +322,13 @@ public sealed class RdpSessionView : UserControl, ISessionView
             if (string.IsNullOrWhiteSpace(text)) text = L.F("연결이 끊어졌습니다. (사유 코드 {0})", reason);
             else text += L.F("\n(사유 코드 {0})", reason);
         }
-        // 비밀번호 오류 등으로 끊긴 경우 다음 연결 때 다시 묻도록
-        if (reason is 2055 or 2567 or 2823 or 3335 or 3591) _user = null;
+        // 인증 실패로 끊긴 경우 다음 연결 때 저장된 비밀번호가 있어도 다시 묻는다 (같은 비밀번호 재시도 → 계정 잠김 방지)
+        // 2055 비밀번호 오류 · 2567 사용자 없음 · 2823 계정 사용 안 함 · 3335 계정 잠김 · 3591 계정 만료 · 3847 비밀번호 만료 · 4615 비밀번호 변경 필요
+        if (reason is 2055 or 2567 or 2823 or 3335 or 3591 or 3847 or 4615)
+        {
+            _forcePrompt = true;
+            _pendingSave = false;   // 실패한 계정은 저장하지 않는다
+        }
 
         ShowOverlay(L.F("{0} 연결 종료", _host.DisplayName), text);
     }
@@ -333,6 +372,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
     {
         _closed = true;
         _resizeTimer.Stop();
+        _displayRetryTimer.Stop();
+        _password = null;   // 닫은 탭에 비밀번호를 남겨 두지 않는다
         try { _wfh.Child = null; } catch { }
         RdpAxHost.Release(_rdp);   // 연결 끊고 풀에 반납 (풀이 차면 해제)
         _wfh.Dispose();

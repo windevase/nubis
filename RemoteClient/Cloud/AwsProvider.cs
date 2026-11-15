@@ -71,15 +71,16 @@ public sealed class AwsProvider : ICloudProvider
         List<string> regions;
         try
         {
-            using var ec2 = new AmazonEC2Client(creds, RegionEndpoint.USEast1);
-            var resp = await ec2.DescribeRegionsAsync(new DescribeRegionsRequest(), ct);
-            regions = (resp.Regions ?? new()).Select(r => r.RegionName).ToList();
+            regions = await ListRegionsAsync(creds, ConfiguredRegion(chain, p.Name), ct);
         }
         catch (Exception ex) when (IsSsoProfile(chain, p.Name, creds) && LooksLikeSsoTokenError(ex))
         {
             // SSO 프로필일 때만 SSO 로그인 안내 (액세스 키 프로필의 "security token invalid/expired" 에 SSO 안내가 붙지 않게)
             throw new InvalidOperationException(L.F("SSO 로그인이 필요합니다 (aws sso login --profile {0}) — {1}", p.Name, CloudProviders.FirstLine(ex.Message)));
         }
+        // 리전이 0개면 "조회 성공 + 서버 없음" 으로 보여 이 프로필 호스트가 전부 지워지므로 실패로 처리
+        if (regions.Count == 0)
+            throw new InvalidOperationException(L.T("사용 가능한 리전 목록이 비어 있습니다 (DescribeRegions) — 이번 동기화는 건너뜁니다."));
 
         var (items, errors) = await CloudProviders.ParallelCollect(regions, 10, async region =>
         {
@@ -109,6 +110,42 @@ public sealed class AwsProvider : ICloudProvider
 
         if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
         return new CloudFetchResult(items, errors);
+    }
+
+    /// <summary>
+    /// 리전 목록 조회. 프로필에 설정된 리전(config 의 region)으로 먼저 부르고, 실패하면 us-east-1 로 다시 시도한다
+    /// (SCP 로 us-east-1 을 막은 조직에서도 동기화되게). 둘 다 실패하면 첫 번째(설정 리전) 오류를 던진다.
+    /// </summary>
+    private static async Task<List<string>> ListRegionsAsync(Amazon.Runtime.AWSCredentials creds, RegionEndpoint? home, CancellationToken ct)
+    {
+        async Task<List<string>> Call(RegionEndpoint endpoint)
+        {
+            using var ec2 = new AmazonEC2Client(creds, endpoint);
+            var resp = await ec2.DescribeRegionsAsync(new DescribeRegionsRequest(), ct);
+            return (resp.Regions ?? new()).Select(r => r.RegionName).ToList();
+        }
+
+        if (home == null || home.SystemName == RegionEndpoint.USEast1.SystemName) return await Call(RegionEndpoint.USEast1);
+        try
+        {
+            return await Call(home);
+        }
+        catch (Exception first) when (first is not OperationCanceledException)
+        {
+            try { return await Call(RegionEndpoint.USEast1); }
+            catch (Exception) when (!ct.IsCancellationRequested)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(first).Throw();
+                throw;   // 도달하지 않음
+            }
+        }
+    }
+
+    /// <summary>프로필(config)에 설정된 리전. 없거나 읽지 못하면 null</summary>
+    private static RegionEndpoint? ConfiguredRegion(CredentialProfileStoreChain chain, string name)
+    {
+        try { return chain.TryGetProfile(name, out var prof) ? prof.Region : null; }
+        catch { return null; }
     }
 
     /// <summary>SSO 자격 증명을 쓰는 프로필인지 (SSOAWSCredentials 이거나 config 에 sso_* 설정, source_profile 체인 포함)</summary>

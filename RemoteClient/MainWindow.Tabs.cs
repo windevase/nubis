@@ -42,6 +42,13 @@ public partial class MainWindow
                     // "Choose [1] Push, or [2] TOTP" 같은 고정 선택을 이 호스트에 기억 (호스트 편집에서 지울 수 있음)
                     (saved.PromptAnswers ??= [])[question] = answer;
                     SaveHosts();
+                },
+                SaveJumpCredentials: (u, p) =>
+                {
+                    // 점프 서버가 요구해 바꾼 비밀번호 — 점프 서버 호스트(또는 그 Vault 계정)에 대상 서버와 같은 방식으로 저장
+                    if (saved.JumpHostId is { } jid &&
+                        _hosts.FirstOrDefault(x => x.Id == jid && x.Protocol == Protocol.Ssh && !ReferenceEquals(x, saved)) is { } jumpSaved)
+                        SaveEnteredCredentials(jumpSaved, u, p);
                 })
             : null;
         FrameworkElement view = host.Protocol == Protocol.Ssh ? new SshSessionView(host, save, source) : new RdpSessionView(host, save, source);
@@ -335,12 +342,13 @@ public partial class MainWindow
             FocusSearch();
             e.Handled = true;
         }
-        else if (ctrl && e.Key == Key.S && EditorLayer.Visibility == Visibility.Visible)
+        // 편집 패널은 홈 화면에 있을 때만 (다른 탭의 WPF 포커스에서 숨은 편집 패널이 저장·닫히지 않게), 닫는 중이면 무시
+        else if (ctrl && e.Key == Key.S && _editorOpen && HomeView.Visibility == Visibility.Visible)
         {
             SaveEditor();
             e.Handled = true;
         }
-        else if (e.Key == Key.Escape && EditorLayer.Visibility == Visibility.Visible)
+        else if (e.Key == Key.Escape && _editorOpen && HomeView.Visibility == Visibility.Visible)
         {
             TryCloseEditor();
             e.Handled = true;

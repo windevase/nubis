@@ -802,6 +802,12 @@
                                 <Run Text="{l:Tr '  글자를 선택했을 때만 Ctrl+C 가 복사 (선택이 없으면 실행 중인 명령 중단). Windows Terminal 과 같음'}" Foreground="{StaticResource SubText}"/>
                             </TextBlock>
                         </CheckBox>
+                        <CheckBox x:Name="CopyOnSelectBox" Click="OnPrefClick" Margin="0,0,0,10">
+                            <TextBlock TextWrapping="Wrap">
+                                <Run Text="{l:Tr '선택하면 바로 복사 · 우클릭은 붙여넣기'}"/>
+                                <Run Text="{l:Tr '  마우스로 끌어 선택하면 바로 클립보드에 복사하고, 우클릭은 항상 붙여넣기. PuTTY · mRemoteNG 와 같음'}" Foreground="{StaticResource SubText}"/>
+                            </TextBlock>
+                        </CheckBox>
                         <CheckBox x:Name="PasteConfirmBox" Click="OnPrefClick">
                             <TextBlock TextWrapping="Wrap">
                                 <Run Text="{l:Tr '여러 줄 붙여넣기 전에 확인'}"/>
