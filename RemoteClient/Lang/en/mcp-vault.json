@@ -1,0 +1,15 @@
+{
+  "{0} 기본 계정: {1} → {2}": "{0} default account: {1} → {2}",
+  "(삭제된 계정)": "(deleted account)",
+  "(없음)": "(none)",
+  "영향받는 호스트: {0}개": "Affected hosts: {0}",
+  "Claude 가 기본 Vault 계정 변경을 요청합니다": "Claude is requesting a change to the default Vault account",
+  "Vault 계정 '{0}' ({1})": "Vault account '{0}' ({1})",
+  "설정: SSH 기본 계정 해제": "Settings: clear SSH default account",
+  "설정: RDP 기본 계정 해제": "Settings: clear RDP default account",
+  "클라우드 프로필 기본 계정 해제: [{0}] {1}": "Clear cloud profile default account: [{0}] {1}",
+  "호스트 연결 해제: {0}": "Unlink host: {0}",
+  "Vault 계정 '{0}' 를 삭제합니다.": "Deletes the Vault account '{0}'.",
+  "Claude 가 Vault 계정 삭제를 요청합니다": "Claude is requesting to delete a Vault account",
+  "Claude 가 저장된 호스트키 삭제를 요청합니다": "Claude is requesting to delete a saved host key"
+}

@@ -420,8 +420,11 @@ Windows 컴퓨터는 RDP, 그 외는 SSH 로 들어옵니다. OU 경로가 그�
 | 지금 화면 분석 | (탭을 보면서) "이 에러 뭐야?" — 보고 있는 탭이 질문마다 자동으로 전달됩니다 |
 | 로그 보기 | "web-01 의 /var/log/nginx/error.log 끝부분 보여줘" |
 | 접속 문제 진단 | "web-02 접속이 안 돼, 원인 찾아줘" |
-| 호스트 관리 | "10.0.1.5 를 web-02 로 Production 에 추가하고 운영 계정 연결해줘" |
-| 앱 설정 | "터미널 테마 dracula 로, 글꼴 16" |
+| 호스트 관리 | "10.0.1.5 를 web-02 로 Production 에 추가하고 운영 계정 연결해줘" · "db-replica 즐겨찾기 해줘" |
+| 그룹 | "On-prem / Web 그룹 이름을 Web 으로 바꿔줘" · "PRODUCTION 그룹 SSH 기본 계정을 ops 로 해줘" |
+| 탭 | "끊긴 탭 전부 다시 연결해줘" |
+| 원격 파일 | "demo-sftp 에 /tmp/x 폴더 만들어줘" |
+| 앱 설정 | "터미널 테마 dracula 로, 글꼴 16" · "선택하면 바로 복사 켜줘" |
 | 설정 안내 | "GitHub 로그인 설정을 단계별로 알려줘" |
 
 Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 · 취소** 줄이 보입니다. 취소하면 아직 시작하지 않은 서버에는 실행하지 않고 바로 돌아옵니다 (이미 시작한 서버의 명령은 끝까지 돌 수 있음). 서버가 많으면 서버당 출력을 줄이고, 긴 출력은 앞부분과 **끝부분(오류가 보통 있는 곳)** 을 남깁니다. `capture_screen` 은 캡처가 끝나면 보던 탭으로 되돌립니다.
@@ -430,46 +433,122 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 
 | 동작 | 승인 |
 |---|---|
-| 조회 (호스트 목록, 화면 읽기, 터미널 상태(현재 폴더·사용자), 화면 캡처, 접속 진단, 설정 조회, 가져올 곳 찾기), 클라우드 다시 동기화 | 없음 |
-| 탭 열기 (`open_session`) | 없음 (감사 로그에 기록) |
-| 연결 중인 탭 닫기 (`close_session`) | 승인 창 (끊긴 탭은 바로 닫음) |
-| 원격 파일 읽기 (`sftp_list`, `sftp_read`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략. 개인키·`/etc/shadow`·`.env` 같은 민감한 파일은 항상 승인) |
+| 조회 (호스트·그룹·탭·닫은 탭·클라우드 프로필·Vault 목록, 화면 읽기, 터미널 상태(현재 폴더·사용자), 화면 캡처, 접속 진단, 설정 조회, 가져올 곳 찾기), 클라우드 다시 동기화 | 없음 |
+| Vault 계정의 공개키 보기 (`vault_get_public_key`), 저장된 호스트키 목록 (`list_known_hosts`) | 없음 (감사 로그에 기록) |
+| 화면·탭 조작: 탭 열기·전환·이름 바꾸기·다시 연결·닫은 탭 다시 열기 (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), 로컬 PowerShell 탭 열기, SFTP 패널 열고 닫기, 그룹 접기, 앱 화면 열기 (`open_app_page`), 호스트 8개까지 한 번에 접속 (`connect_hosts`), 즐겨찾기, 클라우드 동기화 취소 | 없음 (감사 로그에 기록) |
+| 화면·편의 설정 (테마, 글꼴, 선택하면 바로 복사, 자동 재연결 등) | 없음 (감사 로그에 기록) |
+| 연결 중인 탭 닫기 (`close_session`, `close_sessions`) | 승인 창 (끊긴 탭은 바로 닫음. 여러 탭은 승인 한 번) |
+| 호스트 8개 넘게 한 번에 접속 (`connect_hosts`) | 승인 창 |
+| 원격 파일 읽기 (`sftp_list`, `sftp_read`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략. 개인키·`/etc/shadow`·`.env` 같은 민감한 파일과 탭의 sudo 권한으로 읽을 때는 항상 승인) |
 | 여러 서버 명령 실행 (`run_command`) | 승인 창 (읽기 전용 자동 승인을 켜면 조회 명령만 생략. Windows 로 보이거나 OS 를 모르는 SSH 서버는 항상 승인) |
 | 터미널 입력 (`send_to_terminal`) | 승인 창 (읽기 전용 자동 승인을 켜면, 화면이 셸 프롬프트일 때 한 줄 조회 명령만 생략 — 비밀번호 질문·vim, 로컬 PowerShell 탭, Windows·OS 를 모르는 서버는 항상 승인) |
-| 호스트 추가·수정·삭제, 파일 업로드·다운로드, 클라우드 프로필 추가, 클라우드 CLI 로그인, 가져온 호스트 등록 | **항상 승인 창** (가져오기는 먼저 미리 보고, 승인 한 번으로 등록) |
+| 호스트·그룹: 호스트 추가·수정·복제·삭제, 일괄 편집 (`bulk_update_hosts`), 그룹 기본값 (`set_group_defaults`), 그룹 이름 바꾸기 (`rename_group`) | **항상 승인 창** |
+| 원격 파일: 업로드·다운로드·폴더 만들기·이름 바꾸기·삭제·저장 (`sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`, `sftp_write`) | **항상 승인 창** (삭제는 지울 항목 수, 저장은 바뀐 내용 요약을 보여 줌) |
+| 클라우드: 프로필 추가·변경·제거, 클라우드 CLI 로그인 | **항상 승인 창** |
+| Vault·호스트키: 기본 Vault 계정 지정·해제, Vault 계정 삭제, 저장된 호스트키 삭제 | **항상 승인 창** (영향받는 항목을 함께 보여 줌) |
+| 가져온 호스트 등록 | **항상 승인 창** (먼저 미리 보고, 승인 한 번으로 등록) |
 | 가져오기용 Active Directory 조회 중 Vault 계정 사용, 다른 도메인, 도메인 컨트롤러 직접 지정 | 조회 전에 승인 창 |
 | 보안 설정 변경 (RDP 인증서 경고, 호스트키 확인 창, 자동 승인), 클라우드 호스트까지 바뀌는 기본 포트 변경 | **승인 창**. 자동 승인은 Claude 가 켤 수 없고 끄기만 가능 |
-| 시작 화면 로그인 · 편집기 경로 · 클라우드 인증 파일 경로 | Claude 가 바꿀 수 없음 |
+| 비밀번호·키·키 암호, 시작 화면 로그인 설정(소유자 전용), SFTP 편집기 경로, 클라우드 인증 파일 경로, 읽기 전용 자동 승인 켜기 | **Claude 는 절대 할 수 없음.** 비밀번호·키·로그인은 Claude 가 알맞은 창이나 화면만 열어 주고(`open_app_page`) 입력은 사용자가 직접 |
 
 승인 창은 대상 서버와 명령 전체를 보여 주고, 위험한 명령(`rm -rf`, `reboot`, `Stop-Service` 등)을 경고하며, 뜬 직후 1.5초 동안 실행 버튼이 잠깁니다. 승인 창은 한 번에 하나씩만 뜨고, Claude 가 요청을 취소하면 거부로 닫힙니다. Esc 는 거부입니다. 모든 요청은 감사 로그(패널 헤더의 문서 아이콘)에 기록됩니다.
 
 ### 10.4 Claude 가 할 수 없는 것
 
 - 저장된 비밀번호 · 키를 읽거나 복호화 — 계정 파일(`hosts.json`, `vault.json` 등)은 Claude 의 읽기 도구와 셸 명령에서 차단됩니다
-- 비밀번호를 호스트에 넣기 — 계정은 Vault 계정 연결로만. 가져오기도 비밀번호를 옮기지 않습니다
+- 호스트 · Vault 계정 · 클라우드 프로필에 비밀번호나 키 넣기 — 계정은 Vault 계정 연결로만. 가져오기도 비밀번호를 옮기지 않습니다. 비밀 값이 필요하면 Claude 가 입력 창을 열어 주고 사용자가 직접 입력합니다
 - Nubis 데이터 폴더 · `~/.ssh` · 개인키 파일을 서버로 업로드하거나, 그 파일에서 가져오기 (`~/.ssh/config` 는 예외)
-- 시작 화면 로그인 설정, 편집기 경로, `settings.json` 직접 수정
+- 시작 화면 로그인 설정, SFTP 편집기 경로, 클라우드 인증 파일 경로 변경, 읽기 전용 자동 승인 켜기, `settings.json` 직접 수정
+- 사용자가 거부한 호스트키 지우기
 
 ### 10.5 MCP 도구 목록
+
+Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 일은 Claude 도 할 수 있습니다. 예외는 비밀 값(비밀번호·키)과 몇 가지 보호된 설정입니다 (10.3 · 10.4 참고).
+
+**호스트 · 그룹**
 
 | 도구 | 기능 |
 |---|---|
 | `list_groups` · `list_hosts` | 그룹 · 호스트 검색 |
+| `add_host` · `update_host` · `delete_host` | 호스트 추가 · 수정 · 삭제 (즐겨찾기만 바꿀 때는 승인 없음) |
+| `duplicate_host` | 호스트를 계정 설정까지 그대로 복제 |
+| `bulk_update_hosts` | 여러 호스트를 한 번에 수정 (일괄 편집과 같은 규칙) |
+| `set_group_defaults` | 그룹의 SSH/RDP Vault 계정 · 공인 IP 접속 여부 (그룹 우클릭 메뉴와 같음) |
+| `rename_group` | 직접 만든 그룹 이름 바꾸기 (같은 이름의 그룹이 있으면 합쳐짐. 클라우드 그룹은 프로필 설정에서) |
+| `set_group_collapsed` | 호스트 목록에서 그룹 접기 · 펴기 |
+| `connect_hosts` | 여러 호스트에 한 번에 탭 열기 (**모두 연결**과 같음) |
+
+**세션 · 탭**
+
+| 도구 | 기능 |
+|---|---|
 | `list_sessions` · `open_session` · `close_session` | 탭 목록 · 열기 · 닫기 |
+| `select_session` | 탭 또는 호스트 목록(홈) 화면 보여 주기 |
+| `rename_session` | 탭 이름 바꾸기 |
+| `reconnect_session` | 탭 하나 또는 끊긴 탭 전부 다시 연결 |
+| `close_sessions` | 다른 탭 · 오른쪽 탭 · 끊긴 탭 모두 닫기 |
+| `list_closed_tabs` · `reopen_closed_tab` | 닫은 탭 기록 · 다시 열기 (`Ctrl+Shift+R`) |
+| `open_local_terminal` | 로컬 PowerShell 탭 열기 |
+| `toggle_sftp_panel` | SSH 탭의 SFTP 패널 열기 · 닫기 |
+
+**터미널**
+
+| 도구 | 기능 |
+|---|---|
 | `read_terminal` · `get_selection` · `capture_screen` | 터미널 내용 · 선택 영역 · 화면 이미지 |
 | `get_terminal_info` | 터미널의 현재 폴더 · 로그인 계정 · sudo 전환 여부 (명령을 보내지 않아 바로 답함) |
 | `wait_for_output` | 문자열이 나오거나 프롬프트가 돌아오거나 출력이 멈출 때까지 대기 |
 | `send_to_terminal` | 터미널에 입력 |
+
+**원격 명령**
+
+| 도구 | 기능 |
+|---|---|
 | `run_command` | 여러 서버 병렬 실행 (SSH / WinRM) |
 | `test_connection` | DNS · 포트 · SSH 배너 · WinRM 진단 (로그인하지 않음) |
-| `sftp_list` · `sftp_read` · `sftp_download` · `sftp_upload` | 원격 파일 |
-| `add_host` · `update_host` · `delete_host` · `list_vault` | 호스트 관리 · Vault 목록 |
+
+**SFTP**
+
+| 도구 | 기능 |
+|---|---|
+| `sftp_list` · `sftp_read` | 폴더 목록 · 텍스트 파일 읽기 |
+| `sftp_download` · `sftp_upload` | 파일 · 폴더 주고받기 (다운로드는 `다운로드\Nubis\<호스트>` 폴더로) |
+| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | 폴더 만들기, 파일 · 폴더 · 심볼릭 링크 이름 바꾸기 · 삭제 (링크는 링크 자체만, 가리키는 대상은 건드리지 않음) |
+| `sftp_write` | 텍스트 파일 저장 (Claude 가 읽은 뒤 서버에서 파일이 바뀌었으면 저장하지 않음) |
+
+**클라우드**
+
+| 도구 | 기능 |
+|---|---|
 | `discover_sources` | 가져올 곳 찾기: 이 PC 의 클라우드 프로필(로그인 필요 여부 포함), `~/.ssh/config`, mRemoteNG, AD 도메인 |
-| `cloud_add_profile` · `cloud_login` · `cloud_sync` | 클라우드 프로필 추가(바로 동기화) · 새 콘솔 창에서 CLI 로그인 · 다시 동기화 |
-| `import_hosts` | 엑셀·CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD 에서 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
+| `cloud_list_profiles` | 클라우드 프로필 목록과 설정 (기본 비밀번호는 설정 여부만 표시) |
+| `cloud_add_profile` · `cloud_login` | 클라우드 프로필 추가(바로 동기화) · 새 콘솔 창에서 CLI 로그인 |
+| `cloud_update_profile` · `cloud_remove_profile` | 프로필 설정 변경 (포트, 공인 IP, 중지된 서버 포함, 기본 Vault 계정) · 프로필과 그 호스트를 Nubis 에서 제거 (클라우드의 서버는 그대로) |
+| `cloud_sync` · `cloud_sync_cancel` | 다시 동기화 · 진행 중인 동기화 취소 |
+
+**Vault · 호스트키**
+
+| 도구 | 기능 |
+|---|---|
+| `list_vault` | Vault 계정 목록 (비밀번호 · 키는 포함하지 않음) |
+| `vault_set_default` | 설정의 SSH/RDP 기본 계정 지정 · 해제 |
+| `vault_get_public_key` | SSH 키 계정의 공개키 한 줄 (`authorized_keys` 에 넣는 값) |
+| `vault_delete` | Vault 계정 삭제 (이 계정을 쓰던 호스트 · 프로필 · 설정의 연결도 함께 해제) |
+| `list_known_hosts` · `delete_known_host` | 저장된 호스트키 목록 · 서버를 다시 설치했을 때 키 지우기 (거부한 키는 지울 수 없음) |
+
+**설정 · 앱 화면**
+
+| 도구 | 기능 |
+|---|---|
 | `get_settings` · `update_settings` | 앱 설정 |
-| `get_setup_status` · `open_app_page` | 설정 상태 · 화면 열기 (설정 안내용) |
+| `get_setup_status` · `open_app_page` | 설정 상태 · 화면과 입력 창 열기 (비밀번호를 사용자가 직접 넣는 Vault · 호스트 · 클라우드 프로필 창 포함) |
 | `diagnostics` | 앱 메모리 · 핸들 |
+
+**가져오기**
+
+| 도구 | 기능 |
+|---|---|
+| `import_hosts` | 엑셀·CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD 에서 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
 
 ### 10.6 여러 서버 명령 실행 (SSH / WinRM)
 

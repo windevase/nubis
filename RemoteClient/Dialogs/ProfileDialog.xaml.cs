@@ -48,14 +48,10 @@ public partial class ProfileDialog : Window
         if (!TryPort(RdpPortBox.Text, out var rdp)) { ShowError(RdpPortBox); return; }
         ErrorText.Visibility = Visibility.Collapsed;
 
-        _p.DisplayName = NameBox.Text.Trim();
-        _p.DefaultUsername = UserBox.Text.Trim();
+        // 값 반영은 MCP cloud_update_profile 과 같은 CloudProfileEdit.ApplySettings (기본 비밀번호만 이 창에서 따로)
+        CloudProfileEdit.ApplySettings(_p, new CloudProfileSettings(NameBox.Text.Trim(), UserBox.Text.Trim(), ssh, rdp,
+            PublicIp.IsChecked == true, StoppedBox.IsChecked == true), unhideRemoved: UnhideBox.IsChecked == true);
         _p.DefaultPassword = PassBox.Password;
-        _p.SshPort = ssh;
-        _p.RdpPort = rdp;
-        _p.UsePublicIp = PublicIp.IsChecked == true;
-        _p.IncludeStopped = StoppedBox.IsChecked == true;
-        if (UnhideBox.IsChecked == true) _p.HiddenInstances.Clear();
         DialogResult = true;
     }
 

@@ -38,9 +38,12 @@ public partial class VaultEntryDialog : Window
     }
 
     /// <summary>새 계정을 만들어 저장하면 그 항목, 취소하면 null</summary>
-    public static VaultEntry? Create(Window? owner)
+    public static VaultEntry? Create(Window? owner) => Create(owner, "", "");
+
+    /// <summary>이름·사용자명을 미리 채운 새 계정 창 (Claude 의 open_app_page vault_new — 비밀 값은 사용자가 직접 입력)</summary>
+    public static VaultEntry? Create(Window? owner, string name, string username)
     {
-        var entry = new VaultEntry();
+        var entry = new VaultEntry { Name = name, Username = username };
         return Show(owner, new VaultEntryDialog(entry, true)) ? entry : null;
     }
 

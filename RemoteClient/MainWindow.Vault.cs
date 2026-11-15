@@ -59,58 +59,87 @@ public partial class MainWindow
     private void OnVaultEdit(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
+        EditVaultEntry(entry.Id);
+    }
+
+    /// <summary>Vault 계정 수정 창 (Vault 화면 · MCP open_app_page vault_edit 공통). 저장하면 true</summary>
+    private bool EditVaultEntry(Guid id)
+    {
         // 저장된 개체가 아니라 사본을 고친 뒤 Upsert 로 바꿔 넣는다 — 창이 열린 동안 접속(다른 스레드)이 반쯤 바뀐 값을 읽지 않고,
         // 취소·저장 실패 때 원본이 그대로 남는다
-        var copy = VaultStore.Get(entry.Id)?.Clone();
-        if (copy == null) { RefreshVault(); return; }
-        if (VaultEntryDialog.Edit(this, copy) && SaveVault(copy)) RefreshHosts();   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
+        var copy = VaultStore.Get(id)?.Clone();
+        if (copy == null) { RefreshVault(); return false; }
+        var saved = VaultEntryDialog.Edit(this, copy) && SaveVault(copy);
+        if (saved) RefreshHosts();   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
+        RefreshVault();
+        return saved;
+    }
+
+    /// <summary>Vault 계정을 가리키는 것들 (지우기 전 확인용): 직접 연결한 호스트 · 기본 계정으로 쓰는 호스트 · 클라우드 프로필 · 설정 기본 계정</summary>
+    private sealed record VaultRefs(List<HostEntry> Direct, List<HostEntry> ViaDefault, List<CloudProfile> Profiles, bool SshDefault, bool RdpDefault)
+    {
+        public List<HostEntry> AllHosts => Direct.Concat(ViaDefault).ToList();
+    }
+
+    private VaultRefs FindVaultRefs(Guid id)
+    {
+        var direct = _hosts.Where(h => h.VaultId == id).ToList();
+        // 기본 계정(클라우드 프로필·설정)으로 이 계정을 쓰는 호스트도 센다 — 지우면 다른 계정으로 넘어가거나 접속 때 묻게 된다
+        // (호스트마다 프로필 목록을 훑지 않게 사전으로)
+        var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
+        var viaDefault = _hosts.Where(h => h.VaultId != id &&
+                                           h.EffectiveVaultId(h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null) == id).ToList();
+        var s = SettingsStore.Current;
+        return new VaultRefs(direct, viaDefault, _profiles.Where(p => p.SshVaultId == id || p.RdpVaultId == id).ToList(),
+            s.DefaultSshVaultId == id, s.DefaultRdpVaultId == id);
+    }
+
+    /// <summary>
+    /// Vault 계정을 지우고 참조를 정리한다 (Vault 화면 · MCP vault_delete 공통, 확인 창 없음).
+    /// 먼저 지우고, 성공했을 때만 참조를 정리한다 (지우기에 실패했는데 호스트·기본 계정 연결만 끊기지 않게). 실패하면 예외
+    /// </summary>
+    private void DeleteVaultAndRefs(Guid id)
+    {
+        try { VaultStore.Remove(id); }
+        catch { RefreshVault(); throw; }
+        var users = _hosts.Where(h => h.VaultId == id).ToList();
+        foreach (var h in users) h.VaultId = null;
+        // 지워진 계정을 가리키는 기본 계정 참조도 정리 (남아 있으면 지운 ID 를 계속 들고 있다)
+        var profilesChanged = false;
+        foreach (var p in _profiles)
+        {
+            if (p.SshVaultId == id) { p.SshVaultId = null; profilesChanged = true; }
+            if (p.RdpVaultId == id) { p.RdpVaultId = null; profilesChanged = true; }
+        }
+        if (profilesChanged) SaveProfiles();
+        // 기본 계정이었을 때만 설정을 쓴다 — 매번 쓰면 settings.json 을 다시 쓰고 열린 모든 터미널에 설정을 다시 보낸다
+        var cur = SettingsStore.Current;
+        if (cur.DefaultSshVaultId == id || cur.DefaultRdpVaultId == id)
+            SettingsStore.Update(s =>
+            {
+                if (s.DefaultSshVaultId == id) s.DefaultSshVaultId = null;
+                if (s.DefaultRdpVaultId == id) s.DefaultRdpVaultId = null;
+            });
+        if (users.Count > 0) SaveHosts();
+        RefreshHosts();
         RefreshVault();
     }
 
     private void OnVaultDelete(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not VaultEntry entry) return;
-        var users = _hosts.Where(h => h.VaultId == entry.Id).ToList();
-        // 기본 계정(클라우드 프로필·설정)으로 이 계정을 쓰는 호스트도 센다 — 지우면 다른 계정으로 넘어가거나 접속 때 묻게 된다
-        // (호스트마다 프로필 목록을 훑지 않게 사전으로)
-        var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
-        var viaDefault = _hosts.Where(h => h.VaultId != entry.Id &&
-                                           h.EffectiveVaultId(h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null) == entry.Id).ToList();
-        var all = users.Concat(viaDefault).ToList();
+        var all = FindVaultRefs(entry.Id).AllHosts;
         var msg = L.F("Vault 계정 '{0}' ({1}) 를 삭제할까요?", entry.Name, entry.MethodsText) +
                   (all.Count > 0
                       ? "\n\n" + L.F("이 계정을 쓰는 호스트 {0}개는 연결이 해제되어, 호스트에 직접 적은 값이 없으면 다음 접속 때 계정을 묻습니다:", all.Count) + "\n" +
                         string.Join("\n", all.Take(10).Select(h => "  " + h.DisplayName)) + (all.Count > 10 ? "\n  ..." : "")
                       : "");
         if (Dialog.Show(this, msg, L.T("Vault 삭제"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        // 먼저 지우고, 성공했을 때만 참조를 정리한다 (지우기에 실패했는데 호스트·기본 계정 연결만 끊기지 않게)
-        try { VaultStore.Remove(entry.Id); }
+        try { DeleteVaultAndRefs(entry.Id); }
         catch (Exception ex)
         {
             Dialog.Show(this, L.F("Vault 저장 실패: {0}", ex.Message), "Vault", MessageBoxButton.OK, MessageBoxImage.Error);
-            RefreshVault();
-            return;
         }
-        foreach (var h in users) h.VaultId = null;
-        // 지워진 계정을 가리키는 기본 계정 참조도 정리 (남아 있으면 지운 ID 를 계속 들고 있다)
-        var profilesChanged = false;
-        foreach (var p in _profiles)
-        {
-            if (p.SshVaultId == entry.Id) { p.SshVaultId = null; profilesChanged = true; }
-            if (p.RdpVaultId == entry.Id) { p.RdpVaultId = null; profilesChanged = true; }
-        }
-        if (profilesChanged) SaveProfiles();
-        // 기본 계정이었을 때만 설정을 쓴다 — 매번 쓰면 settings.json 을 다시 쓰고 열린 모든 터미널에 설정을 다시 보낸다
-        var cur = SettingsStore.Current;
-        if (cur.DefaultSshVaultId == entry.Id || cur.DefaultRdpVaultId == entry.Id)
-            SettingsStore.Update(s =>
-            {
-                if (s.DefaultSshVaultId == entry.Id) s.DefaultSshVaultId = null;
-                if (s.DefaultRdpVaultId == entry.Id) s.DefaultRdpVaultId = null;
-            });
-        if (users.Count > 0) SaveHosts();
-        RefreshHosts();
-        RefreshVault();
     }
 
     private void OnVaultCopyPublic(object sender, RoutedEventArgs e)
