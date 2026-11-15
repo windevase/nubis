@@ -189,7 +189,8 @@ public partial class MainWindow
         menu.IsOpen = true;
     }
 
-    private async Task AddProfilesAsync(CloudSection section, List<CloudCandidate> candidates)
+    /// <summary>후보를 프로필로 추가하고 바로 동기화한다 (UI 의 프로필 추가 메뉴 · MCP cloud_add_profile 공용). 추가한 프로필을 돌려준다</summary>
+    private async Task<List<CloudProfile>> AddProfilesAsync(CloudSection section, List<CloudCandidate> candidates)
     {
         var added = new List<CloudProfile>();
         foreach (var c in candidates)
@@ -209,6 +210,7 @@ public partial class MainWindow
             await gate.WaitAsync();
             try { await SyncProfileAsync(p); } finally { gate.Release(); }
         }));
+        return added;
     }
 
     private void OnProfileSettings(object sender, RoutedEventArgs e)
@@ -326,12 +328,17 @@ public partial class MainWindow
         SectionOf(p).Message = msg;
     }
 
-    private static string StartLogin(CloudProvider provider, CloudProfile? p)
+    private static string StartLogin(CloudProvider provider, CloudProfile? p) =>
+        LaunchLoginCommand(CloudProviders.Get(provider).LoginCommand(p), out _);
+
+    /// <summary>로그인 명령을 새 cmd 창에서 실행 (UI 로그인 버튼 · MCP cloud_login 공용). 화면에 보여 줄 안내 문구를 돌려준다</summary>
+    private static string LaunchLoginCommand(string cmd, out bool started)
     {
-        var cmd = CloudProviders.Get(provider).LoginCommand(p);
+        started = false;
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/k {cmd}") { UseShellExecute = true });
+            started = true;
             return L.F("새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.", cmd);
         }
         catch (Exception ex) { return L.F("실행 실패: {0}", ex.Message); }
