@@ -36,13 +36,16 @@ public sealed class LocalTerminalView : UserControl, ISessionView
             if (_status == SessionStatus.Connected) _pty?.Write(d);
             else if (_status == SessionStatus.Disconnected && d.Contains('\r')) Start();
         };
+        // 끝나면 터미널 아래쪽 "다시 시작" 버튼으로도 다시 띄울 수 있게
+        _term.ReconnectRequested += () => { if (_status == SessionStatus.Disconnected) Start(); };
     }
 
     private void Start()
     {
         if (_closed) return;
         _pty?.Dispose();
-        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose };
+        // 화면이 못 따라갈 만큼 출력이 쏟아지면 읽기를 잠시 멈춘다 (XtermView 흐름 제어)
+        var pty = new PseudoConsoleProcess { KillTreeOnClose = _killTreeOnClose, OutputGate = _term.WaitForRoom };
         pty.Output += _term.Write;
         pty.Exited += code => Dispatcher.BeginInvoke(() =>
         {
@@ -69,6 +72,8 @@ public sealed class LocalTerminalView : UserControl, ISessionView
     private void SetStatus(SessionStatus s)
     {
         _status = s;
+        if (s == SessionStatus.Disconnected) _term.ShowReconnect(L.T("다시 시작"));
+        else _term.HideReconnect();
         StatusChanged?.Invoke(s);
     }
 

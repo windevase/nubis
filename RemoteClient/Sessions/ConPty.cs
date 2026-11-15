@@ -65,7 +65,8 @@ public sealed class PseudoConsoleProcess : IDisposable
     private Process? _process;
     private IntPtr _hProcess, _hThread;
     private IntPtr _job;   // KILL_ON_JOB_CLOSE Job (PTY 수명 동안 유지, KillTreeOnClose 일 때만)
-    private bool _disposed;
+    // 읽기 스레드·입력 작업 줄에서도 읽는다
+    private volatile bool _disposed;
 
     /// <summary>
     /// 닫을 때 하위 프로세스 트리까지 모두 끝낼지 (Claude 패널: cmd → node(claude) → MCP 자식 등이 남지 않게 KILL_ON_JOB_CLOSE Job 사용).
@@ -169,10 +170,14 @@ public sealed class PseudoConsoleProcess : IDisposable
         {
             using var output = new FileStream(_outputRead!, FileAccess.Read);
             int n;
+            var gate = OutputGate;
             while ((n = output.Read(buf, 0, buf.Length)) > 0)
             {
                 var c = decoder.GetChars(buf, 0, n, chars, 0);
                 if (c > 0) Output?.Invoke(new string(chars, 0, c));
+                // 화면이 한참 밀려 있으면 다음 읽기를 미룬다 (닫히면 바로 빠져나온다)
+                if (gate != null)
+                    while (!_disposed && !gate(250)) { }
             }
         }
         catch { /* 파이프 닫힘 */ }
@@ -200,17 +205,34 @@ public sealed class PseudoConsoleProcess : IDisposable
         Exited?.Invoke(code);
     }
 
+    /// <summary>키 입력을 순서대로 보내는 백그라운드 작업 줄 (프로세스가 입력을 읽지 않아 파이프가 가득 차도 UI 스레드가 멈추지 않게)</summary>
+    private Task _writeChain = Task.CompletedTask;
+    private readonly object _writeLock = new();
+
+    /// <summary>입력 보내기 (어느 스레드에서나). 들어온 순서대로 백그라운드에서 쓴다</summary>
     public void Write(string text)
     {
-        if (_input == null || _disposed) return;
-        try
-        {
-            var bytes = Encoding.UTF8.GetBytes(text);
-            _input.Write(bytes, 0, bytes.Length);
-            _input.Flush();
-        }
-        catch { }
+        var input = _input;
+        if (input == null || _disposed || text.Length == 0) return;
+        var bytes = Encoding.UTF8.GetBytes(text);
+        lock (_writeLock)
+            _writeChain = _writeChain.ContinueWith(_ =>
+            {
+                if (_disposed) return;
+                try
+                {
+                    input.Write(bytes, 0, bytes.Length);
+                    input.Flush();
+                }
+                catch { }
+            }, TaskScheduler.Default);
     }
+
+    /// <summary>
+    /// 출력을 넘기기 전에 화면이 따라올 때까지 기다리는 함수 (최대 대기 ms → 받아도 되면 true). 없으면 기다리지 않는다.
+    /// 기다리는 동안 읽지 않으므로 파이프가 차서 프로세스가 출력을 잠시 멈춘다 (화면이 못 따라갈 만큼 쏟아질 때의 흐름 제어)
+    /// </summary>
+    public Func<int, bool>? OutputGate { get; init; }
 
     /// <summary>
     /// Resize(UI 스레드)와 ClosePc(프로세스 종료 대기 스레드)가 겹치면 이미 닫힌(해제된) 의사 콘솔 핸들로

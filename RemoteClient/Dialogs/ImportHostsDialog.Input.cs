@@ -1,9 +1,11 @@
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 
 namespace Nubis;
 
-/// <summary>가져오기 창: 키보드(Enter 로 불러오기 · Esc) · 미리보기 검색 · 경고 펼치기</summary>
+/// <summary>가져오기 창: 키보드(Enter 로 불러오기 · Esc) · 미리보기 검색 · 경고 펼치기 · 열 머리글 맞춤</summary>
 public partial class ImportHostsDialog
 {
     // ===================== 키보드 =====================
@@ -51,5 +53,25 @@ public partial class ImportHostsDialog
     private void OnToggleWarnings(object sender, MouseButtonEventArgs e)
     {
         WarningsScroll.MaxHeight = WarningsScroll.MaxHeight > 100 ? 74 : 260;
+    }
+
+    // ===================== 열 머리글 =====================
+
+    /// <summary>
+    /// 목록에 세로 스크롤바가 보이면 그 너비만큼 머리글 오른쪽 여백을 늘려 열을 맞춘다 (줄이 적어 스크롤바가 없으면 여백 없이).
+    /// 스크롤바 표시 여부는 줄 수 · 필터 · 창 크기로 바뀌므로 ScrollChanged 마다 다시 계산한다
+    /// </summary>
+    private void OnRowListScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (e.OriginalSource is not ScrollViewer sv || HeaderGrid == null) return;
+        double bar = 0;
+        if (sv.ComputedVerticalScrollBarVisibility == Visibility.Visible)
+        {
+            bar = sv.Template?.FindName("PART_VerticalScrollBar", sv) is ScrollBar sb && sb.ActualWidth > 0
+                ? sb.ActualWidth
+                : SystemParameters.VerticalScrollBarWidth;
+        }
+        var m = HeaderGrid.Margin;
+        if (m.Right != 10 + bar) HeaderGrid.Margin = new Thickness(m.Left, m.Top, 10 + bar, m.Bottom);
     }
 }

@@ -112,12 +112,22 @@ public partial class MainWindow
         return await WithSftp(conn, c =>
         {
             // 자동 승인됐으면 심볼릭 링크를 따라간 실제 경로로 한 번 더 본다 (/tmp/x → /etc/shadow 같은 우회 방지).
-            // Get 은 서버의 realpath 로 경로를 풀어 준다 (OpenSSH). 비밀 경로면 이제라도 승인을 받는다
-            if (!asked && c.Get(path).FullName is { } real && real != path && McpHelpers.IsSensitiveRemotePath(real))
-                ApproveRemoteRead("sftp_read", h, $"{what}\n실제 경로: {real}", sensitive: true).GetAwaiter().GetResult();
-            var attr = c.GetAttributes(path);
+            // Get 은 서버의 realpath 로 경로를 풀어 준다 (OpenSSH). 비밀 경로면 이제라도 승인을 받는다.
+            // 그리고 확인한 그 실제 경로를 연다 — 확인 뒤 원래 경로의 링크를 바꿔치기해도 확인하지 않은 파일을 읽지 않게.
+            // 한계: realpath 를 풀어 주지 않는 SFTP 서버, 하드 링크, 실제 경로의 상위 폴더를 그사이 링크로 바꾸는 경우는 막지 못한다
+            var readPath = path;
+            if (!asked)
+            {
+                var real = c.Get(path).FullName;
+                if (real != path && McpHelpers.IsSensitiveRemotePath(real))
+                    ApproveRemoteRead("sftp_read", h, $"{what}\n실제 경로: {real}", sensitive: true).GetAwaiter().GetResult();
+                if (real.Length > 0) readPath = real;
+            }
+            var attr = c.GetAttributes(readPath);
             if (attr.IsDirectory) throw new McpToolException("폴더입니다. sftp_list 를 쓰세요.");
-            using var s = c.OpenRead(path);
+            // 장치·FIFO·소켓은 읽지 않는다 (FIFO 는 쓰는 쪽이 없으면 응답 제한 시간까지 멈춘다)
+            if (!attr.IsRegularFile) throw new McpToolException("일반 파일이 아닙니다 (장치·FIFO·소켓 등).");
+            using var s = c.OpenRead(readPath);
             var size = attr.Size;
             var fromMiddle = tail && size > max;
             if (fromMiddle) s.Seek(size - max, SeekOrigin.Begin);
@@ -187,6 +197,7 @@ public partial class MainWindow
         {
             Directory.CreateDirectory(root);
             var attr = c.GetAttributes(path);
+            if (!attr.IsDirectory && !attr.IsRegularFile) throw new McpToolException("일반 파일이 아닙니다 (장치·FIFO·소켓 등).");
             var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
             var full = Path.GetFullPath(root).TrimEnd('\\') + "\\";
             var skipped = new List<string>();
@@ -204,6 +215,8 @@ public partial class MainWindow
                         var wanted = Path.Combine(local, SftpPanel.SafeLocalName(f.Name));
                         var childLocal = SftpPanel.UniquePath(wanted, f.IsDirectory);
                         if (childLocal != wanted) renamed.Add($"{f.FullName} → {Path.GetFileName(childLocal)}");
+                        // 장치·FIFO·소켓은 받지 않는다 (/dev/zero 류는 끝없이 이어지고, FIFO 는 멈춘다)
+                        if (!f.IsSymbolicLink && !f.IsDirectory && !f.IsRegularFile) { skipped.Add($"{f.FullName} (일반 파일이 아님)"); continue; }
                         if (!f.IsSymbolicLink) { Get(f.FullName, f.IsDirectory, childLocal, f.Length); continue; }
                         // 심볼릭 링크: 대상을 stat 해서 일반 파일이면 내용을 받고, 폴더 링크는 따라가지 않는다
                         // (순환·받는 폴더 밖(/ 등)으로 이어져 끝없이 받는 일을 막음). 깨진 링크도 건너뛰고 결과에 적는다
@@ -226,9 +239,13 @@ public partial class MainWindow
                 if (FreeSpace(root) is { } free && free < size + DownloadDiskReserve)
                     throw new McpToolException($"이 PC 디스크 여유 공간이 부족해 중단했습니다 (여유 {SftpPanel.HumanSize(free)}, 받을 파일 {SftpPanel.HumanSize(size)}).");
                 ct.ThrowIfCancellationRequested();
+                // 목록의 크기는 받는 동안 늘 수 있다 (자라는 로그) — 쓰는 동안에도 남은 한도·여유 공간을 넘으면 멈춘다
+                var allowed = MaxDownloadBytes - bytes;
+                if (FreeSpace(root) is { } freeNow) allowed = Math.Min(allowed, freeNow - DownloadDiskReserve);
                 using (var fs = File.Create(local))
                 {
-                    c.DownloadFile(remote, new CancellableStream(fs, ct));
+                    c.DownloadFile(remote, new LimitedWriteStream(new CancellableStream(fs, ct), allowed, () =>
+                        $"받는 중 크기 한도(전체 {SftpPanel.HumanSize(MaxDownloadBytes)}) 또는 디스크 여유 공간(1GB 남김)을 넘어 중단했습니다: {remote}"));
                     bytes += fs.Length;
                 }
                 count++;   // 다 받은 파일만 센다 (실패 메시지의 진행 상황)
@@ -321,6 +338,37 @@ public partial class MainWindow
             }
             AuditLog.Write("sftp_upload", new[] { target }, local, $"완료 {files.Count}개 {SftpPanel.HumanSize(total)}");
             return $"올렸습니다: {files.Count}개 ({SftpPanel.HumanSize(total)}) → {root}";
+        }
+    }
+
+    /// <summary>
+    /// 쓰기 한도가 있는 스트림 (sftp_download): limit 바이트를 넘겨 쓰려 하면 McpToolException.
+    /// 목록에 보인 크기와 달리 받는 동안 자라는 파일·끝없는 파일이 이 PC 디스크를 채우지 않게
+    /// </summary>
+    private sealed class LimitedWriteStream(Stream inner, long limit, Func<string> message) : Stream
+    {
+        private long _written;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (_written + count > limit) throw new McpToolException(message());
+            inner.Write(buffer, offset, count);
+            _written += count;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
         }
     }
 }

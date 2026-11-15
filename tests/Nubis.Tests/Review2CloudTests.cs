@@ -35,6 +35,10 @@ public class Review2CloudTests
         var removedHosts = new List<HostEntry>();
 
         Assert.False(result.HasUnexpectedErrors);
+        // 3차: 사라진 서버는 빠짐없는 동기화에서 두 번 연속 안 보여야 지운다
+        var (_, _, first) = CloudSync.ApplyResult(p, result, hosts, removedHosts);
+        Assert.Equal(0, first);
+        Assert.Equal(1, p.PendingRemoval);
         var (_, _, removed) = CloudSync.ApplyResult(p, result, hosts, removedHosts);
 
         Assert.Equal(1, removed);

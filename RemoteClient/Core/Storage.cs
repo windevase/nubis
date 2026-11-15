@@ -232,6 +232,26 @@ public static class SafeFile
         lock (CorruptCopied) return !CorruptCopied.TryGetValue(key, out var copied) || copied;
     }
 
+    /// <summary>
+    /// 저장 직전 확인: 덮어써도 원본을 잃지 않으면 true. 사본을 만들지 못했던 파일이면
+    /// - 그 사이 파일이 없어졌으면(사용자가 옮기거나 지움) 잃을 것이 없으므로 true
+    /// - 아니면 사본을 다시 만들어 본다 (백신 검사 등 잠깐의 잠금으로 실패했던 경우 이번 실행 내내 저장이 막히지 않게)
+    /// </summary>
+    public static bool EnsureOriginalPreserved(string path)
+    {
+        if (OriginalPreserved(path)) return true;
+        if (!File.Exists(path)) return true;
+        try
+        {
+            File.Copy(path, $"{path}.corrupt-{DateTime.Now:yyyyMMdd-HHmmss}", overwrite: true);
+        }
+        catch { return false; }
+        string key;
+        try { key = Path.GetFullPath(path); } catch { key = path; }
+        lock (CorruptCopied) CorruptCopied[key] = true;
+        return true;
+    }
+
     // 이미 .corrupt 사본을 만들고 경고한 손상 파일 (경로 → 수정 시각·크기). .bak 을 원본 자리로 되돌려 쓰지 못한 경우 등
     // 같은 손상 파일을 다시 읽을 때마다 .corrupt 사본과 경고가 쌓이지 않게 한 번만 처리한다
     private static readonly Dictionary<string, (DateTime stamp, long length)> ReportedCorrupt = new(StringComparer.OrdinalIgnoreCase);
@@ -360,9 +380,12 @@ public static class HostStore
     public static void Save(IEnumerable<HostEntry> hosts)
     {
         // 읽지 못한 원본의 사본(.corrupt)도 만들지 못했으면 덮어쓰지 않는다 — 덮어쓰면 원래 호스트 목록을 되찾을 길이 없다
-        if (!SafeFile.OriginalPreserved(AppPaths.HostsFile))
+        // (사본을 다시 만들어 보고, 파일이 없어졌으면 저장한다 — 잠깐의 잠금으로 이번 실행 내내 저장이 막히지 않게)
+        if (!SafeFile.EnsureOriginalPreserved(AppPaths.HostsFile))
             throw new IOException(L.T("hosts.json 을 읽지 못했고 원본 사본도 만들지 못해, 덮어쓰지 않도록 저장하지 않았습니다. 파일을 복구하거나 다른 곳으로 옮긴 뒤 Nubis 를 다시 시작하세요."));
         SafeFile.WriteProtected(AppPaths.HostsFile, JsonSerializer.Serialize(hosts, Options));
+        // 저장했으면 지금 목록이 원본이다 (읽지 못한 원본은 .corrupt 사본에 있다) — 자동 동기화를 더 막을 이유가 없다
+        LoadFailed = false;
     }
 }
 
@@ -583,7 +606,9 @@ public static class KnownHostStore
         {
             var all = TryLoad() ?? SessionTrust;
             var result = new Dictionary<string, string>(all.Count);
-            foreach (var kv in all) result[kv.Key] = Normalize(kv.Value);
+            // 손으로 고친 파일 등의 null 값은 건너뛴다 (Normalize 에서 예외가 나 설정 화면이 열리지 않게)
+            foreach (var kv in all)
+                if (kv.Value != null) result[kv.Key] = Normalize(kv.Value);
             return result;
         }
     }
@@ -605,6 +630,8 @@ public static class KnownHostStore
     /// </summary>
     public static string Normalize(string value)
     {
+        // JSON 의 null 값("key": null)은 그대로 — 예전처럼 "저장된 값 없음" 으로 다룬다
+        if (string.IsNullOrEmpty(value)) return value;
         var prefix = IsRejected(value) ? RejectedPrefix : "";
         var body = value[prefix.Length..];
         var sp = body.IndexOf(' ');

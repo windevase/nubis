@@ -93,7 +93,14 @@ public partial class MainWindow
         var s = SettingsStore.Current;
         _cloudSyncTimer?.Stop();
         // hosts.json 을 읽지 못해 빈 목록으로 시작했으면 자동 동기화가 클라우드 호스트만으로 원본을 덮어쓰지 않게 건너뛴다
-        if (HostStore.LoadFailed) return;
+        // (설정을 켜 둔 사용자가 왜 동기화가 안 되는지 알 수 있게 시작할 때 Cloud 화면에 알린다)
+        if (HostStore.LoadFailed)
+        {
+            if (startup && (s.CloudSyncOnStart || s.CloudSyncIntervalMinutes > 0))
+                foreach (var sec in _sections)
+                    sec.Message = L.T("hosts.json 을 읽지 못해 이번 실행에서는 자동 동기화를 하지 않습니다. (동기화 버튼으로 직접 동기화할 수 있습니다)");
+            return;
+        }
         if (s.CloudSyncIntervalMinutes > 0)
         {
             _cloudSyncTimer ??= new System.Windows.Threading.DispatcherTimer();
@@ -138,20 +145,24 @@ public partial class MainWindow
 
     /// <summary>
     /// 프로필의 인스턴스를 조회해 호스트 목록에 반영 (조회는 백그라운드, 반영은 UI 스레드).
-    /// 이미 동기화 중이면 바로 돌아가지 않고 진행 중인 동기화가 끝날 때까지 기다린다 (MCP cloud_sync 등이 이전 결과를 보고하지 않도록)
+    /// 이미 동기화 중이면 바로 돌아가지 않고 진행 중인 동기화가 끝날 때까지 기다린다 (MCP cloud_sync 등이 이전 결과를 보고하지 않도록).
+    /// cancel 은 이 호출이 새로 시작하는 동기화에만 연결된다 — 다른 쪽이 시작한 진행 중 동기화는 취소하지 않는다
+    /// (기다리기만 그만두려면 호출하는 쪽에서 WaitAsync(cancel)).
     /// </summary>
-    private Task SyncProfileAsync(CloudProfile p)
+    private Task SyncProfileAsync(CloudProfile p, System.Threading.CancellationToken cancel = default)
     {
         if (_syncTasks.TryGetValue(p, out var running)) return running;
-        var task = SyncProfileCoreAsync(p);
+        if (!_profiles.Contains(p)) return Task.CompletedTask;   // 이미 제거된 프로필 (MCP 가 목록을 잡은 뒤 제거 등)
+        var task = SyncProfileCoreAsync(p, cancel);
         // 첫 await 전에 끝난 경우(예외 등)는 등록하지 않는다 — 끝난 작업이 남아 다음 동기화를 막지 않도록
         if (!task.IsCompleted) _syncTasks[p] = task;
         return task;
     }
 
-    private async Task SyncProfileCoreAsync(CloudProfile p)
+    private async Task SyncProfileCoreAsync(CloudProfile p, System.Threading.CancellationToken cancel)
     {
-        using var cts = new System.Threading.CancellationTokenSource();
+        // 동기화 버튼(취소) · 프로필 제거 · 이 동기화를 시작한 MCP 요청의 취소 중 하나라도 오면 취소
+        using var cts = System.Threading.CancellationTokenSource.CreateLinkedTokenSource(cancel);
         _syncCancels[p] = cts;
         p.IsSyncing = true;
         p.StatusText = "";
@@ -195,15 +206,19 @@ public partial class MainWindow
                 status.Add(L.F("일부 조회 실패 {0}건 — 이번엔 삭제하지 않음: {1}", fetched.Errors.Count, errors));
             else if (fetched.IsPartial)
                 status.Add(L.F("권한이 없어 조회하지 못한 리전 {0}개 — 그 리전 서버는 그대로 둠: {1}", fetched.DeniedRegions.Count, errors));
+            // 사라진 서버는 두 번 연속 안 보여야 지운다 (CloudSync 유예) — 첫 번째에는 남겨 두고 알린다
+            if (p.PendingRemoval > 0)
+                status.Add(L.F("클라우드 목록에 없는 서버 {0}개 — 다음 동기화에서도 없으면 제거", p.PendingRemoval));
             if (removedHosts.Count > 0)
             {
-                var removedIds = removedHosts.Select(h => h.Id).ToHashSet();
                 status.Add(L.F("클라우드에서 사라져 제거된 호스트: {0}", NameList(removedHosts.Select(h => h.Label))));
-                // 제거된 서버를 점프 호스트로 쓰던 호스트는 접속할 수 없게 된다
-                var dependents = _hosts.Where(h => h.JumpHostId is { } j && removedIds.Contains(j)).Select(h => h.Label).ToList();
-                if (dependents.Count > 0)
+                // 제거된 서버를 점프 호스트로 쓰던 호스트: 같은 인스턴스의 중복 호스트가 지워진 경우면 남은 호스트로 옮기고,
+                // 서버 자체가 사라졌으면 점프 지정을 그대로 둔다 — 지우면 다음 접속이 점프 없이 직접 연결을 시도하므로,
+                // 접속 때 "삭제된 점프 서버" 오류(AttachJump → JumpTunnel)가 나게 두고 여기서 다시 지정하라고 알린다
+                var dangling = CloudJumpFix.Apply(_hosts, removedHosts);
+                if (dangling.Count > 0)
                     status.Add(L.F("주의: 제거된 서버를 점프 호스트로 쓰던 호스트 {0}개 — 호스트 편집에서 점프 호스트를 다시 지정하세요: {1}",
-                        dependents.Count, NameList(dependents)));
+                        dangling.Count, NameList(dangling.Select(h => h.DisplayName))));
             }
             p.StatusText = string.Join("  ·  ", status);
             SaveHosts();
@@ -442,5 +457,31 @@ public partial class MainWindow
             return L.F("새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.", cmd);
         }
         catch (Exception ex) { return L.F("실행 실패: {0}", ex.Message); }
+    }
+}
+
+/// <summary>동기화로 지워진 호스트를 점프 호스트로 쓰던 호스트 정리 (UI 와 무관, 테스트 대상)</summary>
+internal static class CloudJumpFix
+{
+    /// <summary>
+    /// removed 중 같은 프로필·인스턴스의 호스트가 목록(hosts)에 남아 있으면(중복 정리) 점프 지정을 그 호스트로 옮긴다.
+    /// 옮길 곳이 없는(서버가 사라진) 점프 지정은 그대로 두고, 그런 호스트를 돌려준다 (화면에 다시 지정 안내).
+    /// </summary>
+    public static List<HostEntry> Apply(IReadOnlyList<HostEntry> hosts, IReadOnlyCollection<HostEntry> removed)
+    {
+        var dangling = new List<HostEntry>();
+        if (removed.Count == 0) return dangling;
+        var removedById = new Dictionary<Guid, HostEntry>();
+        foreach (var r in removed) removedById.TryAdd(r.Id, r);
+        foreach (var h in hosts)
+        {
+            if (h.JumpHostId is not { } j || !removedById.TryGetValue(j, out var gone)) continue;
+            var keep = gone.CloudInstanceId == null ? null : hosts.FirstOrDefault(x =>
+                x.CloudProfileId == gone.CloudProfileId && x.CloudInstanceId == gone.CloudInstanceId &&
+                x.Protocol == Protocol.Ssh && !ReferenceEquals(x, h) && !removedById.ContainsKey(x.Id));
+            if (keep != null) h.JumpHostId = keep.Id;
+            else dangling.Add(h);
+        }
+        return dangling;
     }
 }

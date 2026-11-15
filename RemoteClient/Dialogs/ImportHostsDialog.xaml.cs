@@ -22,7 +22,8 @@ namespace Nubis;
 ///     var applied = r.ApplyTo(_hosts);   // 목록을 바꾼다
 ///     SaveHosts();
 ///     RefreshHosts();
-///     ImportHostsDialog.ShowSummary(this, applied);
+///     if (ImportHostsDialog.ShowSummary(this, applied))   // "가져온 호스트 보기"
+///         { /* applied.AddedIds · applied.UpdatedIds 의 호스트를 목록에서 선택해 보여 준다 */ }
 /// }
 /// </code>
 /// </summary>
@@ -76,10 +77,23 @@ public partial class ImportHostsDialog : Window
         return dlg.ShowDialog() == true ? dlg._final : null;
     }
 
-    /// <summary>등록 결과 알림: "N개 추가 · M개 갱신 · K개 건너뜀" (+ 점프 서버 경고)</summary>
-    public static void ShowSummary(Window owner, ImportApplyResult r) =>
-        Dialog.Show(owner, r.Summary, L.T("호스트 가져오기"), MessageBoxButton.OK, MessageBoxImage.Information,
-            r.Warnings.Count > 0 ? string.Join("\n", r.Warnings) : null);
+    /// <summary>
+    /// 등록 결과 알림: "N개 추가 · M개 갱신 · K개 건너뜀" (+ 점프 서버 경고).
+    /// 추가·갱신한 호스트가 있으면 "가져온 호스트 보기" 버튼도 보여 주고, 누르면 true —
+    /// 호출한 쪽이 r.AddedIds · r.UpdatedIds 의 호스트를 목록에서 골라(선택) 보여 준다
+    /// </summary>
+    public static bool ShowSummary(Window owner, ImportApplyResult r)
+    {
+        var detail = r.Warnings.Count > 0 ? string.Join("\n", r.Warnings) : null;
+        if (r.AddedIds.Count + r.UpdatedIds.Count == 0)
+        {
+            Dialog.Show(owner, r.Summary, L.T("호스트 가져오기"), MessageBoxButton.OK, MessageBoxImage.Information, detail);
+            return false;
+        }
+        // 기본(Enter) 버튼은 확인 — 결과 창을 닫으려던 사용자의 선택 상태를 바꾸지 않게
+        return Dialog.Choose(owner, r.Summary, L.T("호스트 가져오기"), L.T("확인"), L.T("가져온 호스트 보기"),
+            icon: MessageBoxImage.Information, detail: detail) == 1;
+    }
 
     // ===================== 출처 선택 =====================
 
@@ -201,6 +215,7 @@ public partial class ImportHostsDialog : Window
     private async void Load(Func<ImportResult> parse, string sourceName)
     {
         var seq = ++_loadSeq;
+        _adCts?.Cancel();   // AD 조회 중이었으면 멈춘다 (결과는 어차피 버려짐)
         ShowStatus(L.T("읽는 중..."), false);
         Cursor = Cursors.AppStarting;
         try
@@ -215,7 +230,8 @@ public partial class ImportHostsDialog : Window
         }
         finally
         {
-            ClearValue(CursorProperty);
+            // 뒤에 시작한 불러오기가 아직 읽는 중이면 그쪽이 끝날 때 되돌린다
+            if (seq == _loadSeq) ClearValue(CursorProperty);
         }
     }
 
@@ -257,16 +273,18 @@ public partial class ImportHostsDialog : Window
 
         using var cts = new CancellationTokenSource();
         _adCts = cts;
-        _loadSeq++;   // 읽는 중이던 파일 결과가 나중에 와도 AD 결과를 덮지 않게
+        // 읽는 중이던 파일 결과가 나중에 와도 AD 결과를 덮지 않게 — 반대로 조회 중에 파일을 불러오면 늦게 온 AD 결과를 버린다
+        var seq = ++_loadSeq;
+        ClearValue(CursorProperty);   // 버려진 파일 읽기의 대기 커서
         AdFetchButton.Content = L.T("조회 취소");
         ShowStatus(L.F("{0} 에서 컴퓨터 목록을 가져오는 중...", domain), false);
         try
         {
             var result = await ActiveDirectoryImport.FetchAsync(options, cts.Token);
-            if (!cts.IsCancellationRequested) SetSource(result, "Active Directory");
+            if (!cts.IsCancellationRequested && seq == _loadSeq && !_closed) SetSource(result, "Active Directory");
         }
-        catch (OperationCanceledException) { ShowStatus(L.T("조회를 취소했습니다."), false); }
-        catch (Exception ex) { ShowStatus(L.F("Active Directory 조회 실패: {0}", ex.Message), true); }
+        catch (OperationCanceledException) { if (seq == _loadSeq && !_closed) ShowStatus(L.T("조회를 취소했습니다."), false); }
+        catch (Exception ex) { if (seq == _loadSeq && !_closed) ShowStatus(L.F("Active Directory 조회 실패: {0}", ex.Message), true); }
         finally
         {
             _adCts = null;

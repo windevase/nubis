@@ -167,9 +167,22 @@ public sealed class McpServer : IDisposable
                 return;
             }
 
-            var method = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() ?? "" : "";
+            var hasMethod = req.TryGetProperty("method", out var mEl) && mEl.ValueKind == JsonValueKind.String;
+            var method = hasMethod ? mEl.GetString() ?? "" : "";
             var p = req.TryGetProperty("params", out var pEl) ? pEl : default;
-            if (!req.TryGetProperty("id", out var id))
+            var hasId = req.TryGetProperty("id", out var id);
+            switch (ClassifyMessage(hasMethod, hasId, req.TryGetProperty("result", out _) || req.TryGetProperty("error", out _)))
+            {
+                case McpMessageKind.Response:
+                    // 클라이언트가 보낸 응답 (이 서버는 클라이언트에 요청을 보내지 않으므로 받기만 한다) — Streamable HTTP 규약대로 본문 없이 202
+                    res.StatusCode = 202;
+                    return;
+                case McpMessageKind.Invalid:
+                    // method 가 없는 요청 → -32600 (id 가 있으면 그대로 돌려준다)
+                    await WriteJson(res, ErrorReply(hasId ? id : null, -32600, "Invalid Request"));
+                    return;
+            }
+            if (!hasId)
             {
                 // notification (notifications/initialized 등). 취소 알림이면 해당 요청을 취소한다
                 if (method == "notifications/cancelled" && p.ValueKind == JsonValueKind.Object &&
@@ -220,6 +233,17 @@ public sealed class McpServer : IDisposable
             try { res.Close(); } catch { }
         }
     }
+
+    public enum McpMessageKind { Request, Notification, Response, Invalid }
+
+    /// <summary>
+    /// JSON-RPC 메시지 종류: method 가 있으면 id 유무로 요청/알림, method 없이 result·error 가 있으면 클라이언트의 응답, 그 밖은 잘못된 요청.
+    /// 알림·응답에는 본문 없이 202 로 답한다 (JSON-RPC 는 알림에 응답하지 않음)
+    /// </summary>
+    public static McpMessageKind ClassifyMessage(bool hasMethod, bool hasId, bool hasResultOrError) =>
+        hasMethod ? (hasId ? McpMessageKind.Request : McpMessageKind.Notification)
+        : hasResultOrError && hasId ? McpMessageKind.Response
+        : McpMessageKind.Invalid;
 
     private static object ErrorReply(JsonElement? id, int code, string message) =>
         new { jsonrpc = "2.0", id, error = new { code, message } };

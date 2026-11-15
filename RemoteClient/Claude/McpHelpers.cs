@@ -216,7 +216,7 @@ public static class McpHelpers
 
     /// <summary>
     /// 승인 창 표시용: 보이지 않는 제어 문자를 \xNN 으로 드러낸다 (줄바꿈 \n·\r\n 과 탭은 그대로, 단독 \r 은 \r 로 표시).
-    /// 양방향 제어·폭 없는 문자(U+200B~U+200F, U+202A~U+202E, U+2066~U+2069, U+FEFF)도 \u{XXXX} 로 보인다.
+    /// 폭 없는 문자·양방향 제어·줄/문단 구분자(IsInvisibleFormatChar)도 \u{XXXX} 로 보인다. 이모지 시퀀스 안의 ZWJ 는 그대로 둔다.
     /// </summary>
     public static string VisibleControlChars(string text)
     {
@@ -228,29 +228,73 @@ public static class McpHelpers
             if (ch is '\n' or '\t') sb.Append(ch);
             else if (ch == '\r') sb.Append("\\r");
             else if (ch < 0x20 || ch is >= '\x7f' and <= '\x9f') sb.Append("\\x").Append(((int)ch).ToString("x2", CultureInfo.InvariantCulture));
-            else if (ch is >= '​' and <= '‏' or >= '‪' and <= '‮' or >= '⁦' and <= '⁩' or '﻿')
+            else if (IsInvisibleFormatChar(text, i))
                 sb.Append("\\u{").Append(((int)ch).ToString("X4", CultureInfo.InvariantCulture)).Append('}');
             else sb.Append(ch);
         }
         return sb.ToString();
     }
 
-    /// <summary>보이지 않거나 표시 순서를 바꾸는 문자: 제어 문자(C0·DEL·C1, 탭·줄바꿈 포함), 폭 없는 문자·양방향 제어(U+200B~U+200F, U+202A~U+202E, U+2066~U+2069, U+FEFF), 줄·문단 구분자</summary>
+    /// <summary>
+    /// text[i] 가 폭 없는·보이지 않는 서식 문자이거나 표시 순서를 바꾸는 문자인가:
+    /// 소프트 하이픈(U+00AD), 아랍 문자 표시(U+061C), 몽골 모음 구분자(U+180E), U+200B~U+200F(폭 없는 공백·ZWNJ·ZWJ·LRM·RLM),
+    /// 줄·문단 구분자(U+2028·U+2029), U+202A~U+202E(양방향 내장·재정의), U+2060~U+2064(단어 결합자 등), U+2066~U+2069(양방향 격리), U+FEFF.
+    /// 단 이모지 시퀀스(가족·무지개 깃발 등) 안의 ZWJ(U+200D) 는 정상 글자로 본다 — 앞이 이모지(서로게이트 쌍의 뒷부분·U+FE0F·기호 블록)이고
+    /// 뒤가 이모지(서로게이트 쌍의 앞부분·기호 블록)일 때만. 글자 사이(pro{ZWJ}d)의 ZWJ 는 그대로 걸린다
+    /// </summary>
+    public static bool IsInvisibleFormatChar(string text, int i)
+    {
+        var ch = text[i];
+        if (ch == '\u200D')
+        {
+            static bool EmojiLike(char c) => c is >= '\u2600' and <= '\u27BF' or >= '\u2B00' and <= '\u2BFF';
+            var prevOk = i > 0 && (char.IsLowSurrogate(text[i - 1]) || text[i - 1] == '\uFE0F' || EmojiLike(text[i - 1]));
+            var nextOk = i + 1 < text.Length && (char.IsHighSurrogate(text[i + 1]) || EmojiLike(text[i + 1]));
+            return !(prevOk && nextOk);
+        }
+        return ch is '\u00AD' or '\u061C' or '\u180E' or '\uFEFF' or '\u2028' or '\u2029'
+            or >= '\u200B' and <= '\u200F' or >= '\u202A' and <= '\u202E' or >= '\u2060' and <= '\u2064' or >= '\u2066' and <= '\u2069';
+    }
+
+    /// <summary>보이지 않거나 표시 순서를 바꾸는 문자: 제어 문자(C0·DEL·C1, 탭·줄바꿈 포함)와 IsInvisibleFormatChar (이모지 시퀀스 안의 ZWJ 는 제외)</summary>
     public static bool HasInvisibleChars(string text)
     {
-        foreach (var ch in text)
-            if (ch < 0x20 || ch is >= '\x7f' and <= '\x9f' or >= '​' and <= '‏' or >= '‪' and <= '‮'
-                    or >= '⁦' and <= '⁩' or '﻿' or '\u2028' or '\u2029')
+        for (var i = 0; i < text.Length; i++)
+            if (text[i] < 0x20 || text[i] is >= '\x7f' and <= '\x9f' || IsInvisibleFormatChar(text, i))
                 return true;
         return false;
     }
 
-    /// <summary>승인 창용 계정 표시: "계정 root · Vault 계정 'ops'" (사용자명이 없으면 "계정 없음"). 비밀번호는 넣지 않는다</summary>
-    public static string AccountLabel(string? username, string? source)
+    /// <summary>
+    /// 승인 창용 계정 표시: "계정 root · Vault 계정 'ops'" (사용자명이 없으면 "계정 없음"). 비밀번호는 넣지 않는다.
+    /// translate=false 면 감사 로그용 — 번역하지 않은 한국어 원문 (감사 로그는 언어 설정과 관계없이 한국어로 남긴다)
+    /// </summary>
+    public static string AccountLabel(string? username, string? source, bool translate = true)
     {
-        if (string.IsNullOrWhiteSpace(username)) return L.T("계정 없음");
+        if (string.IsNullOrWhiteSpace(username)) return translate ? L.T("계정 없음") : "계정 없음";
         var user = VisibleControlChars(username);
-        return source is { Length: > 0 } ? L.F("계정 {0} · {1}", user, source) : L.F("계정 {0}", user);
+        if (source is { Length: > 0 })
+            return translate ? L.F("계정 {0} · {1}", user, source) : $"계정 {user} · {source}";
+        return translate ? L.F("계정 {0}", user) : $"계정 {user}";
+    }
+
+    /// <summary>
+    /// 감사 로그용 계정 출처 (번역하지 않은 한국어). 분기·문구는 HostEntry.CredentialSourceText(화면용, 번역됨)와 같게 맞춘다.
+    /// 출처를 알 수 없으면 null
+    /// </summary>
+    public static string? CredentialSourceForAudit(HostEntry h, CloudProfile? p)
+    {
+        var (id, source) = h.ResolveVault(p);
+        if (id != null && VaultStore.Get(id) is { } v)
+            return source switch
+            {
+                "host" => $"Vault 계정 '{v.Name}'",
+                "profile" => $"클라우드 프로필 기본 Vault 계정 '{v.Name}'",
+                _ => $"기본 Vault 계정 '{v.Name}'",
+            };
+        if (!string.IsNullOrEmpty(h.ProtectedPassword) || !string.IsNullOrWhiteSpace(h.KeyPath)) return "이 호스트에 저장된 계정";
+        if (p != null && (!string.IsNullOrEmpty(p.DefaultUsername) || !string.IsNullOrEmpty(p.ProtectedDefaultPassword))) return "클라우드 프로필 기본 계정";
+        return null;
     }
 
     /// <summary>
@@ -485,7 +529,10 @@ public static class McpHelpers
     /// <summary>
     /// 비밀 정보가 들어 있을 수 있는 원격 경로 (sftp_read 자동 승인 제외): SSH 개인키·~/.ssh 안의 파일, /etc/shadow·gshadow,
     /// .env 류, 인증서 개인키(.pem·.key·.p12·.pfx 등), 클라우드·도구 자격 증명(.aws/credentials, .kube/config, .docker/config.json,
-    /// .git-credentials, .netrc, .pgpass, .my.cnf, .vault-token 등). 애매하면 true 쪽 (승인 창이 한 번 더 뜰 뿐)
+    /// .git-credentials, .netrc, .pgpass, .my.cnf, .vault-token 등), /proc/*/environ, 셸·DB 클라이언트 기록(.bash_history 등).
+    /// 애매하면 true 쪽 (승인 창이 한 번 더 뜰 뿐).
+    /// 경로 문자열만 본다 — 심볼릭 링크는 sftp_read 가 서버의 realpath 로 푼 경로를 한 번 더 넣어 보지만, 하드 링크·realpath 를
+    /// 풀어 주지 않는 SFTP 서버·확인과 열기 사이에 바뀐 링크(TOCTOU)는 막지 못한다 (자동 승인은 편의 기능이지 경계가 아님)
     /// </summary>
     public static bool IsSensitiveRemotePath(string path)
     {
@@ -500,7 +547,12 @@ public static class McpHelpers
         if (name == ".env" || name.StartsWith(".env.", StringComparison.Ordinal) || name.EndsWith(".env", StringComparison.Ordinal)) return true;
         if (Regex.IsMatch(name, @"\.(pem|key|p12|pfx|jks|keystore|kdbx|ppk|asc|gpg|ovpn)$")) return true;
         if (Regex.IsMatch(lower, @"(^|/)\.(aws|kube|docker|gnupg|azure|config/gcloud|oci)(/|$)")) return true;
-        if (Regex.IsMatch(lower, @"(^|/)etc/(ssl/private|pki/tls/private|letsencrypt)(/|$)")) return true;
+        if (Regex.IsMatch(lower, @"(^|/)etc/(ssl/private|pki/tls/private|letsencrypt|sudoers\.d)(/|$)")) return true;
+        // 프로세스 환경 변수(/proc/self/environ · /proc/1234/environ — DB 비밀번호·토큰이 흔히 들어 있다)
+        if (Regex.IsMatch(lower, @"(^|/)proc/[^/]+/(task/[^/]+/)?environ$")) return true;
+        // 셸·DB 클라이언트 기록 (명령줄에 친 비밀번호가 남는다)
+        if (name is ".bash_history" or ".zsh_history" or ".sh_history" or ".ash_history" or ".mysql_history" or ".psql_history"
+            or ".rediscli_history" or ".python_history" or ".node_repl_history" or "consolehost_history.txt") return true;
         return false;
     }
 

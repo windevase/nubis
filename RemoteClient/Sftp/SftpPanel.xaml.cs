@@ -412,41 +412,92 @@ public partial class SftpPanel : UserControl
     /// </summary>
     public Task Close()
     {
+        // 두 번 불려도(탭 닫기 + 창 닫기 등) 같은 정리를 기다리게 — 두 번째가 바로 끝나 SSH 연결을 먼저 닫지 않게
+        if (_closeTask != null) return _closeTask;
         _closed = true;   // 지금 연결 중인 ClientCoreAsync 는 연결이 끝나면 스스로 닫는다
-        var uploading = _edits.Values.Any(ed => ed.Uploading);
-        var sessions = _edits.Values.ToList();
-        foreach (var ed in sessions) ed.Dispose();   // 감시·디바운스 중지 (대기 중이던 저장은 아래에서 마지막으로 올린다)
-        _edits.Clear();
-        _cts?.Cancel();
-        var c = _client;
-        _client = null;
-        // 편집용 임시 폴더는 지우지 않는다 — 메모장·VS Code 는 파일을 잠그지 않아, 편집기에 열린 채 저장하지 않은 내용이
-        // 파일을 잃는다. 하루 지난 것은 CleanupEditTemp 가 정리한다. 열기·끌어내기용 임시 폴더만 지운다
-        var temps = TakePanelTempDirs().Where(d => !IsEditTempDir(d)).ToList();
-        var owner = Window.GetWindow(this) ?? Application.Current?.MainWindow;
-        // 편집 자동 업로드는 _clientLock 을 잡고 한다 — 올리는 중이면 끝난 뒤에 연결을 닫는다 (서버 파일이 반쯤 쓰인 채 남지 않게).
-        // 저장했지만 디바운스(0.8초)를 기다리던 편집도 연결을 닫기 전에 올린다
-        return Task.Run(async () =>
+        // 여기서 예외가 나가면 부르는 쪽(CloseSession)의 SSH 정리가 통째로 빠진다 — 동기 부분은 무엇도 던지지 않게
+        List<EditSession> sessions = [];
+        var uploading = false;
+        List<string> temps = [];
+        Window? owner = null;
+        SftpClient? c = null;
+        try
         {
-            var locked = (uploading || sessions.Count > 0) && await _clientLock.WaitAsync(TimeSpan.FromMinutes(2));
+            sessions = _edits.Values.ToList();
+            uploading = sessions.Any(ed => ed.Uploading);
+            foreach (var ed in sessions)
+                try { ed.Dispose(); } catch { }   // 감시·디바운스 중지 (대기 중이던 저장은 아래에서 마지막으로 올린다)
+            _edits.Clear();
+            try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+            c = _client;
+            _client = null;
+            // 편집용 임시 폴더는 지우지 않는다 — 메모장·VS Code 는 파일을 잠그지 않아, 편집기에 열린 채 저장하지 않은 내용이
+            // 파일을 잃는다. 하루 지난 것은 CleanupEditTemp 가 정리한다. 열기·끌어내기용 임시 폴더만 지운다
+            temps = TakePanelTempDirs().Where(d => !IsEditTempDir(d)).ToList();
+            owner = Window.GetWindow(this) ?? Application.Current?.MainWindow;
+        }
+        catch (Exception ex) { Debug.WriteLine($"SFTP 패널 닫기 준비 실패: {ex.Message}"); }
+
+        var dispatcher = Dispatcher;
+        // 편집 자동 업로드는 _clientLock 을 잡고 한다 — 올리는 중이면 끝난 뒤에 연결을 닫는다 (서버 파일이 반쯤 쓰인 채 남지 않게).
+        // 저장했지만 디바운스(0.8초)를 기다리던 편집도 연결을 닫기 전에 올린다.
+        // 잠금 대기 + 마지막 업로드 전체를 CloseBudget(2분) 안에 끝낸다 — 부르는 쪽은 이 Task 뒤에 SSH 연결을 닫으므로
+        // 멈춘 채널 때문에 닫은 탭의 연결이 끝없이 남지 않게. 시간 안에 못 올린 것은 로컬 파일 위치와 함께 알린다
+        _closeTask = Task.Run(async () =>
+        {
             var failures = new List<string>();
+            var locked = false;
+            using var budget = new CancellationTokenSource(CloseBudget);
             try
             {
+                if (uploading || sessions.Count > 0)
+                {
+                    try { locked = await _clientLock.WaitAsync(Timeout.InfiniteTimeSpan, budget.Token); }
+                    catch (OperationCanceledException) { }
+                }
                 foreach (var s in sessions)
-                    if (await FlushEditOnCloseAsync(c, s) is { } err) failures.Add(err);
+                    if (await FlushEditOnCloseAsync(locked ? c : null, s, locked, budget.Token) is { } err) failures.Add(err);
             }
+            catch (Exception ex) { Debug.WriteLine($"SFTP 패널 닫기 중 편집 업로드 실패: {ex.Message}"); }
             finally
             {
                 try { c?.Dispose(); } catch { }
-                if (locked) _clientLock.Release();
+                if (locked) try { _clientLock.Release(); } catch { }
             }
-            DeleteTempDirs(temps);
+            try { DeleteTempDirs(temps); } catch { }
             if (failures.Count > 0)
-                _ = Dispatcher.InvokeAsync(() =>
+            {
+                try
                 {
-                    Dialog.Show(owner, L.T("탭을 닫으면서 저장한 편집 내용을 서버에 올리지 못했습니다. 편집한 파일은 이 PC 에 남아 있습니다."),
-                        L.T("편집 업로드"), MessageBoxButton.OK, MessageBoxImage.Warning, string.Join("\n\n", failures));
-                });
+                    _ = dispatcher.InvokeAsync(() =>
+                    {
+                        try
+                        {
+                            // 탭이 있던 창이 이미 닫혔으면 주 창을 주인으로 (닫힌 창을 주인으로 쓰면 예외)
+                            var o = owner is { IsLoaded: true } ? owner : Application.Current?.MainWindow;
+                            Dialog.Show(o, L.T("탭을 닫으면서 저장한 편집 내용을 서버에 올리지 못했습니다. 편집한 파일은 이 PC 에 남아 있습니다."),
+                                L.T("편집 업로드"), MessageBoxButton.OK, MessageBoxImage.Warning, string.Join("\n\n", failures));
+                        }
+                        catch (Exception ex) { Debug.WriteLine($"편집 업로드 실패 알림을 띄우지 못함: {ex.Message}"); }
+                    });
+                }
+                catch { /* 앱 종료 중 — Dispatcher 가 이미 멈춤 */ }
+            }
         });
+        return _closeTask;
     }
+
+    private Task? _closeTask;
+
+    /// <summary>탭을 닫을 때 연결 잠금 대기 + 마지막 편집 업로드에 쓰는 전체 시간 (SshSessionView 는 이 안에 SSH 연결을 닫는다)</summary>
+    public static readonly TimeSpan CloseBudget = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// 탭을 닫기 전에 사용자에게 물을 문구 — 편집 중인 파일이 없으면 null.
+    /// (탭을 닫으면 저장해 둔 내용은 마지막으로 올리지만, 편집기에서 아직 저장하지 않은 내용은 더 이상 올라가지 않는다)
+    /// </summary>
+    public string? CloseConfirmMessage() =>
+        _closed || _edits.Count == 0 ? null
+        : L.F("SFTP 패널에서 편집 중인 파일이 {0}개 있습니다.\n탭을 닫으면 저장해 둔 내용은 서버에 올리지만, 그 뒤 편집기에서 저장하는 내용은 더 이상 올라가지 않습니다.\n\n탭을 닫을까요?", _edits.Count)
+          + "\n\n" + string.Join("\n", _edits.Keys.Take(10)) + (_edits.Count > 10 ? "\n..." : "");
 }

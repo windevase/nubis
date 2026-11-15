@@ -82,6 +82,43 @@ public partial class MainWindow
         return (r, c);
     }
 
+    /// <summary>
+    /// 카드 목록에 키보드 포커스가 있을 때(카드를 클릭한 뒤 등, 검색창·다른 입력 칸·버튼이 아닐 때) 키보드로 고른 카드 조작:
+    /// 방향키 = 이동, Enter = 연결, F2 = 편집, Delete = 삭제, Esc = 고르기 해제. 처리했으면 true.
+    /// 카드 자체는 포커스를 받지 않는다 (가상화 목록이라 화면 밖 카드는 컨트롤이 없음) — 고른 카드는 _highlighted 로만 기억
+    /// </summary>
+    private bool HandleCardKey(KeyEventArgs e)
+    {
+        if (Keyboard.Modifiers != ModifierKeys.None || !CardListHasFocus()) return false;
+        switch (e.Key)
+        {
+            case Key.Up or Key.Down:
+                MoveHighlight(e.Key == Key.Down ? 1 : -1, 0);
+                return true;
+            case Key.Left or Key.Right:
+                MoveHighlight(0, e.Key == Key.Right ? 1 : -1);
+                return true;
+        }
+        if (_highlighted is not { } h || !_hosts.Contains(h)) return false;
+        switch (e.Key)
+        {
+            case Key.Enter: Connect(h); return true;
+            case Key.F2: OpenEditor(h); return true;
+            case Key.Delete: DeleteHost(h); return true;
+            case Key.Escape: SetHighlight(null); return true;
+        }
+        return false;
+    }
+
+    /// <summary>키보드 포커스가 카드 목록에 있거나 아무 데도 없는지 (버튼·체크박스 등의 Enter·방향키는 가로채지 않게)</summary>
+    private bool CardListHasFocus() => Keyboard.FocusedElement switch
+    {
+        null => true,
+        Window w => ReferenceEquals(w, this),
+        System.Windows.Media.Visual v => ReferenceEquals(v, HostRows) || HostRows.IsAncestorOf(v),
+        _ => false,
+    };
+
     private DispatcherTimer? _searchTimer;
 
     /// <summary>입력이 잠깐 멈췄을 때 한 번만 목록 갱신</summary>

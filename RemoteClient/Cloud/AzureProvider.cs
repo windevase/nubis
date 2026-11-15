@@ -39,6 +39,9 @@ public sealed class AzureProvider : ICloudProvider
     // az CLI 로 토큰을 받는 데 수 초가 걸리므로 테넌트별로 만료 5분 전까지 재사용
     private static readonly ConcurrentDictionary<string, AccessToken> TokenCache = new();
 
+    /// <summary>구독 찾기(DiscoverAsync)에서 테넌트 토큰을 동시에 받는 수 (az 프로세스 동시 실행 수)</summary>
+    internal const int TenantParallelism = 3;
+
     /// <summary>
     /// 토큰 캐시 키: 테넌트 + az 설정 폴더 + azureProfile.json 수정 시각.
     /// az login / az logout 은 azureProfile.json 을 다시 쓰므로, 로그인 버튼으로 다른 계정에 로그인하면 키가 바뀌어 이전 계정 토큰을 쓰지 않는다
@@ -115,25 +118,36 @@ public sealed class AzureProvider : ICloudProvider
         try { tenants = (await ListAsync($"{Arm}/tenants?api-version=2022-12-01", home, ct)).Select(t => t.Str("tenantId")).ToList(); }
         catch (Exception ex) { ForgetTokenOn401(null, ex); throw; }
 
-        var list = new List<CloudCandidate>();
-        var skipped = new List<string>();
-        foreach (var tenant in tenants)
+        // 테넌트마다 az 프로세스로 토큰을 받는 데 수 초씩 걸리므로 몇 개씩 동시에 받는다.
+        // az 는 토큰 캐시 파일을 프로세스 간 잠금으로 다루지만, 동시 실행을 많이 늘리지는 않는다 (TenantParallelism).
+        // 결과·건너뛴 사유는 테넌트 순서대로 모아 화면 표시가 매번 같게 한다
+        using var gate = new SemaphoreSlim(TenantParallelism);
+        var perTenant = await Task.WhenAll(tenants.Select(OneTenantAsync));
+        ct.ThrowIfCancellationRequested();
+        var list = perTenant.SelectMany(t => t.subs).ToList();
+        var skipped = perTenant.Where(t => t.skip != null).Select(t => t.skip!).ToList();
+
+        async Task<(List<CloudCandidate> subs, string? skip)> OneTenantAsync(string tenant)
         {
+            await gate.WaitAsync(ct);
             try
             {
+                var subs = new List<CloudCandidate>();
                 var token = await TokenAsync(tenant, ct);
                 foreach (var s in await ListAsync($"{Arm}/subscriptions?api-version=2022-12-01", token, ct))
                 {
                     if (s.Str("state").Equals("Disabled", StringComparison.OrdinalIgnoreCase)) continue;
-                    list.Add(new CloudCandidate(s.Str("subscriptionId"), s.Str("displayName"), tenant));
+                    subs.Add(new CloudCandidate(s.Str("subscriptionId"), s.Str("displayName"), tenant));
                 }
+                return (subs, null);
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 // MFA 등으로 테넌트 토큰을 못 받으면 그 테넌트만 건너뛰되, 사유를 모아 둔다
                 ForgetTokenOn401(tenant, ex);
-                skipped.Add(SkippedTenant(tenant, ex.Message));
+                return (new List<CloudCandidate>(), SkippedTenant(tenant, ex.Message));
             }
+            finally { gate.Release(); }
         }
         // 찾은 구독이 없는데 건너뛴 테넌트가 있으면 "구독 없음" 으로 보이지 않게 사유와 함께 실패로 알린다
         // (이 목록은 프로필 추가 후보일 뿐 동기화가 아니므로 호스트 삭제와는 무관. 동기화는 구독 단위 FetchAsync 로, 실패하면 예외)

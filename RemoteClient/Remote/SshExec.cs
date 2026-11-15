@@ -167,8 +167,12 @@ public static class SshExec
         var stdout = new OutputCollector();
         var stderr = new OutputCollector();
         var exceeded = 0;
-        // 취소 토큰을 넘기면 SSH.NET 이 취소·시간 초과 때 원격 명령에 SIGTERM 을 보낸다
-        var exec = cmd.ExecuteAsync(ct);
+        // 시간 초과는 SSH.NET 이 원격 명령에 SIGTERM 을 보낸다 (CommandTimeout).
+        // 사용자 취소는 토큰을 SSH.NET 에 넘기지 않고 직접 CancelAsync 를 스레드 풀에서 부른다 — 토큰을 넘기면 cts.Cancel() 을 부른 스레드
+        // (실행 중 표시줄의 취소 버튼 = UI 스레드)에서 명령마다 CancelAsync 가 신호 응답을 최대 0.5초씩 기다려 서버 수만큼 화면이 멈춘다.
+        // CancelAsync 는 이 명령 채널에만 신호를 보내고 닫는다 — 공유한 터미널 탭의 SSH 연결(세션)은 끊지 않는다
+        var exec = cmd.ExecuteAsync();
+        using var cancelReg = ct.Register(() => Task.Run(() => { try { cmd.CancelAsync(); } catch { } }));
         Task Pump(System.IO.Stream s, OutputCollector c) => Task.Factory.StartNew(() =>
         {
             var buf = new byte[16384];
@@ -202,7 +206,9 @@ public static class SshExec
         catch (OperationCanceledException) { failure = "사용자가 취소해 중단했습니다 (원격 명령에 중단 신호를 보냄)."; }
         finally
         {
-            // 명령이 끝나면(어떤 경로든) SSH.NET 이 출력 스트림을 닫아 읽기가 끝난다
+            // 명령이 끝나면(어떤 경로든) SSH.NET 이 출력 스트림을 닫아 읽기가 끝난다. 혹시 닫히지 않은 경로가 있어도
+            // 읽기 스레드가 남지 않게 여기서도 닫는다 (PipeStream 은 닫힌 뒤에도 남은 데이터는 끝까지 읽힌다)
+            try { cmd.OutputStream.Dispose(); cmd.ExtendedOutputStream.Dispose(); } catch { }
             try { Task.WaitAll(pumps, TimeSpan.FromSeconds(5)); } catch { }
         }
         return (exit, stdout.Text(MaxOutput), stderr.Text(MaxOutput), failure);

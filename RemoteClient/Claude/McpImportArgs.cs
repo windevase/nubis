@@ -346,10 +346,17 @@ internal static class McpImport
             return "장치 경로는 쓸 수 없습니다. 드라이브 경로(C:\\...)를 쓰세요.";
         if (McpHelpers.IsLocalOrAdminUnc(trimmed)) return "이 PC 를 가리키는 네트워크 경로나 관리 공유($)는 쓸 수 없습니다.";
         if (trimmed.Length > 2 && trimmed.IndexOf(':', 2) >= 0) return "잘못된 경로입니다.";
+        // 네트워크 경로(UNC)는 Claude 가 정한 서버에 이 PC 의 Windows 자격 증명(NTLM)으로 접속하게 되므로 읽지 않는다.
+        // "/\srv\share" · "\/srv" 처럼 / 와 \ 를 섞어도 Windows 는 UNC 로 해석하므로 두 글자 모두 구분자인지로 본다
+        if (IsUncLike(trimmed)) return "네트워크 경로(UNC)의 파일은 읽을 수 없습니다. 이 PC 로 복사한 뒤 드라이브 경로(C:\\...)를 쓰세요.";
         string full;
         try { full = System.IO.Path.GetFullPath(trimmed); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return "잘못된 경로입니다."; }
+        // 정규화 결과로 한 번 더 (파일을 여는 FinalPath 보다 먼저 — 여는 순간 접속이 일어남)
+        if (IsUncLike(full)) return "네트워크 경로(UNC)의 파일은 읽을 수 없습니다. 이 PC 로 복사한 뒤 드라이브 경로(C:\\...)를 쓰세요.";
         var final = McpHelpers.FinalPath(full);
+        // 로컬 심볼릭 링크 · 정션이 네트워크 공유를 가리키는 경우
+        if (IsUncLike(final)) return "네트워크 경로로 이어지는 링크는 읽을 수 없습니다.";
         if (McpHelpers.IsLocalOrAdminUnc(final)) return "이 PC 를 가리키는 네트워크 경로로 이어지는 링크는 쓸 수 없습니다.";
 
         static bool Under(string p, string dir)
@@ -389,10 +396,13 @@ internal static class McpImport
     public static string? BlockedFollowPathReason(string path, string dataDir, string? rootDir, string sshDir, bool allowSshDir)
     {
         var t = path.Trim();
-        if (t.StartsWith(@"\\", StringComparison.Ordinal) || t.StartsWith("//", StringComparison.Ordinal))
-            return "네트워크 경로는 따라 읽지 않습니다.";
+        if (IsUncLike(t)) return "네트워크 경로는 따라 읽지 않습니다.";
         return BlockedPathReason(t, dataDir, rootDir, sshDir, allowSshDir);
     }
+
+    /// <summary>앞 두 글자가 모두 경로 구분자(\ 또는 /) — Windows 가 UNC · 장치 경로로 해석하는 형태</summary>
+    internal static bool IsUncLike(string path) =>
+        path.Length >= 2 && path[0] is '\\' or '/' && path[1] is '\\' or '/';
 
     /// <summary>개인키 내용이 들어 있으면 true (파일 이름과 무관하게 내용으로 한 번 더 막는다)</summary>
     public static bool LooksLikePrivateKey(string text) =>

@@ -72,15 +72,20 @@ public partial class AuthPromptDialog : Window
     private void OnOk(object sender, RoutedEventArgs e)
     {
         // 가려진 칸(OTP·비밀번호)이 비어 있으면 한 번은 그 칸으로 보낸다 — 여러 칸에서 첫 칸 Enter 로 바로 보내지거나
-        // 빈 OTP 가 나가 서버의 인증 시도 횟수를 쓰지 않게. 같은 칸에서 한 번 더 확인을 누르면 빈 값 그대로 보낸다 ("Press enter" 질문)
+        // 빈 OTP 가 나가 서버의 인증 시도 횟수를 쓰지 않게. 한 번 더 확인을 누르면 빈 값 그대로 보낸다 ("Press enter" 질문).
+        // 빈 칸이 여러 개여도(비밀번호 변경의 두 칸 등) 확인은 한 번만 — 처음 보는 빈 칸을 모두 확인한 것으로 두고 첫 칸으로 보낸다
+        var firstNew = -1;
         for (var i = 0; i < _inputs.Count; i++)
         {
             if (!_secret[i] || ValueOf(_inputs[i]).Length > 0) continue;
             if (_remember[i] is { IsChecked: true }) continue;   // "빈 답을 기억" 을 고름 — 빈 값이 의도
-            if (!_emptyConfirmed.Add(i)) continue;
+            if (_emptyConfirmed.Add(i) && firstNew < 0) firstNew = i;
+        }
+        if (firstNew >= 0)
+        {
             HintText.Text = L.T("입력하지 않은 칸이 있습니다. 빈 값으로 보내려면 확인을 한 번 더 누르세요.");
             HintText.Visibility = Visibility.Visible;
-            _inputs[i].Focus();
+            _inputs[firstNew].Focus();
             return;
         }
         DialogResult = true;

@@ -29,14 +29,26 @@ public static class ImportText
         catch (DecoderFallbackException)
         {
             // UTF-8 이 아니면 시스템 ANSI 코드 페이지 (없으면 Latin-1 — 바이트를 잃지 않음)
-            Encoding ansi;
+            return AnsiEncoding(SystemAnsiCodePage()).GetString(bytes);
+        }
+    }
+
+    /// <summary>
+    /// UTF-8 이 아닌 파일을 읽을 레거시 코드 페이지. 시스템 ACP 가 UTF-8(65001, "세계 언어 지원을 위해 Unicode UTF-8 사용" 베타 옵션)이면
+    /// 이미 UTF-8 이 아닌 걸 알고 있으므로 설치된 Windows 언어의 ANSI 코드 페이지(한국어면 949)로 읽는다. 못 쓰면 Latin-1 (바이트를 잃지 않음)
+    /// </summary>
+    internal static Encoding AnsiEncoding(int acp)
+    {
+        foreach (var cp in new[] { acp, CultureInfo.InstalledUICulture.TextInfo.ANSICodePage })
+        {
+            if (cp is 65001 or 0 or 1200 or 1201) continue;
             try
             {
-                ansi = CodePagesEncodingProvider.Instance.GetEncoding(SystemAnsiCodePage()) ?? Encoding.Latin1;
+                if (CodePagesEncodingProvider.Instance.GetEncoding(cp) is { } e) return e;
             }
-            catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { ansi = Encoding.Latin1; }
-            return ansi.GetString(bytes);
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException) { }
         }
+        return Encoding.Latin1;
     }
 
     /// <summary>시스템 로캘(유니코드를 지원하지 않는 프로그램용 언어)의 ANSI 코드 페이지. 앱 표시 언어와 무관</summary>

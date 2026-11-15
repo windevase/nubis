@@ -312,7 +312,10 @@ public static class ReadOnlyCommands
             case "docker":
             case "podman":
             {
-                if (!SubStart(a, out var i, new[] { "-D", "--debug" }, new[] { "-H", "--host", "--context", "-c", "--connection" })) return false;
+                // -H/--host 로 데몬 주소를 바꾸지 않는다: ssh://사용자@서버 면 이 서버의 ssh 키로 다른 서버에 접속하고,
+                // tcp:// 면 다른 데몬에 접속한다 (어디에 붙는지 알 수 없음). 위치와 관계없이 거부 (환경 변수 DOCKER_HOST= 는 앞에서 거부됨)
+                if (a.Any(x => x.StartsWith("-H", StringComparison.Ordinal) || LongPrefix(x, "host"))) return false;
+                if (!SubStart(a, out var i, new[] { "-D", "--debug" }, new[] { "--context", "-c", "--connection" })) return false;
                 var sub = At(a, i);
                 var ok = sub is "" or "ps" or "images" or "logs" or "inspect" or "stats" or "version" or "info" or "top" or "port" or "history" or "diff"
                          || (sub is "container" or "image" or "network" or "volume" or "system" or "compose"

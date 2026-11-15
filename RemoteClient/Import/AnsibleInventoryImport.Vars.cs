@@ -47,7 +47,8 @@ public static partial class AnsibleInventoryImport
     private static List<string> VarsFiles(string dir, string name)
     {
         var files = new List<string>();
-        if (name.Length == 0 || name is "." or ".." || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return files;
+        // Windows 는 끝의 점·공백을 떼고 열어서 "..." · "web." 같은 이름이 group_vars 폴더 자체나 다른 그룹 파일을 가리킨다
+        if (name.Length == 0 || name.EndsWith('.') || name.EndsWith(' ') || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return files;
         try
         {
             foreach (var ext in new[] { "", ".yml", ".yaml", ".json" })

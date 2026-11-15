@@ -17,7 +17,11 @@
                      PreviewKeyDown="OnFilterKeyDown"/>
 
             <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
-                <Button Content="{l:Tr '새로 만들기'}" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnCreate"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button Content="{l:Tr '새로 만들기'}" Style="{StaticResource GhostButton}" Click="OnCreate"/>
+                    <Button x:Name="ClearButton" Content="{l:Tr '지정 해제'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
+                            Click="OnClear" Visibility="Collapsed"/>
+                </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
                     <Button Content="{l:Tr '선택'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>

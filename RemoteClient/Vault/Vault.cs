@@ -227,9 +227,11 @@ public static class VaultStore
     private static void Save()
     {
         // 읽지 못한 vault.json 의 원본 사본도 만들지 못했으면 덮어쓰지 않는다 (새 계정 하나짜리 목록으로 계정들이 사라지지 않게)
-        if (!SafeFile.OriginalPreserved(FilePath))
+        // (사본을 다시 만들어 보고, 파일이 없어졌으면 저장한다 — 잠깐의 잠금으로 이번 실행 내내 저장이 막히지 않게)
+        if (!SafeFile.EnsureOriginalPreserved(FilePath))
             throw new IOException(L.T("vault.json 을 읽지 못했고 원본 사본도 만들지 못해, 덮어쓰지 않도록 저장하지 않았습니다. 파일을 복구하거나 다른 곳으로 옮긴 뒤 Nubis 를 다시 시작하세요."));
         SafeFile.WriteProtected(FilePath, JsonSerializer.Serialize(Entries, Options));
+        LoadFailed = false;   // 저장했으면 지금 목록이 원본이다 (읽지 못한 원본은 .corrupt 사본에 있다)
     }
 
     /// <summary>

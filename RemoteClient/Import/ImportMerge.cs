@@ -118,6 +118,11 @@ public sealed record ImportPlan(List<ImportRow> Rows, ImportDefaults Defaults);
 /// <summary>등록 결과</summary>
 public sealed record ImportApplyResult(int Added, int Updated, int Skipped, List<string> Warnings)
 {
+    /// <summary>새로 추가한 호스트 Id (추가한 순서). "가져온 호스트 보기" 처럼 등록 뒤 목록에서 골라 보여 줄 때 쓴다</summary>
+    public IReadOnlyList<Guid> AddedIds { get; init; } = Array.Empty<Guid>();
+    /// <summary>값이 바뀐 기존 호스트 Id (갱신한 순서)</summary>
+    public IReadOnlyList<Guid> UpdatedIds { get; init; } = Array.Empty<Guid>();
+
     /// <summary>"N개 추가 · M개 갱신 · K개 건너뜀"</summary>
     public string Summary => L.F("{0}개 추가 · {1}개 갱신 · {2}개 건너뜀", Added, Updated, Skipped);
 }
@@ -230,6 +235,8 @@ public static class ImportMerge
             var error = proto == Protocol.Local ? L.T("SSH 또는 RDP 서버만 가져올 수 있습니다.")
                 : address.Length == 0 ? L.T("주소가 없습니다.")
                 : !IsValidAddress(address) ? L.T("주소 형식이 올바르지 않습니다.")
+                // 콜론이 하나뿐이면 IPv6 가 아니라 포트를 읽지 못한 "host:99999" · "host:ssh" 같은 값 (그대로 두면 접속할 수 없는 호스트가 생김)
+                : address.Count(c => c == ':') == 1 ? L.T("주소 뒤의 포트 형식이 올바르지 않습니다.")
                 : (h.Port is < 1 or > 65535) ? L.T("포트는 1~65535 사이여야 합니다.")
                 : null;
             if (error != null)
@@ -280,6 +287,7 @@ public static class ImportMerge
         var byName = new Dictionary<string, HostEntry>(StringComparer.OrdinalIgnoreCase);
         var done = new HashSet<string>(StringComparer.Ordinal);
         int addCount = 0, updateCount = 0;
+        var updatedIds = new List<Guid>();
         var index = new ExistingIndex(existing);
 
         foreach (var row in plan.Rows)
@@ -293,7 +301,11 @@ public static class ImportMerge
 
             if (match != null)
             {
-                if (updateExisting && !match.IsCloud && UpdateExisting(match, row, plan.Defaults)) updateCount++;
+                if (updateExisting && !match.IsCloud && UpdateExisting(match, row, plan.Defaults))
+                {
+                    updateCount++;
+                    updatedIds.Add(match.Id);
+                }
                 continue;
             }
             var host = src.Clone();
@@ -320,7 +332,11 @@ public static class ImportMerge
             else warnings.Add(L.F("{0}: 점프 서버 '{1}' 를 찾지 못해 비워 두었습니다.", host.DisplayName, spec));
         }
 
-        return new ImportApplyResult(addCount, updateCount, plan.Rows.Count - addCount - updateCount, warnings);
+        return new ImportApplyResult(addCount, updateCount, plan.Rows.Count - addCount - updateCount, warnings)
+        {
+            AddedIds = added.Select(x => x.Host.Id).ToList(),
+            UpdatedIds = updatedIds.Distinct().ToList(),
+        };
     }
 
     /// <summary>기존 호스트 갱신: 이름·그룹·사용자명만 (가져온 값이 있을 때만). 바뀌었으면 true</summary>

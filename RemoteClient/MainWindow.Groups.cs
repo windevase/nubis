@@ -59,7 +59,8 @@ public partial class MainWindow
         if (g.IsLocal && g.GroupName.Length > 0) Add(L.T("그룹 이름 바꾸기..."), () => RenameGroup(g));
         if (g.Profile is { } p)
         {
-            Add(L.T("동기화"), () => _ = SyncProfileAsync(p), !p.IsSyncing);
+            // 동기화 중이면 같은 자리에서 취소 (헤더 버튼과 같은 SyncOrCancelAsync)
+            Add(p.IsSyncing ? L.T("동기화 취소") : L.T("동기화"), () => _ = SyncOrCancelAsync(p));
             Add(L.T("CLI 로그인 (이 프로필)"), () => RunProviderLogin(p));
             Add(L.T("프로필 설정..."), () => EditProfile(p));
         }
@@ -114,6 +115,9 @@ public partial class MainWindow
                 if (choice is not (0 or 1)) return;
                 if (choice == 1) keepHostVault.UnionWith(picked);
             }
+            // 이미 이 계정을 직접 골라 둔 호스트에 숨겨 둔 값(직접 적은 사용자명·비밀번호·키)이 있으면 지정을 그대로 둔다 —
+            // 지정을 비우면 숨겨 둔 값이 프로필 기본 계정보다 우선이 되어 로그인 계정이 바뀐다 (지금과 같은 계정으로 로그인)
+            keepHostVault.UnionWith(targets.Where(h => h.VaultId == id && BulkEdit.HasOwnCredentials(h)));
             // 직접 고른 계정을 유지하는 호스트는 Vault 계정이 우선이라 직접 적은 값을 물을 필요가 없다
             if (AskClearOwnCredentials(targets.Where(h => !keepHostVault.Contains(h)).ToList(), v) is not { } answer) return;
             clearOwn = answer;

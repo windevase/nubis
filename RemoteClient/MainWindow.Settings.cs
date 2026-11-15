@@ -146,12 +146,73 @@ public partial class MainWindow
     {
         if ((sender as FrameworkElement)?.Tag is not string name || FindName(name) is not FrameworkElement target) return;
         if (SettingsPage.Content is not Visual content) return;
+        _settingsJumpPicked = SettingsJumpBar.Children.IndexOf((UIElement)sender);
         try
         {
             var y = target.TransformToAncestor(content).Transform(new Point(0, 0)).Y;
             SettingsPage.ScrollToVerticalOffset(Math.Max(0, y - 8));
         }
         catch (InvalidOperationException) { target.BringIntoView(); }
+        // 이미 그 위치라 스크롤이 일어나지 않아도 강조는 맞춘다
+        Dispatcher.BeginInvoke(UpdateSettingsJumpHighlight, DispatcherPriority.Loaded);
+    }
+
+    private void OnSettingsScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        // 안쪽 입력란(TextBox 의 ScrollViewer)에서 올라온 이벤트는 무시
+        if (ReferenceEquals(e.OriginalSource, SettingsPage)) UpdateSettingsJumpHighlight();
+    }
+
+    /// <summary>스크롤 위치에 맞춰 지금 보고 있는 섹션의 바로가기 버튼을 강조</summary>
+    private void UpdateSettingsJumpHighlight()
+    {
+        if (SettingsJumpBar == null || SettingsPage.Visibility != Visibility.Visible || SettingsPage.Content is not Visual content) return;
+        var buttons = SettingsJumpBar.Children.OfType<Button>().ToList();
+        var tops = new List<double>();
+        foreach (var b in buttons)
+        {
+            double y;
+            try { y = b.Tag is string name && FindName(name) is FrameworkElement t ? t.TransformToAncestor(content).Transform(new Point(0, 0)).Y : double.NaN; }
+            catch (InvalidOperationException) { y = double.NaN; }
+            tops.Add(y);
+        }
+        var current = CurrentSettingsSection(tops, SettingsPage.VerticalOffset, SettingsPage.ScrollableHeight,
+            SettingsPage.ViewportHeight, _settingsJumpPicked);
+        if (current != _settingsJumpPicked) _settingsJumpPicked = -1;   // 고른 섹션이 화면 밖으로 나가면 평소 기준으로
+        var accent = (Brush)FindResource("Accent");
+        for (var i = 0; i < buttons.Count; i++)
+        {
+            if (i == current) buttons[i].Foreground = accent;
+            else buttons[i].ClearValue(ForegroundProperty);
+        }
+    }
+
+    /// <summary>바로가기로 마지막에 고른 섹션 번호 — 페이지 끝 근처 섹션은 맨 위까지 올라오지 못하므로 화면에 보이는 동안 그 버튼을 강조</summary>
+    private int _settingsJumpPicked = -1;
+
+    /// <summary>
+    /// 지금 보고 있는 섹션 번호 (UI 와 무관, 테스트용). tops = 각 섹션 제목의 세로 위치(못 구하면 NaN).
+    /// 바로가기로 고른 섹션(picked)의 제목이 화면 안에 있으면 그 섹션. 아니면 제목이 화면 위쪽(offset + 24)을 지난 마지막 섹션,
+    /// 맨 아래까지 내렸으면 마지막 섹션. 없으면 -1
+    /// </summary>
+    internal static int CurrentSettingsSection(IReadOnlyList<double> tops, double offset, double scrollable,
+        double viewport = double.PositiveInfinity, int picked = -1)
+    {
+        if (tops.Count == 0) return -1;
+        if (picked >= 0 && picked < tops.Count && !double.IsNaN(tops[picked]) &&
+            tops[picked] >= offset - 1 && tops[picked] < offset + viewport)
+            return picked;
+        if (scrollable > 0 && offset >= scrollable - 1)
+        {
+            for (var i = tops.Count - 1; i >= 0; i--) if (!double.IsNaN(tops[i])) return i;
+            return -1;
+        }
+        var current = -1;
+        for (var i = 0; i < tops.Count; i++)
+            if (!double.IsNaN(tops[i]) && tops[i] <= offset + 24) current = i;
+        // 맨 위에서는 첫 섹션
+        if (current < 0) for (var i = 0; i < tops.Count; i++) if (!double.IsNaN(tops[i])) return i;
+        return current;
     }
 
     private void OnAutoContrastClick(object sender, RoutedEventArgs e) =>
@@ -272,8 +333,8 @@ public partial class MainWindow
         // 소유자가 아니면 저장 버튼만이 아니라 입력란·방식 선택도 막는다 (고쳐도 저장되지 않는 칸을 열어 두지 않게)
         var editable = CanEditLogin;
         LoginSaveButton.IsEnabled = editable;
+        // 흐리게 보이는 것은 입력란·세그먼트의 IsEnabled 모양(App.xaml)이 맡는다 — 패널 Opacity 까지 낮추면 겹쳐서 읽기 어렵다
         LoginFields.IsEnabled = editable;
-        LoginFields.Opacity = editable ? 1 : 0.6;
         foreach (var rb in new[] { LoginNone, LoginGitHub, LoginGoogle, LoginMicrosoft }) rb.IsEnabled = editable;
         UpdateLoginUi();
     }

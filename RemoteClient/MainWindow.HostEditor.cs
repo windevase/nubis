@@ -248,7 +248,17 @@ public partial class MainWindow
         EdJumpButton.Content = _edJumpId == null ? L.T("없음 (바로 연결)")
             : j == null ? L.T("삭제된 호스트 — 다른 호스트를 고르거나 없음으로")
             : $"{j.DisplayName}  ({j.Address})";
+        // 이 호스트를 점프 서버로 쓰는 호스트가 있으면 — 점프는 한 단계만이라 그 호스트들은 여기서 고른 점프 서버를 거치지 않는다
+        var users = _edJumpId == null ? 0 : JumpUsers(_hosts, _editing);
+        JumpWarning.Text = users > 0
+            ? L.F("이 호스트를 점프 서버로 쓰는 호스트가 {0}개 있습니다. 점프 서버는 한 단계만 지원해, 그 호스트들은 여기서 고른 점프 서버를 거치지 않고 이 호스트에 바로 연결합니다.", users)
+            : "";
+        JumpWarning.Visibility = users > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    /// <summary>editing 을 점프 서버로 쓰는 (자기 자신이 아닌) 호스트 수. 새 호스트·복제는 0</summary>
+    internal static int JumpUsers(IEnumerable<HostEntry> all, HostEntry? editing) =>
+        editing == null ? 0 : all.Count(x => x.JumpHostId == editing.Id && !ReferenceEquals(x, editing));
 
     /// <summary>점프 서버로 쓸 SSH 호스트 고르기 (자기 자신 제외)</summary>
     private void OnPickJump(object sender, RoutedEventArgs e)

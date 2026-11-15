@@ -242,8 +242,8 @@
 
                     <Border Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
                         <DockPanel>
-                            <!-- 열 머리글 (아래 줄과 같은 열 너비) -->
-                            <Grid DockPanel.Dock="Top" Margin="10,8,18,6">
+                            <!-- 열 머리글 (아래 줄과 같은 열 너비). 오른쪽 여백은 목록 세로 스크롤바가 보일 때만 그 너비만큼 (OnRowListScrollChanged) -->
+                            <Grid x:Name="HeaderGrid" DockPanel.Dock="Top" Margin="10,8,10,6">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="28"/>
                                     <ColumnDefinition Width="1.3*"/>
@@ -269,7 +269,7 @@
                                 <ListBox x:Name="RowList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}"
                                          HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                                         SelectionMode="Single" Padding="0,2,0,2">
+                                         SelectionMode="Single" Padding="0,2,0,2" ScrollViewer.ScrollChanged="OnRowListScrollChanged">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Foreground" Value="{StaticResource Text}"/>

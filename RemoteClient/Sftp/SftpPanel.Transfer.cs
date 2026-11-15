@@ -60,8 +60,11 @@ public partial class SftpPanel
 
     private async void OnUploadClick(object sender, RoutedEventArgs e)
     {
+        if (_busy) { ShowBusyHint(); return; }   // 파일을 다 고른 뒤에 말없이 무시되지 않게
         var dlg = new Microsoft.Win32.OpenFileDialog { Multiselect = true, Title = L.F("{0} 에 업로드할 파일", _cwd) };
-        if (dlg.ShowDialog(Window.GetWindow(this)) == true) await UploadAsync(dlg.FileNames, _cwd);
+        if (dlg.ShowDialog(Window.GetWindow(this)) != true) return;
+        if (_busy) { ShowBusyHint(); return; }   // 고르는 사이 다른 전송이 시작됨
+        await UploadAsync(dlg.FileNames, _cwd);
     }
 
     private async Task UploadAsync(string[] localPaths, string target)
@@ -75,7 +78,8 @@ public partial class SftpPanel
             var c = await ClientAsync();
 
             // 전송 계획: (로컬 파일, 원격 경로, 크기) + 만들 폴더
-            var (files, dirs) = await Task.Run(() => PlanUpload(localPaths, target, ct), ct);
+            var (files, dirs, unreadable) = await Task.Run(() => PlanUpload(localPaths, target, ct), ct);
+            var skipNote = unreadable > 0 ? L.F("(읽을 수 없는 폴더·파일·링크 폴더 {0}개는 건너뜀)", unreadable) : null;
 
             // 이미 있는 파일 (폴더 안의 파일까지): 덮어쓰기 / 건너뛰기 / 취소.
             // 파일이 많으면 파일마다 묻지 않고 대상 폴더 목록을 한 번씩 읽어 판단한다 (수천 개면 왕복만 수 분 걸렸다)
@@ -98,7 +102,7 @@ public partial class SftpPanel
                 if (choice is -1 or 2) { EndTransfer(null); return; }
                 if (choice == 1) files = files.Where(f => !existing.Contains(f.Remote)).ToList();
             }
-            if (files.Count == 0 && dirs.Count == 0) { EndTransfer(null); return; }
+            if (files.Count == 0 && dirs.Count == 0) { EndTransfer(skipNote); return; }
 
             var total = files.Sum(f => f.Size);
             long done = 0;
@@ -133,18 +137,22 @@ public partial class SftpPanel
                 done += size;
                 SetProgress(done, total);
             }
-            EndTransfer(L.F("업로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), target));
+            EndTransfer(L.F("업로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), target) + (skipNote != null ? " " + skipNote : ""));
         }
         catch (OperationCanceledException) { EndTransfer(L.T("업로드를 취소했습니다.")); }
         catch (Exception ex) { EndTransfer(L.F("업로드 실패: {0}", ex.Message)); }
         await NavigateAsync(_cwd);
     }
 
-    /// <summary>업로드 계획: 올릴 파일(로컬, 원격 경로, 크기)과 만들 폴더. 폴더는 하위까지 훑는다 (백그라운드 스레드에서)</summary>
-    private static (List<(string Local, string Remote, long Size)> Files, List<string> Dirs) PlanUpload(string[] localPaths, string target, CancellationToken ct)
+    /// <summary>
+    /// 업로드 계획: 올릴 파일(로컬, 원격 경로, 크기)과 만들 폴더. 폴더는 하위까지 훑는다 (백그라운드 스레드에서).
+    /// 폴더 안에서 읽을 수 없는 하위 폴더·파일과 링크(정션·심볼릭 링크) 폴더는 건너뛰고 개수를 Skipped 로 — 하나 때문에 전체가 실패하지 않게
+    /// </summary>
+    private static (List<(string Local, string Remote, long Size)> Files, List<string> Dirs, int Skipped) PlanUpload(string[] localPaths, string target, CancellationToken ct)
     {
         var files = new List<(string Local, string Remote, long Size)>();
         var dirs = new List<string>();
+        var skipped = 0;
         foreach (var p in localPaths)
         {
             ct.ThrowIfCancellationRequested();
@@ -156,20 +164,64 @@ public partial class SftpPanel
             {
                 var root = Combine(target, name);
                 dirs.Add(root);
-                foreach (var d in Directory.EnumerateDirectories(p, "*", SearchOption.AllDirectories))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    dirs.Add(Combine(root, Path.GetRelativePath(p, d).Replace('\\', '/')));
-                }
-                foreach (var f in Directory.EnumerateFiles(p, "*", SearchOption.AllDirectories))
-                {
-                    ct.ThrowIfCancellationRequested();
-                    files.Add((f, Combine(root, Path.GetRelativePath(p, f).Replace('\\', '/')), new FileInfo(f).Length));
-                }
+                var scan = ScanLocalFolder(p, ct);
+                dirs.AddRange(scan.Dirs.Select(d => Combine(root, d)));
+                files.AddRange(scan.Files.Select(f => (f.Local, Combine(root, f.Rel), f.Size)));
+                skipped += scan.Skipped;
             }
             else if (File.Exists(p)) files.Add((p, Combine(target, name), new FileInfo(p).Length));
         }
-        return (files, dirs);
+        return (files, dirs, skipped);
+    }
+
+    /// <summary>
+    /// 로컬 폴더를 하위까지 훑는다. Dirs·Files 의 Rel 은 root 기준 "/" 구분 상대 경로 (폴더는 부모가 먼저).
+    /// 숨김·시스템 파일도 포함한다. 열 수 없는 하위 폴더(권한 없음)·크기를 못 읽는 파일·링크 폴더(정션·심볼릭 링크 — 순환·밖으로 나감)는
+    /// 건너뛰고 Skipped 로 센다. root 자체를 못 열면 예외 (사용자가 고른 폴더라 조용히 비우지 않는다)
+    /// </summary>
+    public static (List<string> Dirs, List<(string Local, string Rel, long Size)> Files, int Skipped) ScanLocalFolder(string root, CancellationToken ct = default)
+    {
+        var dirs = new List<string>();
+        var files = new List<(string Local, string Rel, long Size)>();
+        var skipped = 0;
+        var opts = new EnumerationOptions { RecurseSubdirectories = false, IgnoreInaccessible = false, AttributesToSkip = 0, ReturnSpecialDirectories = false };
+        string Rel(string path) => Path.GetRelativePath(root, path).Replace('\\', '/');
+
+        var stack = new Stack<string>();
+        stack.Push(root);
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var dir = stack.Pop();
+            List<FileSystemInfo> entries;
+            try { entries = new DirectoryInfo(dir).EnumerateFileSystemInfos("*", opts).ToList(); }
+            catch (Exception ex) when (dir != root && ex is UnauthorizedAccessException or IOException or System.Security.SecurityException)
+            {
+                skipped++;   // 열 수 없는 하위 폴더 — 원격에 빈 폴더도 만들지 않는다
+                continue;
+            }
+            if (dir != root) dirs.Add(Rel(dir));
+            var subdirs = new List<string>();
+            foreach (var e in entries)
+            {
+                ct.ThrowIfCancellationRequested();
+                try
+                {
+                    if (e is DirectoryInfo d)
+                    {
+                        // 정션·심볼릭 링크 폴더는 따라가지 않는다 (OneDrive 클라우드 파일 같은 다른 재분석 지점은 LinkTarget 이 null 이라 그대로 훑는다)
+                        if ((d.Attributes & FileAttributes.ReparsePoint) != 0 && d.LinkTarget != null) { skipped++; continue; }
+                        subdirs.Add(d.FullName);
+                    }
+                    else if (e is FileInfo f) files.Add((f.FullName, Rel(f.FullName), f.Length));
+                }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or System.Security.SecurityException) { skipped++; }
+            }
+            // 이름순으로 훑게 (스택이라 거꾸로 넣는다)
+            subdirs.Sort(StringComparer.OrdinalIgnoreCase);
+            for (var i = subdirs.Count - 1; i >= 0; i--) stack.Push(subdirs[i]);
+        }
+        return (dirs, files, skipped);
     }
 
     // ===================== 다운로드 =====================
@@ -227,7 +279,8 @@ public partial class SftpPanel
         var targets = UniqueTargets(items.Select(i => (i.Name, i.IsDir)), localDir, p => File.Exists(p) || Directory.Exists(p));
         var plan = items.Zip(targets, (i, t) => (i, t)).ToList();
         var files = await DownloadCoreAsync(plan, localDir, localDir);
-        if (files == null) return;
+        // 받는 사이 탭이 닫혔으면 열지 않는다 (Close 가 임시 폴더를 지우는 중 — 닫은 탭의 파일이 뒤늦게 열리지 않게)
+        if (files == null || _closed) return;
         try
         {
             if (openWhenDone && files.Count == 1)
@@ -314,13 +367,21 @@ public partial class SftpPanel
         return null;
     }
 
+    /// <summary>안내를 띄우기 전 문구 — 안내가 떠 있는 동안 또 누르면 안내 문구를 "원래 문구"로 잡아 그대로 남는 일이 없게</summary>
+    private string? _busyHintBefore;
+    private int _busyHintSeq;
+
     private async void ShowBusyHint()
     {
+        var hint = L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
         TransferBar.Visibility = Visibility.Visible;
-        var before = TransferText.Text;
-        TransferText.Text = L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
+        if (TransferText.Text != hint) _busyHintBefore = TransferText.Text;
+        TransferText.Text = hint;
+        var seq = ++_busyHintSeq;
         await Task.Delay(2500);
-        if (_busy && TransferText.Text == L.T("다른 전송이 진행 중입니다. 끝난 뒤 다시 시도하세요.")) TransferText.Text = before;
+        if (seq != _busyHintSeq) return;   // 더 나중에 누른 안내가 되돌린다
+        if (_busy && TransferText.Text == hint && _busyHintBefore != null) TransferText.Text = _busyHintBefore;
+        _busyHintBefore = null;
     }
 
     /// <summary>

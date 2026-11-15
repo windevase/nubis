@@ -80,6 +80,16 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _rdp.Disconnected += OnDisconnected;
         _rdp.LeftFullScreen += () => Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background);
         _rdp.FatalError += code => OnDisconnected(-code);
+        // 네트워크 순단 때 컨트롤이 스스로 다시 연결하는 동안(컨트롤이 자체 안내 화면을 그린다) 탭 상태만 "연결 중" 으로 보여 준다
+        _rdp.AutoReconnecting += (_, _) => { if (!_closed && _status == SessionStatus.Connected) SetStatus(SessionStatus.Connecting); };
+        _rdp.AutoReconnected += () =>
+        {
+            if (_closed) return;
+            HideOverlay();
+            SetStatus(SessionStatus.Connected);
+            // 다시 붙은 세션이 이전 해상도를 잃었을 수 있어 탭 크기로 다시 맞춘다
+            if (_loggedIn) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
+        };
     }
 
     /// <summary>
@@ -356,8 +366,17 @@ public sealed class RdpSessionView : UserControl, ISessionView
             _pendingSave = false;   // 실패한 계정은 저장하지 않는다
         }
 
-        ShowOverlay(L.F("{0} 연결 종료", _host.DisplayName), text);
+        // 로그오프·원격에서 연결 끊기·관리자가 끊음(사유 1·2·3)은 오류가 아니므로 제목을 구분한다
+        ShowOverlay(IsNormalDisconnectReason(reason)
+            ? L.F("{0} 세션 정상 종료", _host.DisplayName)
+            : L.F("{0} 연결 종료", _host.DisplayName), text);
     }
+
+    /// <summary>
+    /// 오류가 아닌 끊김인가: 1 = 이 쪽에서 끊음, 2 = 원격에서 사용자가 끊음·로그오프, 3 = 서버가 끊음(관리자·유휴 시간 정책).
+    /// 음수(RDP 컨트롤 치명적 오류)·0·그 밖의 코드는 오류로 본다.
+    /// </summary>
+    internal static bool IsNormalDisconnectReason(int reason) => reason is 1 or 2 or 3;
 
     /// <summary>인증 실패로 끊긴 사유 코드인가 (다음 연결 때 저장된 비밀번호를 쓰지 않고 다시 묻는다)</summary>
     internal static bool IsAuthFailureReason(int reason) =>
