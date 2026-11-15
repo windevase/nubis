@@ -258,6 +258,9 @@ public partial class MainWindow
     {
         if (HomeView.Visibility != Visibility.Visible || HostsPage.Visibility != Visibility.Visible ||
             EditorLayer.Visibility == Visibility.Visible) return false;
+        // 키보드 포커스가 내장 창(Claude 패널 · 터미널의 WebView2, RDP) 안이면 가로채지 않는다 — WPF 에서는 포커스가 "없음"으로 보여
+        // 홈 화면 옆 Claude 패널의 화살표가 카드 이동으로 먹히고 Enter · Delete · Ctrl+A 가 카드 접속 · 삭제 · 전체 선택이 됐다
+        if (FocusInEmbeddedWindow()) return false;
         if (e.Key == Key.N && Keyboard.Modifiers == ModifierKeys.Control) { OpenEditor(null); return true; }
         if (Keyboard.FocusedElement is TextBox or PasswordBox) return false;
         var ctrl = Keyboard.Modifiers.HasFlag(ModifierKeys.Control);
