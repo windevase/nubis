@@ -234,6 +234,9 @@ public partial class MainWindow
 
         foreach (var t in ExtraTools()) yield return t;
         foreach (var t in SetupTools()) yield return t;
+        // 이 PC 의 클라우드·온프레미스 출처 찾기 · 클라우드 프로필 추가/로그인 · 호스트 가져오기
+        foreach (var t in CloudDiscoveryTools()) yield return t;
+        foreach (var t in ImportTools()) yield return t;
 
         yield return new McpTool("get_settings",
             "Nubis 앱 설정(터미널 테마·글꼴·구문 강조·기본 포트·보안 옵션)의 현재 값과 바꿀 수 있는 값 범위를 보여준다.",

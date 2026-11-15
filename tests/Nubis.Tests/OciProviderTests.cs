@@ -115,6 +115,9 @@ public class OciProviderTests
         Assert.Equal("Oracle Linux 8", lin);
         Assert.False(OciProvider.IsWindowsOs(lin));
         Assert.False(OciProvider.IsWindowsOs(""));
+
+        // 커스텀 이미지: OS 와 버전이 둘 다 "Custom" → 한 번만
+        Assert.Equal("Custom", OciProvider.OsText(Json("""{"operatingSystem":"Custom","operatingSystemVersion":"Custom"}""")));
     }
 
     [Fact]

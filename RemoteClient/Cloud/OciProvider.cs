@@ -401,8 +401,13 @@ public sealed class OciProvider : ICloudProvider
     }
 
     /// <summary>이미지 응답 → "운영체제 버전" (예: "Oracle Linux 8", "Windows Server 2022 Standard")</summary>
-    internal static string OsText(JsonElement image) =>
-        $"{image.Str("operatingSystem")} {image.Str("operatingSystemVersion")}".Trim();
+    internal static string OsText(JsonElement image)
+    {
+        var os = image.Str("operatingSystem").Trim();
+        var ver = image.Str("operatingSystemVersion").Trim();
+        // 커스텀 이미지는 둘 다 "Custom" 으로 와서 "Custom Custom" 이 되므로 같으면 한 번만
+        return ver.Length == 0 || string.Equals(os, ver, StringComparison.OrdinalIgnoreCase) ? os : $"{os} {ver}".Trim();
+    }
 
     internal static bool IsWindowsOs(string os) => os.Contains("Windows", StringComparison.OrdinalIgnoreCase);
 
