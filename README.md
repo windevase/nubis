@@ -8,6 +8,8 @@
 
 SSH, RDP and SFTP in one window, your cloud servers already in the list, and Claude sitting right next to the terminal — a Windows remote client that keeps everyday server work comfortable, safe and in one place.
 
+<img src="docs/media/ai-terminal.gif" alt="Ask Claude to connect and run commands on the SSH terminal; approve, and it summarizes the result" width="100%">
+
 > Name: Latin *nubis* = "of the cloud" + Korean *nubida* ("to roam through") — roaming the servers of many clouds.
 
 ## Why Nubis
@@ -40,8 +42,6 @@ Import servers from AWS, Tencent Cloud, Google Cloud, Azure and Oracle Cloud (OC
 **✦ Claude, right next to the terminal**
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys. Claude can also do what you do by hand: hosts, groups, tabs, SFTP files, cloud profiles, Vault defaults and settings. Anything that touches a server, an account or your data still waits for your approval (view-only tweaks like favorites are just logged), and passwords stay with you. On servers that ask for OTP or push approval, Claude runs commands over the tab you already signed in to — no second prompt. Ask "bring in all our servers" and Claude looks at what this PC has (cloud CLI profiles, `~/.ssh/config`, mRemoteNG, the domain), adds cloud profiles, starts a cloud sign-in when one is needed, and imports on-prem lists — showing a preview first and asking once before anything is added.
 
-<img src="docs/media/ai-terminal.gif" alt="Ask Claude to connect and run commands on the SSH terminal; approve, and it summarizes the result" width="100%">
-
 <img src="docs/media/ai-hosts.gif" alt="Ask Claude to add a host and mark another as a favorite" width="49%"> <img src="docs/media/ai-settings.gif" alt="Ask Claude to make the terminal font bigger" width="49%">
 
 **📁 SFTP that follows you**
@@ -58,6 +58,26 @@ A Windows 11 Fluent look with Mica (a plain dark window on Windows 10), short to
 
 **🌐 Korean and English**
 Choose the language on first launch and switch it any time in Settings. Claude answers in the same language.
+
+## How Claude is kept in check
+
+Putting an AI next to production servers only works if you can see and stop what it does. This is how the Claude panel is wired:
+
+```mermaid
+flowchart LR
+    You([You]) -- "asks" --> Claude["Claude Code panel<br/>(your own install)"]
+    Claude -- "MCP tool call<br/>127.0.0.1 + token" --> Nubis["Nubis"]
+    Nubis -- "approval prompt" --> You
+    Nubis -- "only after you approve" --> Servers[("Your servers")]
+    Nubis -- "every request" --> Audit["Audit log"]
+    Secrets[("Passwords · keys<br/>DPAPI-encrypted")] -- "used to sign in" --> Nubis
+    Claude -. "never sees them" .- Secrets
+```
+
+- **Claude never gets your passwords or keys.** Nubis signs in to servers itself; tool results and logs never contain a password.
+- **Anything that touches a server, an account or your data waits for your approval** and is written to `claude_audit.log`. The only exception is read-only commands, and only if you turn on auto-approval for them in Settings (they are still logged).
+- **A safety net, not a sandbox.** The panel runs under your Windows account, so Nubis also passes Claude Code deny rules that block reading the account files, DPAPI decryption and editing its own settings. They catch mistakes and prompt injection; the real protection is the encryption and the approval prompt.
+- **A changed host key always triggers a warning**, for you and for Claude.
 
 ## Get started
 

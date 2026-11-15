@@ -11,3 +11,7 @@ TestResults/
 *.log
 .claude/
 .vscode/
+
+# 게시용 초안 (Reddit·HN·GeekNews 소개글) — 저장소에 올리지 않음
+intro.md
+launch/
