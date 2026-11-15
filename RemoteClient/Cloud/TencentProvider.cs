@@ -55,7 +55,8 @@ public sealed class TencentProvider : ICloudProvider
         var file = Path.Combine(TccliDir, p.Name + ".credential");
         if (!File.Exists(file)) throw new InvalidOperationException(L.F("{0} 이 없습니다 (tccli configure --profile {1}).", file, p.Name));
         JsonElement cred;
-        try { cred = JsonDocument.Parse(await File.ReadAllTextAsync(file, ct)).RootElement; }
+        // Clone: 문서를 바로 Dispose 해 풀 버퍼를 돌려준다
+        try { using var credDoc = JsonDocument.Parse(await File.ReadAllTextAsync(file, ct)); cred = credDoc.RootElement.Clone(); }
         catch (JsonException) { throw new InvalidOperationException(L.F("{0} 을 읽을 수 없습니다 (JSON 형식 확인).", file)); }
         var id = cred.Str("secretId");
         var key = cred.Str("secretKey");

@@ -17,9 +17,32 @@ namespace Nubis;
 
 public sealed class SftpItem
 {
-    private static readonly Brush DirBrush = Frozen(Color.FromRgb(0xF5, 0xB7, 0x40));
-    private static readonly Brush FileBrush = Frozen(Color.FromRgb(0x8A, 0x90, 0xA8));
+    // 행 아이콘 · 이름 색 (기본값은 디자인 토큰과 같은 값 — 앱 리소스가 없는 테스트에서도 쓰이게). EnsureStatics 가 토큰 값으로 맞춘다
+    private static Brush DirBrush = Frozen(Color.FromRgb(0xF5, 0xB7, 0x40));    // Warning (노랑 폴더)
+    private static Brush FileBrush = Frozen(Color.FromRgb(0xA0, 0xA6, 0xB4));   // TextSecondary
+    private static Brush LinkBrush = Frozen(Color.FromRgb(0x5B, 0x93, 0xFF));   // Info (파랑 링크)
+    private static Brush NameDefaultBrush = Frozen(Color.FromRgb(0xED, 0xEF, 0xF4));   // TextPrimary
+    private static Brush HiddenNameBrush = Frozen(Color.FromRgb(0x71, 0x77, 0x89));    // TextTertiary (숨김 파일)
+    private static bool _themed;
     private static Brush Frozen(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
+    /// <summary>
+    /// 붓(정적 필드)을 UI 스레드에서 먼저 만든다 — 항목은 백그라운드에서 만들므로, 그쪽에서 처음 만들면 SolidColorBrush 가
+    /// 스레드 풀 스레드에 Dispatcher(숨은 메시지 창 포함)를 새로 만들어 남긴다.
+    /// 색은 앱 리소스(Tokens.xaml)에서 한 번 읽어 고정(Freeze)한 사본을 쓴다 — 행마다 리소스를 찾지 않게
+    /// </summary>
+    internal static void EnsureStatics()
+    {
+        if (_themed) return;
+        _themed = true;
+        DirBrush = Themed("Warning", DirBrush);
+        FileBrush = Themed("TextSecondary", FileBrush);
+        LinkBrush = Themed("Info", LinkBrush);
+        NameDefaultBrush = Themed("TextPrimary", NameDefaultBrush);
+        HiddenNameBrush = Themed("TextTertiary", HiddenNameBrush);
+    }
+
+    private static Brush Themed(string key, Brush fallback) =>
+        Application.Current?.TryFindResource(key) is SolidColorBrush b ? Frozen(b.Color) : fallback;
 
     public required string Name { get; init; }
     public required string FullName { get; init; }
@@ -32,7 +55,9 @@ public sealed class SftpItem
     public bool IsSpecial { get; init; }
 
     public string Glyph => IsDir ? "" : IsLink ? "" : "";
-    public Brush GlyphBrush => IsDir ? DirBrush : FileBrush;
+    public Brush GlyphBrush => IsDir ? DirBrush : IsLink ? LinkBrush : FileBrush;
+    /// <summary>이름 글자색 — 숨김 파일(점으로 시작)은 흐리게</summary>
+    public Brush NameBrush => SftpPanel.IsHiddenName(Name) ? HiddenNameBrush : NameDefaultBrush;
     public string SizeText => IsDir ? "" : SftpPanel.HumanSize(Size);
     public string ModifiedText => Modified == default ? "" : Modified.ToString("yyyy-MM-dd HH:mm");
     public string ToolTipText => $"{FullName}\n{Perms}  {(IsDir ? L.T("폴더") : SftpPanel.HumanSize(Size))}";
@@ -63,6 +88,7 @@ public partial class SftpPanel : UserControl
     public SftpPanel(Func<(HostEntry, string, string)?> getAuth, Func<Task<string?>>? getTerminalCwd = null, Func<SshClient?>? getShell = null)
     {
         InitializeComponent();
+        SftpItem.EnsureStatics();
         _getAuth = getAuth;
         _getTerminalCwd = getTerminalCwd;
         _getShell = getShell;
@@ -236,7 +262,7 @@ public partial class SftpPanel : UserControl
         _pendingFollow = null;   // 직접 이동했거나 따라가는 중 — 전송 중 기억해 둔 터미널 폴더는 버린다
         try
         {
-            List<ISftpFile> files;
+            List<ISftpFile> files = [];
             var linkTarget = new System.Collections.Concurrent.ConcurrentDictionary<string, SftpFileAttributes>();
             // 목록을 읽는 동안 연결을 잡아 둔다 — 사용자 전환(RunAsAsync)이 쓰는 중인 연결을 닫지 않게
             await _clientLock.WaitAsync();
@@ -253,8 +279,9 @@ public partial class SftpPanel : UserControl
                 }));
             }
             finally { _clientLock.Release(); }
-            if (seq != _navSeq) return;
-            var items = files.Select(f =>
+            if (seq != _navSeq || _closed) return;
+            // 항목 만들기는 백그라운드에서 — 수만 개짜리 폴더(/usr/lib 등)에서 UI 스레드를 잡지 않게 (SftpItem 의 붓은 고정(Freeze)돼 스레드와 무관)
+            var items = await Task.Run(() => files.Select(f =>
             {
                 var t = f.IsSymbolicLink && linkTarget.TryGetValue(f.FullName, out var a) ? a : null;
                 return new SftpItem
@@ -266,7 +293,8 @@ public partial class SftpPanel : UserControl
                         : !f.IsSymbolicLink && IsSpecialFile(f.IsSocket, f.IsNamedPipe, f.IsCharacterDevice, f.IsBlockDevice),
                     Size = f.Length, Modified = f.LastWriteTime, Perms = Perms(f),
                 };
-            }).ToList();
+            }).ToList());
+            if (seq != _navSeq || _closed) return;   // 만드는 동안 더 나중 이동이 들어왔거나 탭이 닫힘
 
             _navTarget = null;
             var sameFolder = path == _cwd;
@@ -283,10 +311,17 @@ public partial class SftpPanel : UserControl
         }
     }
 
-    private void ShowMessage(string? text)
+    // 목록 자리 안내 아이콘 (Segoe Fluent Icons)
+    internal const string GlyphError = "";        // Warning
+    internal const string GlyphEmptyFolder = "";  // Folder
+    internal const string GlyphHiddenOnly = "";   // Hide
+
+    /// <summary>목록 자리 가운데 안내 (null = 숨김). glyph = 위에 보일 아이콘 (기본: 경고)</summary>
+    private void ShowMessage(string? text, string glyph = GlyphError)
     {
         MessageText.Text = text ?? "";
-        MessageText.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
+        MessageIcon.Text = glyph;
+        MessagePanel.Visibility = text == null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private static string Perms(ISftpFile f) =>
@@ -359,18 +394,44 @@ public partial class SftpPanel : UserControl
     /// <summary>상태 줄 표시 번호 — 몇 초 뒤 숨길 때 그 사이 더 새 결과·알림이 떴으면 숨기지 않는다</summary>
     private int _statusSeq;
 
+    /// <summary>전송 시작 시각 (Stopwatch 타임스탬프) — 오래 걸린 전송만 완료 토스트를 띄운다</summary>
+    private long _transferStarted;
+    /// <summary>이보다 오래 걸린 전송이 끝나면 토스트로도 알린다 (짧은 전송은 아래 상태 줄로 충분)</summary>
+    private static readonly TimeSpan ToastAfter = TimeSpan.FromSeconds(3);
+
     private CancellationToken BeginTransfer(string text, long total)
     {
         _busy = true;
         _statusSeq++;
         _cts = new CancellationTokenSource();
+        _transferStarted = Stopwatch.GetTimestamp();
         TransferBar.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Visible;
+        TransferProgress.Visibility = Visibility.Visible;
+        SetStatusIcon(null);
         TransferText.Text = text;
         TransferText.ToolTip = null;
         TransferProgress.IsIndeterminate = total == 0;
         TransferProgress.Value = 0;
         return _cts.Token;
+    }
+
+    /// <summary>
+    /// 상태 줄 왼쪽 아이콘: null = 전송 중(동기화 · 강조색), 그 밖에는 결과 종류별 아이콘 · 색.
+    /// 붓은 리소스 참조로 — 같은 붓을 매번 새로 만들지 않는다
+    /// </summary>
+    private void SetStatusIcon(ToastKind? kind)
+    {
+        var (glyph, brush) = kind switch
+        {
+            null => ("", "Accent"),               // Sync
+            ToastKind.Success => ("", "Success"), // CheckMark
+            ToastKind.Warning => ("", "Warning"), // Warning
+            ToastKind.Error => ("", "Danger"),    // Error
+            _ => ("", "TextSecondary"),           // Info
+        };
+        TransferIcon.Text = glyph;
+        TransferIcon.SetResourceReference(TextBlock.ForegroundProperty, brush);
     }
 
     private void SetProgress(long done, long total)
@@ -379,8 +440,11 @@ public partial class SftpPanel : UserControl
         TransferProgress.Value = total > 0 ? Math.Min(1.0, (double)done / total) : 1;
     }
 
-    private async void EndTransfer(string? result)
+    /// <param name="result">상태 줄에 남길 결과 문구 (null = 바로 숨김)</param>
+    /// <param name="kind">결과 종류 — 상태 줄 아이콘. 실패는 토스트로도, 성공은 오래 걸린 전송만 토스트로도 알린다</param>
+    private async void EndTransfer(string? result, ToastKind kind = ToastKind.Info)
     {
+        var elapsed = Stopwatch.GetElapsedTime(_transferStarted);
         _busy = false;
         _cts?.Dispose();
         _cts = null;
@@ -397,9 +461,14 @@ public partial class SftpPanel : UserControl
         }
         var seq = ++_statusSeq;
         if (result == null) { TransferBar.Visibility = Visibility.Collapsed; return; }
+        SetStatusIcon(kind);
         TransferText.Text = result;
         TransferText.ToolTip = result;
         TransferProgress.Value = 1;
+        // 실패한 전송은 진행 막대를 숨긴다 (가득 찬 막대가 "완료"로 보이지 않게)
+        TransferProgress.Visibility = kind is ToastKind.Error or ToastKind.Warning ? Visibility.Collapsed : Visibility.Visible;
+        if (!_closed && (kind is ToastKind.Error or ToastKind.Warning || (kind == ToastKind.Success && elapsed >= ToastAfter)))
+            Toast.Show(result, kind, kind == ToastKind.Error ? 6000 : 4000);
         await Task.Delay(6000);
         if (!_busy && seq == _statusSeq) TransferBar.Visibility = Visibility.Collapsed;
     }
@@ -435,6 +504,11 @@ public partial class SftpPanel : UserControl
             // 파일을 잃는다. 하루 지난 것은 CleanupEditTemp 가 정리한다. 열기·끌어내기용 임시 폴더만 지운다
             temps = TakePanelTempDirs().Where(d => !IsEditTempDir(d)).ToList();
             owner = Window.GetWindow(this) ?? Application.Current?.MainWindow;
+            // 목록(폴더가 크면 수만 개)·전송 대기 상태를 놓는다 — 닫는 동안(최대 CloseBudget) 또는 외부(탐색기의 끌기 개체 등)가
+            // 패널을 잠시 더 붙잡아도 항목 목록까지 남지 않게
+            _pendingFollow = null;
+            _allItems = [];
+            FileList.ItemsSource = null;
         }
         catch (Exception ex) { Debug.WriteLine($"SFTP 패널 닫기 준비 실패: {ex.Message}"); }
 

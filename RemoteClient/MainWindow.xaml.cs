@@ -61,6 +61,10 @@ public partial class MainWindow : Window
         FooterText.Text = $"v{typeof(MainWindow).Assembly.GetName().Version?.ToString(3)}";
         FooterText.ToolTip = L.F("데이터 폴더: {0}", AppPaths.DataDir);
 
+        // Windows 11: Mica 배경 + 기본 캡션 버튼 (실패하면 단색 배경 · 직접 만든 버튼 그대로)
+        SourceInitialized += (_, _) => { if (WindowBackdrop.Apply(this, nativeCaptionButtons: true)) UseNativeCaptionButtons(); };
+        Toast.Attach(this, RootGrid);
+
         StateChanged += (_, _) => ApplyWindowState();
         // 저장된 최대화 상태로 시작하면 StateChanged 가 오지 않을 수 있다 — 여백·최대화 버튼 모양을 지금 맞춘다
         ApplyWindowState();
@@ -161,6 +165,21 @@ public partial class MainWindow : Window
             RootGrid.Margin = new Thickness(0);
             MaxButton.Content = "";
         }
+    }
+
+    /// <summary>Mica 를 켜면 유리 프레임 위에 DWM 이 기본 캡션 버튼을 그린다 — 직접 만든 버튼은 숨기고 그 폭만큼 오른쪽 자리를 비운다</summary>
+    private FrameworkElement? _captionSpacer;
+
+    private void UseNativeCaptionButtons()
+    {
+        if (MaxButton.Parent is not Panel bar) return;
+        foreach (var b in bar.Children.OfType<Button>().Where(b => b.Style == (Style)FindResource("TitleButton")).ToList())
+            b.Visibility = Visibility.Collapsed;
+        _captionSpacer = new FrameworkElement { Width = 138 };   // 실제 폭은 창이 뜬 뒤 DWM 에 물어 맞춘다 (100% 기준 기본값)
+        bar.Children.Add(_captionSpacer);
+        void Fit() { if (_captionSpacer != null && WindowBackdrop.CaptionButtonsWidth(this) is { } w) _captionSpacer.Width = Math.Ceiling(w) + 4; }
+        Loaded += (_, _) => Fit();
+        DpiChanged += (_, _) => Dispatcher.BeginInvoke(Fit, DispatcherPriority.Loaded);
     }
 
     private void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

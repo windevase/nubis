@@ -70,7 +70,7 @@ public partial class MainWindow
         _editorOpen = true;
         EditorLayer.IsHitTestVisible = true;
         EditorLayer.Visibility = Visibility.Visible;
-        EditorSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(390, 0, TimeSpan.FromMilliseconds(180))
+        EditorSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(EditorSlideOut, 0, TimeSpan.FromMilliseconds(180))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         });
@@ -78,6 +78,8 @@ public partial class MainWindow
     }
 
     private HostEntry? _template;
+    // 편집 패널이 화면 밖으로 빠지는 거리: 패널 폭 390 + 왼쪽으로 번지는 그림자(Shadow16) 자리
+    private const double EditorSlideOut = 430;
     // 편집 패널이 열려 있는지 — 닫기 애니메이션(140ms) 동안은 EditorLayer 가 아직 Visible 이지만 false.
     // 그 사이 저장 두 번 클릭·Ctrl+S 반복이 다시 저장하면 비운 비밀번호 칸이 "바뀜" 으로 잡혀 저장된 비밀번호를 지우거나
     // 새 호스트를 두 번 추가했다
@@ -121,7 +123,7 @@ public partial class MainWindow
         // 닫는 즉시 "닫힘" 으로 — 애니메이션 동안 저장·닫기·삭제가 다시 실행되지 않게, 클릭도 받지 않게
         _editorOpen = false;
         EditorLayer.IsHitTestVisible = false;
-        var anim = new DoubleAnimation(0, 390, TimeSpan.FromMilliseconds(140))
+        var anim = new DoubleAnimation(0, EditorSlideOut, TimeSpan.FromMilliseconds(140))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
         };
@@ -319,7 +321,10 @@ public partial class MainWindow
     private void OnPickVault(object sender, RoutedEventArgs e)
     {
         var proto = ProtoRdp.IsChecked == true ? Protocol.Rdp : Protocol.Ssh;
-        if (VaultPickerDialog.Pick(this, _edVaultId, proto) is { } id) { _edVaultId = id; UpdateAuthUi(); }
+        if (VaultPickerDialog.Pick(this, _edVaultId, proto, allowClear: true) is not { } id) return;
+        // "지정 해제" = 해제 버튼과 같다 (Vault 계정 없이 직접 입력한 값 · 기본 계정)
+        _edVaultId = id == VaultPickerDialog.Cleared ? null : id;
+        UpdateAuthUi();
     }
 
     private void OnClearVault(object sender, RoutedEventArgs e)

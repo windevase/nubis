@@ -179,11 +179,23 @@ public partial class MainWindow
         var current = CurrentSettingsSection(tops, SettingsPage.VerticalOffset, SettingsPage.ScrollableHeight,
             SettingsPage.ViewportHeight, _settingsJumpPicked);
         if (current != _settingsJumpPicked) _settingsJumpPicked = -1;   // 고른 섹션이 화면 밖으로 나가면 평소 기준으로
-        var accent = (Brush)FindResource("Accent");
+        // 지금 섹션 칩 = 옅은 강조 채움 + 강조 글자 (Segment 선택 모양과 같은 계열). 나머지는 스타일 값으로 되돌린다
+        var fill = (Brush)FindResource("AccentSubtle");
+        var text = (Brush)FindResource("AccentText");
         for (var i = 0; i < buttons.Count; i++)
         {
-            if (i == current) buttons[i].Foreground = accent;
-            else buttons[i].ClearValue(ForegroundProperty);
+            if (i == current)
+            {
+                buttons[i].Background = fill;
+                buttons[i].BorderBrush = fill;
+                buttons[i].Foreground = text;
+            }
+            else
+            {
+                buttons[i].ClearValue(BackgroundProperty);
+                buttons[i].ClearValue(BorderBrushProperty);
+                buttons[i].ClearValue(ForegroundProperty);
+            }
         }
     }
 
@@ -336,7 +348,23 @@ public partial class MainWindow
         // 흐리게 보이는 것은 입력란·세그먼트의 IsEnabled 모양(App.xaml)이 맡는다 — 패널 Opacity 까지 낮추면 겹쳐서 읽기 어렵다
         LoginFields.IsEnabled = editable;
         foreach (var rb in new[] { LoginNone, LoginGitHub, LoginGoogle, LoginMicrosoft }) rb.IsEnabled = editable;
+        // 로그아웃은 시작 화면 로그인을 쓰는 동안만 — 소유자가 아니어도 자기 로그인 기록은 지울 수 있다
+        LoginSignOutButton.Visibility = c.Enabled ? Visibility.Visible : Visibility.Collapsed;
         UpdateLoginUi();
+    }
+
+    /// <summary>
+    /// 로그아웃: 로그인 기록(login.json)을 지우고 다시 시작한다. 다음 실행은 로그인 유지 시간과 상관없이 온라인 로그인이 필요하고,
+    /// 기록이 없으므로 오프라인 진입도 막힌다
+    /// </summary>
+    private void OnLoginSignOut(object sender, RoutedEventArgs e)
+    {
+        if (!SettingsStore.Global.Login.Enabled) { LoadLoginSettings(); return; }
+        if (Dialog.Show(this, L.T("로그아웃할까요?\n다음 실행 때 다시 온라인으로 로그인해야 합니다. 로그인 기록이 지워지므로 인터넷이 없을 때의 오프라인 진입도 다시 로그인하기 전까지는 할 수 없습니다.\n\n열린 탭을 모두 닫고 Nubis 를 다시 시작합니다."),
+                L.T("로그아웃"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (LoginState.SignOut()) App.Restart();
+        else Dialog.Show(this, L.T("로그인 기록(login.json)을 지우지 못해 로그아웃하지 못했습니다. 다른 프로그램이 파일을 쓰고 있지 않은지 확인한 뒤 다시 시도하세요."),
+                L.T("로그아웃"), MessageBoxButton.OK, MessageBoxImage.Warning);
     }
 
     private LoginProviderKind SelectedLoginProvider =>

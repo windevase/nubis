@@ -76,9 +76,11 @@ public partial class MainWindow
             }));
 
         // 클라우드 프로필 그룹: AWS → Tencent → GCP → Azure → OCI, 기본은 접힌 상태 (서버가 많으므로)
+        // 프로필마다 전체 목록을 다시 훑지 않게 한 번에 나눠 둔다 (프로필 수 × 호스트 수 → 호스트 수)
+        var byProfile = filtered.Where(h => h.CloudProfileId != null).ToLookup(h => h.CloudProfileId!.Value);
         foreach (var p in _profiles.OrderBy(p => p.Provider).ThenBy(p => p.GroupName, StringComparer.CurrentCultureIgnoreCase))
         {
-            var hosts = filtered.Where(h => h.CloudProfileId == p.Id)
+            var hosts = byProfile[p.Id]
                 .OrderBy(h => h.IsStopped)
                 .ThenBy(h => h.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -155,30 +157,19 @@ public partial class MainWindow
         return changed;
     }
 
-    // ----- 일괄 작업 결과 같은 짧은 안내 (호스트 수 · 선택 막대 옆에 몇 초 보였다가 사라짐) -----
+    // ----- 호스트 수 표시 -----
     private string _countBase = "";
-    private string? _flashText;
-    private DispatcherTimer? _flashTimer;
 
     private void UpdateCountText()
     {
-        CountText.Text = _flashText == null ? _countBase : _countBase + "  ·  " + _flashText;
+        CountText.Text = _countBase;
     }
 
-    /// <summary>작업 결과를 몇 초 동안 보여 준다 (대화 상자 없이)</summary>
-    private void FlashHostStatus(string text)
-    {
-        _flashText = text;
-        if (_flashTimer == null)
-        {
-            _flashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            _flashTimer.Tick += (_, _) => { _flashTimer.Stop(); _flashText = null; UpdateCountText(); UpdateSelectionBar(); };
-        }
-        _flashTimer.Stop();
-        _flashTimer.Start();
-        UpdateCountText();
-        UpdateSelectionBar();
-    }
+    /// <summary>
+    /// 일괄 작업 결과 같은 짧은 안내 (대화 상자 없이). 예전에는 호스트 수 옆에 몇 초 붙였다가 지웠는데,
+    /// 선택 막대가 사라지면 같이 안 보이는 일이 있어 토스트로 띄운다
+    /// </summary>
+    private static void FlashHostStatus(string text, ToastKind kind = ToastKind.Success) => Toast.Show(text, kind);
 
     /// <summary>
     /// 검색어 한 단어가 호스트와 맞는지. 이름·주소(사설/공인)·사용자·그룹·프로토콜·인스턴스 ID·리전·OS·용도·프로필 이름.
@@ -480,4 +471,26 @@ public partial class MainWindow
             UpdateSelectionBar();
         }
     }
+}
+
+/// <summary>
+/// 호스트 카드의 마지막 접속 표시 ("방금" · "5분 전" · "3시간 전" · "2일 전"). 30일이 넘었거나 없으면 "" (카드를 조용하게).
+/// 카드는 OneTime 바인딩이라 목록을 다시 만들 때(접속 · 편집 · 동기화) 새로 계산된다 — 시계를 돌리지 않는다
+/// </summary>
+public sealed class RelativeTimeConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+        value is DateTime t ? Format(DateTime.Now - t) : "";
+
+    internal static string Format(TimeSpan ago)
+    {
+        if (ago < TimeSpan.Zero || ago.TotalDays >= 30) return "";
+        if (ago.TotalMinutes < 1) return L.T("방금");
+        if (ago.TotalHours < 1) return L.F("{0}분 전", (int)ago.TotalMinutes);
+        if (ago.TotalDays < 1) return L.F("{0}시간 전", (int)ago.TotalHours);
+        return L.F("{0}일 전", (int)ago.TotalDays);
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+        throw new NotSupportedException();
 }

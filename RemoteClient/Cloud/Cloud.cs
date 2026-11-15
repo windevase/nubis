@@ -278,12 +278,16 @@ public static class CloudProviders
             string msg;
             try
             {
-                var err = JsonDocument.Parse(body).RootElement.Obj("error");
+                // JsonDocument 는 풀(ArrayPool)에서 빌린 버퍼를 쓰므로 Dispose 로 돌려준다 (매 조회마다 버퍼가 GC 로만 회수되지 않게)
+                using var errDoc = JsonDocument.Parse(body);
+                var err = errDoc.RootElement.Obj("error");
                 msg = err.ValueKind == JsonValueKind.Object ? err.Str("message") : body;
             }
             catch { msg = body; }
             throw new HttpRequestException($"{(int)resp.StatusCode} {FirstLine(msg)}");
         }
-        return JsonDocument.Parse(body).RootElement.Clone();
+        // Clone 한 값은 문서와 무관하게 남으므로 문서는 바로 돌려준다
+        using var doc = JsonDocument.Parse(body);
+        return doc.RootElement.Clone();
     }
 }

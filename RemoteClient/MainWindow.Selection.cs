@@ -119,7 +119,7 @@ public partial class MainWindow
         var n = _selected.Count;
         SelectionBar.Visibility = n > 0 ? Visibility.Visible : Visibility.Collapsed;
         HostToolbar.Visibility = n > 0 ? Visibility.Hidden : Visibility.Visible;
-        SelectionText.Text = L.F("{0}개 선택됨", n) + (_flashText == null ? "" : "  ·  " + _flashText);
+        SelectionText.Text = L.F("{0}개 선택됨", n);
     }
 
     // ----- 선택 막대 버튼 -----
@@ -192,8 +192,10 @@ public partial class MainWindow
         if (targets.Count == 0) return;
         var proto = targets.All(h => h.Protocol == Protocol.Rdp) ? Protocol.Rdp : Protocol.Ssh;
         var current = targets.Select(h => h.VaultId).Distinct().Count() == 1 ? targets[0].VaultId : null;
-        if (VaultPickerDialog.Pick(this, current, proto, L.F("고른 호스트 {0}개가 이 계정으로 로그인합니다.", targets.Count)) is not { } id
-            || VaultStore.Get(id) == null) return;
+        if (VaultPickerDialog.Pick(this, current, proto, L.F("고른 호스트 {0}개가 이 계정으로 로그인합니다.", targets.Count), allowClear: true) is not { } id) return;
+        // "지정 해제": 고른 호스트의 Vault 지정을 비운다 (숨겨 둔 직접 적은 값 → 기본 계정 순으로 다시 쓰인다)
+        if (id == VaultPickerDialog.Cleared) { ApplyToSelected(new BulkEdit { SetVault = true, VaultId = null }, targets); return; }
+        if (VaultStore.Get(id) == null) return;
 
         // 직접 고른 Vault 계정은 호스트에 적힌 값보다 우선 (적힌 값은 숨겨 두고 해제하면 다시 쓴다) — 지울지 묻지 않는다
         ApplyToSelected(new BulkEdit { SetVault = true, VaultId = id }, targets);
@@ -211,7 +213,7 @@ public partial class MainWindow
     {
         hosts ??= SelectedHosts();
         var changed = edit.Apply(hosts);
-        if (changed == 0) { FlashHostStatus(L.T("바뀐 호스트가 없습니다 (이미 같은 값)")); return; }
+        if (changed == 0) { FlashHostStatus(L.T("바뀐 호스트가 없습니다 (이미 같은 값)"), ToastKind.Info); return; }
         SaveHosts();
         RefreshHosts();
         if (VaultPage.Visibility == Visibility.Visible) RefreshVault();

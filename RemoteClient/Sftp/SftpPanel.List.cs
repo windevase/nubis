@@ -40,9 +40,9 @@ public partial class SftpPanel
         if (selected is { Count: > 0 })
             foreach (var i in view)
                 if (selected.Contains(i.FullName)) FileList.SelectedItems.Add(i);
-        ShowMessage(view.Count > 0 ? null
-            : _allItems.Count > 0 ? L.T("숨김 파일만 있습니다.\nCtrl+H 를 누르면 숨김 파일을 표시합니다.")
-            : L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다."));
+        if (view.Count > 0) ShowMessage(null);
+        else if (_allItems.Count > 0) ShowMessage(L.T("숨김 파일만 있습니다.\nCtrl+H 를 누르면 숨김 파일을 표시합니다."), GlyphHiddenOnly);
+        else ShowMessage(L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다."), GlyphEmptyFolder);
         UpdateSortHeaders();
     }
 
@@ -62,7 +62,7 @@ public partial class SftpPanel
     /// <summary>유닉스 숨김 파일 (점으로 시작)</summary>
     public static bool IsHiddenName(string name) => name.StartsWith('.');
 
-    private void OnSortHeader(object sender, MouseButtonEventArgs e)
+    private void OnSortHeader(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not string tag || !Enum.TryParse<SftpSortKey>(tag, out var key)) return;
         // 같은 열을 다시 누르면 방향만 바꾼다. 크기·날짜는 처음 누를 때 큰 것·최신이 위로
@@ -72,12 +72,19 @@ public partial class SftpPanel
         e.Handled = true;
     }
 
+    /// <summary>머리글: 정렬 중인 열만 글자를 한 단계 밝게 + 방향 화살표(글리프). 나머지는 3차 글자색, 화살표 숨김</summary>
     private void UpdateSortHeaders()
     {
-        string Arrow(SftpSortKey k) => k != _sortKey ? "" : _sortDesc ? " ▼" : " ▲";
-        NameHeader.Text = L.T("이름") + Arrow(SftpSortKey.Name);
-        SizeHeader.Text = L.T("크기") + Arrow(SftpSortKey.Size);
-        ModifiedHeader.Text = L.T("수정한 날짜") + Arrow(SftpSortKey.Modified);
+        void Set(TextBlock label, TextBlock arrow, SftpSortKey k)
+        {
+            var on = k == _sortKey;
+            arrow.Text = _sortDesc ? "" : "";   // ChevronDown / ChevronUp
+            arrow.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            label.SetResourceReference(TextBlock.ForegroundProperty, on ? "TextSecondary" : "TextTertiary");
+        }
+        Set(NameHeader, NameArrow, SftpSortKey.Name);
+        Set(SizeHeader, SizeArrow, SftpSortKey.Size);
+        Set(ModifiedHeader, ModifiedArrow, SftpSortKey.Modified);
     }
 
     private void OnToggleHidden(object sender, RoutedEventArgs e) => ToggleHidden();
@@ -225,4 +232,69 @@ public sealed class TransferMeter(long total)
     /// <summary>남은 시간: 한 시간 미만이면 m:ss, 이상이면 h:mm:ss</summary>
     public static string FormatEta(TimeSpan t) =>
         t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
+}
+
+/// <summary>
+/// 진행 보고를 화면 스레드로 넘기는 횟수를 줄인다. Progress&lt;T&gt; 는 SSH.NET 이 보고할 때마다(수십 KB 마다)
+/// UI 스레드에 작업을 올려, 빠른 전송에서는 초당 수천 번 화면 스레드를 깨웠다 (보고 처리 안에서 거르는 것으로는 그 비용이 그대로).
+/// 마지막 값만 기억해 두고 interval 에 한 번, 동시에 하나만 올린다. 그 사이 값은 버린다 —
+/// 부르는 쪽은 파일 하나가 끝날 때 진행률을 직접 맞춘다.
+/// </summary>
+public sealed class ThrottledProgress<T> : IProgress<T>
+{
+    private readonly Action<Action> _post;
+    private readonly Action<T> _apply;
+    private readonly long _intervalMs;
+    private readonly Func<long> _clock;
+    private readonly object _gate = new();
+    private T _latest = default!;
+    private long _lastPost = long.MinValue / 2;
+    private bool _pending;
+
+    /// <param name="post">apply 를 화면 스레드로 넘기는 방법 (테스트에서는 바로 실행)</param>
+    /// <param name="clock">밀리초 시계 (기본 Environment.TickCount64)</param>
+    public ThrottledProgress(Action<Action> post, Action<T> apply, int intervalMs = 250, Func<long>? clock = null)
+    {
+        _post = post;
+        _apply = apply;
+        _intervalMs = intervalMs;
+        _clock = clock ?? (() => Environment.TickCount64);
+    }
+
+    /// <summary>WPF 화면 스레드로 — 입력·그리기보다 낮은 우선순위라 전송 중에도 화면이 버벅이지 않는다</summary>
+    public static ThrottledProgress<T> OnDispatcher(System.Windows.Threading.Dispatcher dispatcher, Action<T> apply) =>
+        new(a => dispatcher.BeginInvoke(a, System.Windows.Threading.DispatcherPriority.Background), apply);
+
+    public void Report(T value)
+    {
+        lock (_gate)
+        {
+            _latest = value;
+            if (_pending) return;   // 이미 올려 둔 것이 최신 값을 가져간다
+            var now = _clock();
+            if (now - _lastPost < _intervalMs) return;
+            _pending = true;
+            _lastPost = now;
+        }
+        _post(Flush);
+    }
+
+    private void Flush()
+    {
+        T v;
+        lock (_gate)
+        {
+            v = _latest;
+            _pending = false;
+        }
+        _apply(v);
+    }
+}
+
+/// <summary>진행 보고를 받지 않음 — new Progress&lt;T&gt;(_ =&gt; { }) 는 빈 처리기라도 보고마다 UI 스레드에 작업을 올린다</summary>
+public sealed class NoProgress<T> : IProgress<T>
+{
+    public static readonly NoProgress<T> Instance = new();
+    private NoProgress() { }
+    public void Report(T value) { }
 }

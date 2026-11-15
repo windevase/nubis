@@ -31,8 +31,12 @@ public partial class SftpPanel
         public bool Uploading { get; set; }
         public FileSystemWatcher? Watcher { get; set; }
         public DispatcherTimer? Debounce { get; set; }
+        /// <summary>정리됨 — 감시 스레드에서 정리 직전에 올린 Poke 가 디바운스 타이머를 다시 켜지 않게 (켜진 DispatcherTimer 는 Dispatcher 가 붙잡는다)</summary>
+        public volatile bool Disposed;
         public void Dispose()
         {
+            if (Disposed) return;
+            Disposed = true;
             Debounce?.Stop();
             if (Watcher != null) { Watcher.EnableRaisingEvents = false; Watcher.Dispose(); }
             ReleaseEditDir(Path.GetDirectoryName(Local));
@@ -93,7 +97,11 @@ public partial class SftpPanel
             var local = Path.Combine(dir, SafeLocalName(item.Name));
 
             // 받는 중에는 .part 로 — 취소·실패 때 반쯤 받은 파일이 편집 파일로 남지 않게
-            var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r => SetProgress((long)r.TotalBytesDownloaded, attr.Size));
+            var tseq = _statusSeq;   // 받기가 끝난 뒤 늦게 도착한 진행 보고는 버린다
+            var progress = ThrottledProgress<Renci.SshNet.DownloadFileProgressReport>.OnDispatcher(Dispatcher, r =>
+            {
+                if (tseq == _statusSeq) SetProgress((long)r.TotalBytesDownloaded, attr.Size);
+            });
             var part = local + ".part";
             await using (var fs = File.Create(part))
                 await c.DownloadFileAsync(item.FullName, fs, progress, ct);
@@ -105,37 +113,48 @@ public partial class SftpPanel
 
             var s = new EditSession { Remote = item.FullName, Local = local, RemoteMtime = attr.LastWriteTimeUtc, RemoteSize = attr.Size, Hash = HashFile(local) };
             HoldEditDir(dir);
-            Watch(s);
+            // 감시를 걸다 실패하면(감시 한도 등) 만든 감시·디바운스와 ActiveEditDirs 보유를 바로 놓는다 — _edits 에 안 들어가 아무도 정리하지 않게 되므로
+            try { Watch(s); }
+            catch { s.Dispose(); throw; }
             _edits[item.FullName] = s;
             TrackTempDir(dir);
             EndTransfer(L.F("편집 중: {0} — 저장하면 서버에 자동으로 올립니다", item.Name));
             OpenInEditor(local);
         }
         catch (OperationCanceledException) { DeleteTempDirs([dir]); EndTransfer(L.T("편집 열기를 취소했습니다.")); }
-        catch (Exception ex) { DeleteTempDirs([dir]); EndTransfer(L.F("편집 열기 실패: {0}", ex.Message)); }
+        catch (Exception ex) { DeleteTempDirs([dir]); EndTransfer(L.F("편집 열기 실패: {0}", ex.Message), ToastKind.Error); }
     }
 
     private void Watch(EditSession s)
     {
         var debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
-        debounce.Tick += async (_, _) => { debounce.Stop(); await SyncEditAsync(s); };
+        debounce.Tick += async (_, _) => { debounce.Stop(); if (!s.Disposed) await SyncEditAsync(s); };
+        s.Debounce = debounce;
         // 편집기에 따라 직접 쓰거나(VS Code·메모장) 임시 파일로 쓴 뒤 이름을 바꾼다 → 폴더 전체를 보고 이름으로 거른다
         var name = Path.GetFileName(s.Local);
         var w = new FileSystemWatcher(Path.GetDirectoryName(s.Local)!)
         {
             NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
         };
+        s.Watcher = w;   // 아래에서 실패해도 s.Dispose 가 감시를 닫게 먼저 넣는다
+        // 저장 한 번에 이벤트가 여러 개(Changed×2·Renamed 등) 온다 — UI 스레드에는 한 번만 올린다 (이벤트 폭주 때 UI 스레드를 깨우지 않게)
+        var queued = 0;
         void Poke(string? changed)
         {
-            if (!string.Equals(changed, name, StringComparison.OrdinalIgnoreCase)) return;
-            Dispatcher.BeginInvoke(() => { debounce.Stop(); debounce.Start(); });
+            if (s.Disposed || !string.Equals(changed, name, StringComparison.OrdinalIgnoreCase)) return;
+            if (Interlocked.Exchange(ref queued, 1) == 1) return;
+            Dispatcher.BeginInvoke(() =>
+            {
+                Volatile.Write(ref queued, 0);
+                if (s.Disposed) return;   // 정리된 뒤 도착 — 타이머를 다시 켜지 않는다
+                debounce.Stop();
+                debounce.Start();
+            });
         }
         w.Changed += (_, e) => Poke(e.Name);
         w.Created += (_, e) => Poke(e.Name);
         w.Renamed += (_, e) => Poke(e.Name);
         w.EnableRaisingEvents = true;
-        s.Watcher = w;
-        s.Debounce = debounce;
     }
 
     private async Task SyncEditAsync(EditSession s)
@@ -177,7 +196,7 @@ public partial class SftpPanel
             await WithClientLockAsync(async c =>
             {
                 await UploadOneAsync(c, () => new MemoryStream(data, writable: false), s.Remote,
-                    new Progress<Renci.SshNet.UploadFileProgressReport>(_ => { }), timeout.Token);
+                    NoProgress<Renci.SshNet.UploadFileProgressReport>.Instance, timeout.Token);
                 var a = await Task.Run(() => c.GetAttributes(s.Remote));
                 // 기준값은 잠금을 놓기 전에 바꾼다 — 그 사이 탭을 닫으면 Close 가 옛 기준으로 "서버 파일이 바뀜"이라 잘못 판단하지 않게
                 s.RemoteMtime = a.LastWriteTimeUtc;
@@ -185,13 +204,13 @@ public partial class SftpPanel
                 s.Hash = hash;
                 return a;
             });
-            ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)));
+            ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)), kind: ToastKind.Success);
             if (ParentPath(s.Remote) == _cwd && !_busy) await NavigateAsync(_cwd);   // 목록의 크기·시각 갱신
         }
         // 실패는 전송 중이어도 버리지 않는다 — 전송이 끝날 때 결과 문구에 붙여 보인다 (저장이 서버에 안 갔는데 모르는 일이 없게)
-        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name), keepIfBusy: true); }
+        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name), keepIfBusy: true, kind: ToastKind.Warning); }
         catch (Exception) when (_closed) { /* 탭이 닫힘 — Close 가 마지막으로 올리고 실패하면 알린다 */ }
-        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message), keepIfBusy: true); }
+        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message), keepIfBusy: true, kind: ToastKind.Error); }
         finally { s.Uploading = false; }
     }
 
@@ -226,7 +245,7 @@ public partial class SftpPanel
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(EditUploadTimeout(data.Length));
             await UploadOneAsync(c, () => new MemoryStream(data, writable: false), s.Remote,
-                new Progress<Renci.SshNet.UploadFileProgressReport>(_ => { }), timeout.Token);
+                NoProgress<Renci.SshNet.UploadFileProgressReport>.Instance, timeout.Token);
             s.Hash = hash;
             return null;
         }
@@ -455,19 +474,26 @@ public partial class SftpPanel
     /// 아래 상태 줄에 잠깐 알림. 전송 중이면 기본은 버리고(진행 표시를 가리지 않게),
     /// keepIfBusy 면 전송이 끝날 때 결과 문구에 붙인다 (자동 업로드 실패처럼 놓치면 안 되는 알림)
     /// </summary>
-    private async void ShowStatus(string text, bool keepIfBusy = false)
+    /// <param name="kind">알림 종류 — 상태 줄 아이콘. 경고 · 실패는 토스트로도 띄운다 (편집기에서 저장하느라 패널을 안 보고 있을 때도 알게)</param>
+    private async void ShowStatus(string text, bool keepIfBusy = false, ToastKind kind = ToastKind.Info)
     {
+        var toast = (kind is ToastKind.Error or ToastKind.Warning) && !_closed;
         if (_busy)
         {
             if (keepIfBusy && !(_pendingNotice?.Contains(text, StringComparison.Ordinal) ?? false))
                 _pendingNotice = AppendNotice(_pendingNotice, text);
+            if (toast && keepIfBusy) Toast.Show(text, kind, 6000);   // 상태 줄은 진행 표시 중 — 토스트로는 바로 알린다
             return;
         }
         var seq = ++_statusSeq;
         TransferBar.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Collapsed;
+        // 알림에는 진행 막대를 보이지 않는다 (가득 찬 막대가 전송 완료처럼 보이지 않게)
+        TransferProgress.Visibility = Visibility.Collapsed;
         TransferProgress.IsIndeterminate = false;
         TransferProgress.Value = 1;
+        SetStatusIcon(kind);
+        if (toast) Toast.Show(text, kind, 6000);
         TransferText.Text = text;
         TransferText.ToolTip = text;
         await Task.Delay(7000);

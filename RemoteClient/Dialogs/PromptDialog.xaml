@@ -2,22 +2,30 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:Nubis"
-        Title="{l:Tr '입력'}" Width="420" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        Title="{l:Tr '입력'}" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="{StaticResource DialogBg}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+    <!-- 공통 대화상자 틀 (MessageDialog 와 같음): Overlay 면 · RadiusXl · Shadow16 · 본문 + 버튼 띠 -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <StackPanel Margin="24,22,24,22">
-            <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold"/>
-            <TextBlock x:Name="LabelText" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="InputBox"/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-                <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
-                <Button Content="{l:Tr '확인'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel Margin="{StaticResource PadDialog}">
+                <TextBlock x:Name="TitleText" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
+                <TextBlock x:Name="LabelText" Style="{StaticResource FieldLabel}" Margin="0,16,0,6" TextWrapping="Wrap"/>
+                <TextBox x:Name="InputBox"/>
             </StackPanel>
-        </StackPanel>
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="96"/>
+                    <Button Content="{l:Tr '확인'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="96"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Border>
 </Window>

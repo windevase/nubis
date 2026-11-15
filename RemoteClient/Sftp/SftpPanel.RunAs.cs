@@ -117,11 +117,21 @@ public partial class SftpPanel
         _runAsFailed.Clear();
         _separateAuthFailed = null;
         UpdateRunAsBadge();
+        // 끊긴 옛 연결 위의 채널은 바로 놓는다 — 패널이 숨겨져 있어 새로 고치지 않으면 다음에 쓸 때까지
+        // 닫힌 옛 SSH 세션(버퍼·소켓 개체 등)을 _client 가 붙잡고 있었다. 아직 연결돼 있는 것(새 세션 위에 이미 연 것)은 그대로 둔다
+        var old = _client;
+        bool alive;
+        try { alive = old?.IsConnected ?? true; } catch { alive = false; }
+        if (!alive)
+        {
+            _client = null;
+            DisposeLater(old);
+        }
     });
 
     private void UpdateRunAsBadge()
     {
         RunAsBadge.Visibility = _runAs != null ? Visibility.Visible : Visibility.Collapsed;
-        RunAsText.Text = _runAs ?? "";
+        RunAsText.Text = _runAs != null ? L.F("{0} 권한으로 열림 (sudo)", _runAs) : "";
     }
 }

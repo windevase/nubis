@@ -143,6 +143,8 @@ public sealed class RdpAxHost : AxHost
             if (ax.Faulted) { ax.Shutdown(); continue; }
             int state;
             try { state = (int)ax.Ocx.Connected; } catch { ax.Shutdown(); continue; }
+            // 끊기가 끝내 끝나지 않는 컨트롤은 풀 자리를 영원히 막아, 그 뒤 반납되는 컨트롤이 모두 해제(핸들·스레드 누수)된다 → 버린다
+            if (IsStuck(state, DateTime.UtcNow - ax._releasedAt)) { ax.Shutdown(); continue; }
             if (state == 0 && IsReusable(ax._staleDisconnectPending, DateTime.UtcNow - ax._releasedAt))
             {
                 ax._staleDisconnectPending = false;
@@ -157,6 +159,8 @@ public sealed class RdpAxHost : AxHost
 
     public static void Release(RdpAxHost ax)
     {
+        // 같은 컨트롤을 두 번 반납하면 풀에 두 번 들어가 두 탭이 한 컨트롤을 나눠 갖는다 — 이미 풀에 있으면 무시
+        if (Pool.Contains(ax)) return;
         ax.ClearHandlers();
         ax._sessionActive = false;   // 이제부터 오는 OnDisconnected 는 이전 세션 것 — 다음 탭에 전달하지 않는다
         try { if ((bool)ax.Ocx.FullScreen) ax.Ocx.FullScreen = false; } catch { }
@@ -182,6 +186,12 @@ public sealed class RdpAxHost : AxHost
     /// </summary>
     internal static bool IsReusable(bool staleDisconnectPending, TimeSpan sinceRelease) =>
         !staleDisconnectPending || sinceRelease >= StaleWait;
+
+    private static readonly TimeSpan StuckWait = TimeSpan.FromSeconds(60);
+
+    /// <summary>반납한 지 StuckWait 가 지나도 아직 연결 상태(Connected ≠ 0)인 컨트롤 — 풀에서 빼고 해제한다</summary>
+    internal static bool IsStuck(int connectedState, TimeSpan sinceRelease) =>
+        connectedState != 0 && sinceRelease >= StuckWait;
 
     [ClassInterface(ClassInterfaceType.None)]
     public sealed class EventSink : IMsTscAxEvents

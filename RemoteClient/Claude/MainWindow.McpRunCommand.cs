@@ -134,7 +134,8 @@ public partial class MainWindow
             var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, cts.Token);
             // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 실행 중인 명령에는 SSH 는 SIGTERM · WinRM 은 셸 삭제로 중단을 시도)
             var all = Task.WhenAll(sshTask, winTask);
-            try { await Task.WhenAny(all, Task.Delay(Timeout.Infinite, cts.Token)); }
+            // WaitAsync 는 끝나면 취소 등록을 바로 풀어 준다 (예전 Task.Delay(Infinite, token) 은 실행이 끝난 뒤에도 등록이 남았다)
+            try { await all.WaitAsync(cts.Token); }
             catch (OperationCanceledException) { }
             if (!cts.IsCancellationRequested)
             {

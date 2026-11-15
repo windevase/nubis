@@ -53,6 +53,8 @@ public partial class ImportHostsDialog
     private void OnToggleWarnings(object sender, MouseButtonEventArgs e)
     {
         WarningsScroll.MaxHeight = WarningsScroll.MaxHeight > 100 ? 74 : 260;
+        // 펼친 상태면 위 화살표(접기), 접힌 상태면 아래 화살표(펼치기)
+        WarningsChevron.Text = WarningsScroll.MaxHeight > 100 ? "" : "";
     }
 
     // ===================== 열 머리글 =====================

@@ -71,6 +71,7 @@ public partial class ApprovalDialog : Window
     {
         QueueText.Text = count > 0 ? L.F("승인 대기 {0}건 더 있음", count) : "";
         QueueText.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        QueuePill.Visibility = QueueText.Visibility;
     }
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -144,7 +145,8 @@ public partial class ApprovalDialog : Window
         if (warnings.Count > 0)
         {
             dlg.WarnText.Text = string.Join("\n", warnings);
-            dlg.WarnText.Visibility = Visibility.Visible;
+            dlg.WarnBox.Visibility = Visibility.Visible;
+            dlg.MarkRisky();
         }
         if (owner.WindowState == WindowState.Minimized) owner.WindowState = WindowState.Normal;
         if (owner.IsActive || owner.OwnedWindows.Cast<Window>().Any(w => w.IsActive))
@@ -157,6 +159,18 @@ public partial class ApprovalDialog : Window
         }
         opened?.Invoke(dlg);
         return dlg.ShowDialog() == true;
+    }
+
+    /// <summary>
+    /// 위험 표시: 테두리 · 제목 타일을 빨강으로, 실행 버튼을 빨강 채움(DangerFilledButton)으로 — 평소 승인과 한눈에 구별되게.
+    /// 버튼 잠금(1.5초) · 키보드 동작은 그대로 (실행은 기본 버튼이 아니므로 Enter 로 승인되지 않는다)
+    /// </summary>
+    private void MarkRisky()
+    {
+        Frame.BorderBrush = (System.Windows.Media.Brush)FindResource("Danger");
+        IconTile.Background = (System.Windows.Media.Brush)FindResource("DangerSubtle");
+        IconGlyph.Foreground = (System.Windows.Media.Brush)FindResource("Danger");
+        OkButton.Style = (Style)FindResource("DangerFilledButton");
     }
 
     private void OnOk(object sender, RoutedEventArgs e) => DialogResult = true;

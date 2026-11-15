@@ -436,7 +436,8 @@ public static class WinRm
 
         private async Task<HttpResponseMessage> PostRawAsync(HttpContent? content, string? authorization, CancellationToken ct)
         {
-            var req = new HttpRequestMessage(HttpMethod.Post, Url) { Content = content ?? new ByteArrayContent(Array.Empty<byte>()) };
+            // 요청(본문 포함)은 보내고 나면 Dispose — 응답 본문은 SendAsync 가 기본값(ResponseContentRead)으로 이미 다 받아 둔다
+            using var req = new HttpRequestMessage(HttpMethod.Post, Url) { Content = content ?? new ByteArrayContent(Array.Empty<byte>()) };
             if (authorization != null) req.Headers.TryAddWithoutValidation("Authorization", authorization);
             if (content == null) req.Content.Headers.ContentLength = 0;
             return await _http.SendAsync(req, ct);

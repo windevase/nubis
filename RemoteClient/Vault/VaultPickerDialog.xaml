@@ -5,20 +5,31 @@
         Title="{l:Tr 'Vault 선택'}" Width="480" Height="520" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+    <!-- 대화상자 틀: Overlay 면 + 강한 머리카락 테두리 + 그림자 1개(투명 창이라 외곽 Border 에만) -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="16" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <DockPanel Margin="24,22,24,22">
-            <TextBlock x:Name="TitleText" DockPanel.Dock="Top" FontSize="17" FontWeight="SemiBold"/>
-            <TextBlock x:Name="SubText" DockPanel.Dock="Top" Foreground="{StaticResource SubText}" Margin="0,6,0,12" TextWrapping="Wrap"/>
-            <TextBox x:Name="FilterBox" DockPanel.Dock="Top" Margin="0,0,0,10" Tag="{l:Tr '계정 검색'}" TextChanged="OnFilterChanged"
-                     PreviewKeyDown="OnFilterKeyDown"/>
+        <DockPanel Margin="{StaticResource PadDialog}">
+            <TextBlock x:Name="TitleText" DockPanel.Dock="Top" Style="{StaticResource TextSubtitle}"/>
+            <TextBlock x:Name="SubText" DockPanel.Dock="Top" Style="{StaticResource TextCaption}" Margin="0,6,0,14" TextWrapping="Wrap"/>
+            <!-- 검색: 돋보기 아이콘을 입력란 왼쪽 안쪽에 겹친다 (placeholder 도 같은 Padding 을 따른다) -->
+            <Grid DockPanel.Dock="Top" Margin="0,0,0,10">
+                <TextBox x:Name="FilterBox" Padding="32,0,10,0" Tag="{l:Tr '계정 검색'}" TextChanged="OnFilterChanged"
+                         PreviewKeyDown="OnFilterKeyDown" AutomationProperties.Name="{l:Tr '계정 검색'}"/>
+                <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}"
+                           HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False"/>
+            </Grid>
 
-            <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
+            <!-- 바닥: 왼쪽 = 새 계정 · 지정 해제(allowClear 이고 지정된 계정이 있을 때만), 오른쪽 = 취소 · 선택 -->
+            <Grid DockPanel.Dock="Bottom" Margin="0,16,0,0">
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                    <Button Content="{l:Tr '새로 만들기'}" Style="{StaticResource GhostButton}" Click="OnCreate"/>
+                    <Button Style="{StaticResource GhostButton}" Click="OnCreate">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="10" VerticalAlignment="Center"
+                                       Foreground="{StaticResource AccentText}" Margin="0,0,7,0"/>
+                            <TextBlock Text="{l:Tr '새로 만들기'}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="ClearButton" Content="{l:Tr '지정 해제'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0"
                             Click="OnClear" Visibility="Collapsed"/>
                 </StackPanel>
@@ -29,26 +40,41 @@
             </Grid>
 
             <Grid>
+                <!-- 가벼운 행: 평소 투명, hover 옅은 채움, 선택 = 강조 옅은 채움 + 왼쪽 강조 막대 (그림자 없음 · 가상화 유지) -->
                 <ListBox x:Name="EntryList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="OnItemDoubleClick">
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" MouseDoubleClick="OnItemDoubleClick"
+                         VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
                             <Setter Property="Foreground" Value="{StaticResource Text}"/>
                             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="bd" Background="{StaticResource CardBg}" CornerRadius="8" Padding="12,9" Margin="0,0,0,6"
-                                                BorderThickness="1" BorderBrush="Transparent">
-                                            <ContentPresenter/>
+                                        <Border x:Name="bd" Background="Transparent" CornerRadius="{StaticResource RadiusMd}" Padding="10,8" Margin="0,0,0,2">
+                                            <Grid>
+                                                <Border x:Name="bar" Width="3" Height="16" CornerRadius="1.5" Background="{StaticResource Accent}"
+                                                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="-10,0,0,0" Visibility="Collapsed"/>
+                                                <ContentPresenter/>
+                                            </Grid>
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
                                             </Trigger>
                                             <Trigger Property="IsSelected" Value="True">
-                                                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentSubtle}"/>
+                                                <Setter TargetName="bar" Property="Visibility" Value="Visible"/>
                                             </Trigger>
+                                            <MultiTrigger>
+                                                <MultiTrigger.Conditions>
+                                                    <Condition Property="IsSelected" Value="True"/>
+                                                    <Condition Property="IsMouseOver" Value="True"/>
+                                                </MultiTrigger.Conditions>
+                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentSubtleHover}"/>
+                                            </MultiTrigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </Setter.Value>
@@ -59,22 +85,31 @@
                         <DataTemplate>
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="26"/>
+                                    <ColumnDefinition Width="Auto"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="{Binding Glyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}"
-                                           VerticalAlignment="Center"/>
-                                <StackPanel Grid.Column="1">
-                                    <TextBlock Text="{Binding Name, Mode=OneTime}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                    <TextBlock Text="{Binding Detail, Mode=OneTime}" Foreground="{StaticResource SubText}" FontSize="11.5"
+                                <!-- 형식 아이콘 (열쇠 = SSH 키, 자물쇠 = 비밀번호만) -->
+                                <Border Width="30" Height="30" CornerRadius="{StaticResource RadiusMd}" Background="{StaticResource ControlFill}"
+                                        Margin="0,0,12,0" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Glyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" FontSize="13"
+                                               Foreground="{StaticResource AccentText}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name, Mode=OneTime}" Style="{StaticResource TextBodyStrong}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Detail, Mode=OneTime}" Foreground="{StaticResource TextSecondary}" FontSize="12"
                                                Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </Grid>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
-                <TextBlock x:Name="EmptyText" Text="{l:Tr '저장된 계정이 없습니다. \'새로 만들기\' 로 추가하세요.'}" Foreground="{StaticResource SubText}"
-                           HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" Visibility="Collapsed"/>
+                <!-- 빈 목록 안내 -->
+                <StackPanel x:Name="EmptyText" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" MaxWidth="320">
+                    <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" FontSize="28" Foreground="{StaticResource TextTertiary}"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="{l:Tr '저장된 계정이 없습니다. \'새로 만들기\' 로 추가하세요.'}" Foreground="{StaticResource TextSecondary}"
+                               Margin="0,10,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                </StackPanel>
             </Grid>
         </DockPanel>
     </Border>

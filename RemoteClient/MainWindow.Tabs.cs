@@ -198,6 +198,8 @@ public partial class MainWindow
     {
         tab.Session.StatusChanged += s =>
         {
+            // 같은 상태가 다시 오면(재연결 시도 등) 탭 줄·현재 탭 정보(파일 쓰기)를 다시 갱신하지 않는다
+            if (tab.Status == s) return;
             tab.Status = s;
             if (tab.IsSelected) UpdateActiveContext();
         };
@@ -238,7 +240,7 @@ public partial class MainWindow
             case "localterm": OpenLocalTerminal(); break;
             case "closetab": if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur }); break;
             case "reopentab": ReopenClosedTab(); break;
-            case "search": FocusSearch(); break;
+            case "search": ShowCommandPalette(); break;   // 터미널 포커스에서 Ctrl+Shift+K → 명령 팔레트
             default:
                 if (key.StartsWith("tab") && int.TryParse(key[3..], out var n)) SelectTabNumber(n);
                 break;
@@ -267,7 +269,8 @@ public partial class MainWindow
         foreach (var t in _tabs) t.IsSelected = false;
         SessionsHost.Visibility = Visibility.Collapsed;
         HomeView.Visibility = Visibility.Visible;
-        HomeTab.Background = (Brush)FindResource("CardBg");
+        // 선택된 홈 탭은 본문 바탕(Layer2)과 이어진다. 선택 해제는 Brushes.Transparent — XAML 트리거가 이 인스턴스로 판단한다
+        HomeTab.Background = (Brush)FindResource("Layer2Bg");
         UpdateActiveContext();
     }
 
@@ -298,6 +301,8 @@ public partial class MainWindow
         try { tab.Session.CloseSession(); } catch { }
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
+        // 끌기 준비 상태가 닫은 탭(과 그 뷰)을 다음 끌기까지 붙잡지 않게
+        if (ReferenceEquals(_tabDragging, tab)) _tabDragging = null;
 
         if (!wasSelected) { UpdateActiveContext(); return; }
         if (_tabs.Count == 0) SelectHome();
@@ -351,7 +356,12 @@ public partial class MainWindow
             SelectTabNumber(e.Key - Key.D0);
             e.Handled = true;
         }
-        else if (ctrl && (e.Key == Key.K || (e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)))
+        else if (ctrl && !shift && e.Key == Key.K)
+        {
+            ShowCommandPalette();   // 호스트 · 탭 · 동작 통합 검색 (Ctrl+K)
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)
         {
             FocusSearch();
             e.Handled = true;
@@ -378,7 +388,7 @@ public partial class MainWindow
         else if (n - 1 < _tabs.Count) SelectTab(_tabs[n - 1]);
     }
 
-    /// <summary>Ctrl+K / Ctrl+F (터미널에서는 Ctrl+Shift+K): 홈으로 가서 검색창에 포커스</summary>
+    /// <summary>Ctrl+F: 홈으로 가서 검색창에 포커스 (Ctrl+K 는 명령 팔레트)</summary>
     private void FocusSearch()
     {
         SelectHome();
@@ -420,6 +430,8 @@ public partial class MainWindow
     {
         if (sender is not ContextMenu { PlacementTarget: FrameworkElement { DataContext: SessionTab tab } } menu) return;
         menu.Items.Clear();
+        menu.Closed -= OnTabMenuClosed;
+        menu.Closed += OnTabMenuClosed;
         void Add(string header, Action act, bool enabled = true)
         {
             var item = new MenuItem { Header = header, IsEnabled = enabled };
@@ -449,6 +461,22 @@ public partial class MainWindow
         Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
         menu.Items.Add(new Separator());
         Add(L.T("닫은 탭 다시 열기 (Ctrl+Shift+R)"), ReopenClosedTab, CanReopenClosedTab);
+    }
+
+    /// <summary>
+    /// 탭 메뉴(TabMenu)는 창 리소스 하나를 모든 탭이 함께 쓴다 → 닫힌 뒤에도 항목의 람다(마지막 탭·끊긴 탭 목록)와
+    /// PlacementTarget(탭 항목 → 탭 → 세션 뷰)이 남아, 메뉴로 닫은 탭이 다음에 메뉴를 열 때까지 해제되지 않는다.
+    /// 항목 클릭은 메뉴가 닫히고 그려진 뒤(Render 우선순위) 실행되므로, 그보다 낮은 ApplicationIdle 에서 비운다.
+    /// </summary>
+    private void OnTabMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu menu) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (menu.IsOpen) return;   // 그 사이 다시 열렸으면 새 항목을 지우지 않는다
+            menu.Items.Clear();
+            menu.ClearValue(ContextMenu.PlacementTargetProperty);
+        }, DispatcherPriority.ApplicationIdle);
     }
 
     /// <summary>

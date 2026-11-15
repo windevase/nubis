@@ -66,7 +66,19 @@ public partial class ImportHostsDialog : Window
         UpdateSummary();
 
         Loaded += (_, _) => PasteBox.Focus();
-        Closed += (_, _) => { _closed = true; _adCts?.Cancel(); _replanTimer.Stop(); };
+        Closed += (_, _) =>
+        {
+            _closed = true;
+            _adCts?.Cancel();
+            _replanTimer.Stop();
+            // 돌려준 계획(ImportPlanResult)의 줄들은 호출한 쪽이 계속 쓰므로, 줄 → 이 창으로 가는 참조(PropertyChanged 구독 ·
+            // 기본 컬렉션 뷰의 Filter 대리자)를 끊어 닫힌 창 전체(미리보기 컨트롤 · 수천 줄 결과)가 계획과 함께 남지 않게 한다
+            if (_plan != null)
+                foreach (var row in _plan.Rows) row.PropertyChanged -= OnRowChanged;
+            RowList.ItemsSource = null;
+            WarningsList.ItemsSource = null;
+            if (_view != null) _view.Filter = null;
+        };
         _ready = true;
     }
 

@@ -6,28 +6,83 @@
 <style>
   html, body { margin: 0; height: 100%; background: #161925; overflow: hidden; }
   #t { position: absolute; top: 10px; left: 14px; right: 6px; bottom: 6px; }
-  .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: #2E3350 transparent; }
-  /* 화면 내용 찾기 (Ctrl+Shift+F) */
-  #find { position: absolute; top: 8px; right: 18px; z-index: 10; display: none; align-items: center; gap: 6px;
-          background: #1B1E2C; border: 1px solid #2E3350; border-radius: 8px; padding: 5px 6px 5px 10px;
-          font: 12px "Segoe UI", "Malgun Gothic", sans-serif; color: #9AA0B8; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  #find input { width: 220px; background: #12141E; color: #E6E8F0; border: 1px solid #2E3350; border-radius: 6px;
-                padding: 4px 8px; font: 13px "Segoe UI", "Malgun Gothic", sans-serif; outline: none; }
-  #find input:focus { border-color: #20C5A0; }
-  #find button { background: transparent; color: #C9CDDB; border: 0; border-radius: 5px; cursor: pointer; padding: 3px 7px; font-size: 13px; }
-  #find button:hover { background: #262B40; }
-  /* 연결이 끊겼을 때 보이는 "다시 연결" 막대 */
-  #reconnect { position: absolute; bottom: 14px; right: 18px; z-index: 10; display: none; }
-  #reconnect button { background: #20C5A0; color: #10131C; border: 0; border-radius: 6px; cursor: pointer; padding: 6px 14px;
-                      font: 600 12px "Segoe UI", "Malgun Gothic", sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  #reconnect button:hover { background: #4BE0BC; }
+  /* 앱 디자인 토큰(Themes\Tokens.xaml)을 옮긴 값 — 터미널 글자색은 사용자 테마를 따르고, 둘레 크롬(찾기 상자·끊김 카드)만 앱 색을 쓴다.
+     성능: 계속 도는 애니메이션·backdrop-filter 는 쓰지 않는다. 움직임은 hover·나타날 때 한 번(≤150ms)뿐 */
+  :root {
+    --overlay: #1E2129; --stroke: rgba(255,255,255,.09); --stroke-strong: rgba(255,255,255,.16);
+    --text: #EDEFF4; --text2: #A0A6B4; --text3: #717789;
+    --accent: #2CC9A3; --accent-hover: #46D6B3; --accent-pressed: #23AD8B; --on-accent: #04241C;
+    --fill-hover: rgba(255,255,255,.06); --fill-pressed: rgba(255,255,255,.04); --input: rgba(255,255,255,.04); --input-focus: rgba(0,0,0,.16);
+    --danger: #EC5257; --warning: #F5B740;
+    --thumb: rgba(255,255,255,.14); --thumb-show: rgba(255,255,255,.24); --thumb-hover: rgba(255,255,255,.42);
+    --ui-font: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", sans-serif;
+    --icon-font: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  }
+  /* 밝은 터미널 테마: 스크롤바만 어두운 색으로 (찾기 상자·카드는 앱과 같은 어두운 카드 그대로) */
+  body.light { --thumb: rgba(0,0,0,.16); --thumb-show: rgba(0,0,0,.26); --thumb-hover: rgba(0,0,0,.45); }
+
+  /* 스크롤바: 가는 둥근 막대 · 투명 트랙. 평소엔 옅게, 터미널 위에 마우스가 있으면 진하게, 막대 위면 더 진하게.
+     (scrollbar-width/scrollbar-color 표준 속성을 쓰면 Chromium 이 ::-webkit-scrollbar 를 무시하므로 쓰지 않는다) */
+  .xterm .xterm-viewport::-webkit-scrollbar { width: 10px; background: transparent; }
+  .xterm .xterm-viewport::-webkit-scrollbar-track,
+  .xterm .xterm-viewport::-webkit-scrollbar-corner { background: transparent; }
+  .xterm .xterm-viewport::-webkit-scrollbar-button { display: none; }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--thumb); background-clip: content-box;
+                                                    border: 3px solid transparent; border-radius: 6px; min-height: 32px; }
+  .xterm:hover .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--thumb-show); }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover,
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background-color: var(--thumb-hover); border-width: 2px; }
+
+  /* 나타날 때 한 번만 (display none → flex 마다 다시 재생, 끝나면 멈춘다) */
+  @keyframes pop-down { from { opacity: 0; transform: translateY(-4px); } }
+  @keyframes pop-up { from { opacity: 0; transform: translate(-50%, 4px); } }
+
+  /* 공통: 아이콘 버튼 (Fluent 글리프) */
+  .ib { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; flex: none;
+        background: transparent; color: var(--text2); border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+        font: 12px var(--icon-font); transition: background-color .1s, color .1s; }
+  .ib:hover { background: var(--fill-hover); color: var(--text); }
+  .ib:active { background: var(--fill-pressed); color: var(--text2); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* 화면 내용 찾기 (Ctrl+Shift+F): 오른쪽 위에 뜨는 둥근 카드 */
+  #find { position: absolute; top: 8px; right: 20px; z-index: 10; display: none; align-items: center; gap: 2px;
+          background: var(--overlay); border: 1px solid var(--stroke); border-radius: 8px; padding: 4px;
+          font: 12px var(--ui-font); color: var(--text3); box-shadow: 0 6px 20px rgba(0,0,0,.32);
+          animation: pop-down .12s ease-out; }
+  #find .field { position: relative; display: flex; align-items: center; }
+  #find .field::before { content: "\E721"; position: absolute; left: 9px; font: 12px var(--icon-font); color: var(--text3); pointer-events: none; }
+  #find input { width: 220px; height: 26px; box-sizing: border-box; background: var(--input); color: var(--text);
+                border: 1px solid var(--stroke); border-radius: 6px; padding: 0 8px 0 28px;
+                font: 13px var(--ui-font); outline: none; transition: border-color .1s, background-color .1s; }
+  #find input::placeholder { color: var(--text3); }
+  #find input:hover { border-color: var(--stroke-strong); }
+  #find input:focus { border-color: var(--accent); background: var(--input-focus); }
+  #find input::selection { background: rgba(44,201,163,.35); color: var(--text); }
+  #findCount { min-width: 44px; padding: 0 6px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #findCount:empty { min-width: 0; padding: 0 2px; }
+  #find .sep { width: 1px; height: 16px; margin: 0 3px; background: var(--stroke); flex: none; }
+
+  /* 연결이 끊기면 아래쪽 가운데에 뜨는 알약 카드: "● 세션이 종료되었습니다 [다시 연결 Enter]" */
+  #reconnect { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10; display: none;
+               align-items: center; gap: 10px; max-width: calc(100% - 48px); box-sizing: border-box;
+               background: var(--overlay); border: 1px solid var(--stroke); border-radius: 999px; padding: 4px 4px 4px 14px;
+               font: 12px var(--ui-font); color: var(--text2); box-shadow: 0 8px 24px rgba(0,0,0,.35);
+               animation: pop-up .12s ease-out; }
+  #reconnect .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
+  #reconnectMsg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #reconnectBtn { display: inline-flex; align-items: center; gap: 8px; flex: none; height: 28px; box-sizing: border-box;
+                  background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px; cursor: pointer; padding: 0 6px 0 14px;
+                  font: 600 12px var(--ui-font); transition: background-color .1s; }
+  #reconnectBtn:hover { background: var(--accent-hover); }
+  #reconnectBtn:active { background: var(--accent-pressed); }
+  #reconnectBtn kbd { font: 600 10.5px var(--ui-font); padding: 2px 6px; border-radius: 999px; background: rgba(4,36,28,.16); }
 </style>
 </head>
 <body>
 <div id="t"></div>
-<div id="find"><input id="findText" spellcheck="false"><span id="findCount"></span>
-  <button id="findPrev" title="Shift+Enter">&#x25B2;</button><button id="findNext" title="Enter">&#x25BC;</button><button id="findClose" title="Esc">&#x2715;</button></div>
-<div id="reconnect"><button id="reconnectBtn" title="Enter"></button></div>
+<div id="find" role="search"><span class="field"><input id="findText" spellcheck="false" placeholder="화면에서 찾기" aria-label="화면에서 찾기"></span><span id="findCount"></span><span class="sep"></span><button id="findPrev" class="ib" title="이전 결과 (Shift+Enter)">&#xE70E;</button><button id="findNext" class="ib" title="다음 결과 (Enter)">&#xE70D;</button><button id="findClose" class="ib" title="닫기 (Esc)">&#xE711;</button></div>
+<div id="reconnect" role="status"><span class="dot"></span><span id="reconnectMsg">세션이 종료되었습니다</span><button id="reconnectBtn" title="Enter 키로도 할 수 있습니다"><span id="reconnectLabel"></span><kbd>Enter</kbd></button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
@@ -56,6 +111,9 @@
   fit.fit();
 
   const post = m => window.chrome.webview.postMessage(m);
+  // 셀을 읽을 때 쓰는 재사용 객체 — getCell(x) 는 부를 때마다 새 객체를 만든다 (줄마다 수십~수백 개)
+  let cellBuf = null;
+  const scratchCell = () => cellBuf || (cellBuf = term.buffer.active.getNullCell());
 
   term.onData(d => post({ t: 'in', d }));
   // 셸이 알려주는 현재 폴더 (OSC 7: ESC ] 7 ; file://host/path BEL) → SFTP 패널이 따라감
@@ -182,7 +240,7 @@
   function lineCells(line) {
     let s = ''; const col = [], wid = [];
     for (let x = 0; x < line.length; x++) {
-      const cell = line.getCell(x); if (!cell) break;
+      const cell = line.getCell(x, scratchCell()); if (!cell) break;
       const w = cell.getWidth(); if (w === 0) continue;   // 넓은 글자의 뒤쪽 칸
       const ch = cell.getChars() || ' ';
       for (let k = 0; k < ch.length; k++) { s += ch[k]; col.push(x); wid.push(w); }
@@ -209,8 +267,8 @@
       }
     }
     // 찾은 게 없으면 입력란 테두리·개수를 빨갛게 (있으면 원래대로)
-    findText.style.borderColor = hits.length ? '' : '#F0616D';
-    findCount.style.color = hits.length ? '' : '#F0616D';
+    findText.style.borderColor = hits.length ? '' : 'var(--danger)';
+    findCount.style.color = hits.length ? '' : 'var(--danger)';
     if (hits.length === 0) { findCount.textContent = '0'; term.clearSelection(); return; }
     let idx;
     if (!findPos) {
@@ -277,21 +335,24 @@
   function decorateLine(b, y, cur) {
     const line = b.getLine(y);
     if (!line) return [];
-    // 문자열 인덱스 → 셀 열 매핑 (한글 등 넓은 문자는 2칸)
-    let text = '', cols = [], widths = [];
-    for (let x = 0; x < term.cols; x++) {
-      const cell = line.getCell(x);
-      if (!cell) break;
-      const w = cell.getWidth();
-      if (w === 0) continue;
-      const ch = cell.getChars() || ' ';
-      for (let i = 0; i < ch.length; i++) { cols.push(x); widths.push(w); }
-      text += ch;
-    }
-    text = text.replace(/\s+$/, '');
+    // 줄 글자는 translateToString 한 번으로 (빈 칸은 ' ', 넓은 글자의 뒤쪽 칸은 빠짐 — 아래 셀 매핑과 같은 순서).
+    // 셀마다 객체를 만드는 열 매핑은 실제로 맞는 글자가 있을 때만 만든다 (대부분의 줄은 강조할 게 없다 — 출력이 쏟아질 때 CPU 절약)
+    const text = line.translateToString(true);
     if (!text) return [];
+    let cols = null, widths = null;
+    const mapCols = () => {
+      cols = []; widths = [];
+      const c = scratchCell();
+      for (let x = 0; x < line.length; x++) {
+        if (!line.getCell(x, c)) break;
+        const w = c.getWidth();
+        if (w === 0) continue;
+        const ch = c.getChars() || ' ';
+        for (let i = 0; i < ch.length; i++) { cols.push(x); widths.push(w); }
+      }
+    };
 
-    const taken = new Uint8Array(text.length);
+    let taken = null;
     const out = [];
     for (const rule of rules) {
       rule.re.lastIndex = 0;
@@ -299,10 +360,12 @@
       while ((m = rule.re.exec(text))) {
         const s = m.index, e = s + m[0].length;
         if (m[0].length === 0) { rule.re.lastIndex++; continue; }
+        if (!cols) { mapCols(); taken = new Uint8Array(text.length); }
+        if (e > cols.length) continue;   // 매핑이 어긋난 드문 경우(조합 문자 등) — 강조하지 않는다
         let overlap = false;
         for (let i = s; i < e; i++) if (taken[i]) { overlap = true; break; }
         if (overlap) continue;
-        const cell = line.getCell(cols[s]);
+        const cell = line.getCell(cols[s], scratchCell());
         if (cell && !cell.isFgDefault()) continue;   // 서버가 색을 준 글자는 그대로
         for (let i = s; i < e; i++) taken[i] = 1;
 
@@ -327,7 +390,9 @@
     // + 지난번 스캔 이후 새로 생긴 줄 전부 (한 번에 많은 출력이 지나간 경우)
     const winStart = Math.max(0, cur - term.rows + 1);
     const last = (mark && !mark.isDisposed && mark.line >= 0) ? mark.line : Math.max(0, cur - (backlog || term.rows));
-    const start = Math.min(last, winStart);
+    // 한 프레임에 지나간 줄이 많아도(cat 큰 파일 등) 화면 근처(4장)만 강조한다 — 이미 스크롤로 지나간 수천 줄을
+    // 프레임마다 정규식으로 훑지 않게 (CPU). 설정 변경·크기 변경(rescanAll)만 backlog 만큼 다시 그린다
+    const start = Math.max(Math.min(last, winStart), cur - Math.max(backlog || 0, term.rows * 4));
 
     // 범위 안 줄의 이전 강조는 지우고 다시 그림
     recent = recent.filter(r => {
@@ -346,11 +411,17 @@
     }
     if (mark) mark.dispose();
     mark = term.registerMarker(0);
-    if (all.length > 60000) all = all.filter(d => !d.isDisposed);
+    // 스크롤백 밖으로 밀려난 줄의 데코레이션은 xterm 이 dispose 한다 — 목록에서도 뺀다.
+    // 정리 뒤에도 살아 있는 것이 많으면 한도를 늘려 프레임마다 전체를 다시 훑지 않게 (상각)
+    if (all.length > allLimit) {
+      all = all.filter(d => !d.isDisposed);
+      allLimit = Math.max(60000, all.length * 2);
+    }
   }
+  let allLimit = 60000;
 
   function queueScan() {
-    if (scanQueued) return;
+    if (scanQueued || rules.length === 0) return;   // 강조를 모두 끈 경우 프레임 예약도 하지 않는다
     scanQueued = true;
     requestAnimationFrame(() => scan());
   }
@@ -359,6 +430,19 @@
     clearDecorations();
     buildRules();
     scan(2000);
+  }
+
+  // 크롬 문구(앱 언어). 앱이 보내지 않으면(예전 앱) 마크업의 한국어 기본값을 그대로 둔다
+  function applyUiTexts(u) {
+    if (!u) return;
+    const set = (id, prop, v) => { if (typeof v === 'string' && v) document.getElementById(id)[prop] = v; };
+    set('findText', 'placeholder', u.findPlaceholder);
+    if (u.findPlaceholder) findText.setAttribute('aria-label', u.findPlaceholder);
+    set('findPrev', 'title', u.findPrev);
+    set('findNext', 'title', u.findNext);
+    set('findClose', 'title', u.findClose);
+    set('reconnectMsg', 'textContent', u.offline);
+    set('reconnectBtn', 'title', u.reconnectHint);
   }
 
   // 테마/글꼴 적용. minimumContrastRatio 로 배경과 대비가 낮은 글자색(밝은 테마의 흰 글자 등)을 자동 보정
@@ -372,6 +456,8 @@
     term.options.fontFamily = '"' + s.fontFamily + '", "Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace';
     term.options.minimumContrastRatio = s.autoContrast ? 4.5 : 1;
     document.body.style.background = s.theme.background;
+    document.body.classList.toggle('light', !!s.light);
+    applyUiTexts(s.ui);
     try { fit.fit(); } catch (e) { }
 
     hl = { ip: s.hlIp, num: s.hlNum, kw: s.hlKeywords };
@@ -406,15 +492,17 @@
   // 연결이 끊기면 터미널 아래쪽에 버튼을 보인다 — Enter 키·탭 우클릭 말고도 눌러서 다시 연결할 수 있게
   const reconnectBar = document.getElementById('reconnect');
   const reconnectBtn = document.getElementById('reconnectBtn');
+  const reconnectLabel = document.getElementById('reconnectLabel');
   function showReconnect(label) {
-    reconnectBtn.textContent = label;
+    reconnectLabel.textContent = label;
     reconnectBar.style.display = label ? 'flex' : 'none';
   }
   function hideReconnect() { reconnectBar.style.display = 'none'; }
   reconnectBtn.addEventListener('click', () => { hideReconnect(); post({ t: 'reconnect' }); term.focus(); });
   function afterWrite() {
     queueScan();
-    if (watchMark && !watchQueued) { watchQueued = true; requestAnimationFrame(sendWatch); }
+    // 프롬프트 감시 화면은 최대 초당 10번만 보낸다 — 출력이 쏟아지는 동안 프레임마다 50줄을 읽어 앱으로 보내지 않게 (CPU)
+    if (watchMark && !watchQueued) { watchQueued = true; setTimeout(sendWatch, 100); }
   }
 
   window.chrome.webview.addEventListener('message', e => {

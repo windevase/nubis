@@ -5,15 +5,14 @@
         Title="Vault" Width="500" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+    <!-- 대화상자 틀: Overlay 면 + 강한 머리카락 테두리 + 그림자 1개(투명 창이라 외곽 Border 에만) -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="16" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <StackPanel Margin="24,22,24,22">
-            <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold"/>
+        <StackPanel Margin="{StaticResource PadDialog}">
+            <TextBlock x:Name="TitleText" Style="{StaticResource TextSubtitle}"/>
             <TextBlock Text="{l:Tr '사용자명과 비밀번호, SSH 키 중 필요한 것을 저장하세요. 비밀번호와 키 중 하나는 있어야 합니다.'}"
-                       Foreground="{StaticResource SubText}" FontSize="12" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                       Style="{StaticResource TextCaption}" Margin="0,6,0,0" TextWrapping="Wrap"/>
 
             <TextBlock Text="{l:Tr '이름'}" Style="{StaticResource FieldLabel}"/>
             <TextBox x:Name="NameBox" Tag="{l:Tr '예: 운영 서버 root, 배포 계정'}"/>
@@ -22,24 +21,31 @@
             <TextBox x:Name="UserBox" Tag="{l:Tr '예: root  /  ubuntu  /  DOMAIN\\user'}"/>
 
             <Grid Margin="0,16,0,6">
-                <TextBlock x:Name="PasswordLabel" Text="{l:Tr '비밀번호 (선택)'}" FontSize="12" Foreground="{StaticResource SubText}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="PasswordLabel" Text="{l:Tr '비밀번호 (선택)'}" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
                 <CheckBox x:Name="ClearPasswordBox" Content="{l:Tr '저장된 비밀번호 지우기'}" HorizontalAlignment="Right" FontSize="12"
                           Visibility="Collapsed"/>
             </Grid>
             <PasswordBox x:Name="PasswordBox"/>
 
-            <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,18,0,0"/>
+            <!-- 비밀번호 / 키 구획 구분선 -->
+            <Border BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0" Margin="0,18,0,0"/>
             <Grid Margin="0,14,0,6">
-                <TextBlock x:Name="KeyLabel" Text="{l:Tr 'SSH 개인키 (선택)'}" FontSize="12" Foreground="{StaticResource SubText}" VerticalAlignment="Center"/>
+                <TextBlock x:Name="KeyLabel" Text="{l:Tr 'SSH 개인키 (선택)'}" Style="{StaticResource TextCaption}" VerticalAlignment="Center"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                     <CheckBox x:Name="ClearKeyBox" Content="{l:Tr '저장된 키 지우기'}" FontSize="12" VerticalAlignment="Center" Margin="0,0,10,0"
                               Visibility="Collapsed"/>
-                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '파일에서 가져오기'}" Padding="10,4" FontSize="12" Click="OnImportKey"/>
+                    <Button Style="{StaticResource GhostButton}" Padding="10,4" FontSize="12" Click="OnImportKey">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE8E5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
+                                       Foreground="{StaticResource TextSecondary}" Margin="0,0,6,0"/>
+                            <TextBlock Text="{l:Tr '파일에서 가져오기'}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </Grid>
             <TextBox x:Name="KeyBox" Height="110" AcceptsReturn="True" TextWrapping="NoWrap" Padding="10,8"
                      VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
-                     FontFamily="Cascadia Mono, Consolas" FontSize="11" TextChanged="OnKeyTextChanged"
+                     FontFamily="{StaticResource MonoFont}" FontSize="11" TextChanged="OnKeyTextChanged"
                      Tag="{l:Tr '-----BEGIN OPENSSH PRIVATE KEY----- 또는 PuTTY(.ppk) 내용 붙여넣기'}"/>
             <TextBlock Text="{l:Tr '키 암호 (키에 암호가 걸려 있을 때)'}" Style="{StaticResource FieldLabel}"/>
             <PasswordBox x:Name="PassphraseBox"/>
@@ -47,12 +53,22 @@
             <TextBlock Text="{l:Tr '메모 (선택)'}" Style="{StaticResource FieldLabel}"/>
             <TextBox x:Name="NoteBox"/>
 
-            <TextBlock Text="{l:Tr 'Windows DPAPI 로 암호화해 이 PC·이 Windows 계정에서만 풀 수 있게 저장합니다. Claude 패널은 이 파일을 읽지 못하게 막혀 있습니다.'}"
-                       FontSize="11" Foreground="{StaticResource SubText}" Margin="2,12,0,0" TextWrapping="Wrap"/>
+            <!-- 보안 안내 (방패 아이콘 + 3차 글자) -->
+            <Grid Margin="2,14,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE72E;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}"
+                           Margin="0,1,8,0" VerticalAlignment="Top"/>
+                <TextBlock Grid.Column="1" Text="{l:Tr 'Windows DPAPI 로 암호화해 이 PC·이 Windows 계정에서만 풀 수 있게 저장합니다. Claude 패널은 이 파일을 읽지 못하게 막혀 있습니다.'}"
+                           FontSize="11" Foreground="{StaticResource TextTertiary}" TextWrapping="Wrap"/>
+            </Grid>
             <TextBlock x:Name="ErrorText" FontSize="12" Foreground="{StaticResource Danger}" Margin="2,8,0,0" TextWrapping="Wrap"
                        Visibility="Collapsed"/>
 
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <!-- 바닥: 오른쪽 정렬 (보조 → 주 동작) -->
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,24,0,0">
                 <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
                 <Button Content="{l:Tr '저장'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
             </StackPanel>

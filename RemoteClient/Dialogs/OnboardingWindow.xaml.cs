@@ -38,6 +38,9 @@ public partial class OnboardingWindow : Window
         ClaudeStatusText.Text = claudeInstalled
             ? L.T("Claude Code CLI 가 설치되어 있습니다. 패널을 처음 열면 /login 으로 로그인하고 작업 폴더를 신뢰하세요.")
             : L.T("Claude Code CLI(claude) 가 없습니다. 설치: npm install -g @anthropic-ai/claude-code — 설치 전에도 각 카드의 왼쪽 버튼으로 모든 기능을 쓸 수 있습니다.");
+        // 설치됨 = 초록 확인 표시, 없음 = 노랑 경고 표시
+        ClaudeStatusIcon.Text = claudeInstalled ? "" : "";
+        ClaudeStatusIcon.Foreground = (Brush)FindResource(claudeInstalled ? "Success" : "Warning");
     }
 
     /// <summary>메인 창 위에 띄우고 고른 동작을 돌려준다</summary>
@@ -63,9 +66,19 @@ public partial class OnboardingWindow : Window
             ToolTipService.SetShowOnDisabled(askBtn, true);
         }
 
+        // 머리: 옅은 강조색 원형 타일 안 아이콘 + 제목
         var head = new StackPanel { Orientation = Orientation.Horizontal };
-        head.Children.Add(new TextBlock { Text = glyph, FontFamily = (FontFamily)res["IconFont"], FontSize = 16, Foreground = (Brush)res["Accent"], VerticalAlignment = VerticalAlignment.Center });
-        head.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
+        head.Children.Add(new Border
+        {
+            Width = 30, Height = 30, CornerRadius = new CornerRadius(15), Background = (Brush)res["AccentSubtle"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = glyph, FontFamily = (FontFamily)res["IconFont"], FontSize = 14, Foreground = (Brush)res["AccentText"],
+                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            },
+        });
+        head.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 12, 0, 0) };
         buttons.Children.Add(doBtn);
@@ -73,13 +86,16 @@ public partial class OnboardingWindow : Window
 
         var body = new StackPanel();
         body.Children.Add(head);
-        body.Children.Add(new TextBlock { Text = text, FontSize = 12, Foreground = (Brush)res["SubText"], TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0), MinHeight = 48 });
+        body.Children.Add(new TextBlock { Text = text, FontSize = 12, Foreground = (Brush)res["TextSecondary"], TextWrapping = TextWrapping.Wrap, LineHeight = 18, Margin = new Thickness(0, 10, 0, 0), MinHeight = 54 });
         body.Children.Add(buttons);
 
+        // 카드: Layer3 면 + 머리카락 테두리 (그림자 없음). 두 열 사이 간격 10 은 양쪽 카드가 5씩 나눈다
+        var left = Cards.Children.Count % 2 == 0;
         Cards.Children.Add(new Border
         {
-            Background = (Brush)res["CardBg"], CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 14, 16, 14),
-            Margin = new Thickness(0, 0, Cards.Children.Count % 2 == 0 ? 6 : 0, 10), Child = body,
+            Background = (Brush)res["Layer3Bg"], BorderBrush = (Brush)res["StrokeSubtle"], BorderThickness = new Thickness(1),
+            CornerRadius = (CornerRadius)res["RadiusLg"], Padding = new Thickness(16, 14, 16, 14),
+            Margin = new Thickness(left ? 0 : 5, 0, left ? 5 : 0, 10), Child = body,
         });
     }
 

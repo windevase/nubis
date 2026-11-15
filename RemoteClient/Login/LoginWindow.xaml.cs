@@ -38,7 +38,7 @@ public partial class LoginWindow : Window
                         L.F("허용된 계정으로 로그인하면 Nubis 가 열립니다. 비밀번호는 브라우저({0})에서만 입력하며, Nubis 는 받지 않습니다.", name);
         LoginButton.Content = L.F("{0}로 로그인", cfg.Provider == LoginProviderKind.Microsoft ? "Microsoft" : name);
         CancelButton.Content = test ? L.T("취소") : L.T("종료");
-        Closed += (_, _) => _cts?.Cancel();
+        Closed += (_, _) => CancelLogin();
     }
 
     /// <summary>들어온 계정의 프로필 이름 (로그인·오프라인 허용으로 들어왔을 때)</summary>
@@ -89,7 +89,7 @@ public partial class LoginWindow : Window
         ShowError(null);
         OfflineButton.Visibility = Visibility.Collapsed;
         LoginButton.IsEnabled = false;
-        _cts?.Cancel();
+        CancelLogin();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         var flow = new DeviceFlow(_cfg);
@@ -126,6 +126,19 @@ public partial class LoginWindow : Window
         catch (HttpRequestException ex) { Fail(L.F("로그인 서버에 연결할 수 없습니다: {0}", ex.Message), offline: true); }
         catch (TaskCanceledException) { Fail(L.T("로그인 서버 응답이 없습니다 (시간 초과)."), offline: true); }
         catch (Exception ex) { Fail(L.F("로그인 실패: {0}", ex.Message)); }
+    }
+
+    /// <summary>
+    /// 진행 중인 로그인을 취소하고 토큰 소스를 정리한다 (다시 로그인 · 창 닫기). 취소한 뒤 Dispose 하므로
+    /// 아직 끝나지 않은 대기(폴링 지연 등)는 취소된 토큰을 보고 끝난다
+    /// </summary>
+    private void CancelLogin()
+    {
+        var old = _cts;
+        _cts = null;
+        if (old == null) return;
+        try { old.Cancel(); } catch (AggregateException) { /* 등록된 콜백의 예외 — 취소는 됨 */ }
+        old.Dispose();
     }
 
     private void Fail(string message, bool offline = false)
@@ -171,7 +184,24 @@ public partial class LoginWindow : Window
 
     private void OnCopyCode(object sender, RoutedEventArgs e)
     {
-        try { if (_code != null) Clipboard.SetText(_code.UserCode); } catch { }
+        try { if (_code != null) Clipboard.SetText(_code.UserCode); } catch { return; }
+        // 복사됐음을 잠깐 보여 준다: 복사 아이콘 → 확인 표시(강조색) 1.5초
+        _copiedTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        _copiedTimer.Stop();
+        _copiedTimer.Tick -= OnCopiedTimer;
+        _copiedTimer.Tick += OnCopiedTimer;
+        CopyCodeButton.Content = "";
+        CopyCodeButton.Foreground = (System.Windows.Media.Brush)FindResource("AccentText");
+        _copiedTimer.Start();
+    }
+
+    private System.Windows.Threading.DispatcherTimer? _copiedTimer;
+
+    private void OnCopiedTimer(object? sender, EventArgs e)
+    {
+        _copiedTimer?.Stop();
+        CopyCodeButton.Content = "";
+        CopyCodeButton.ClearValue(ForegroundProperty);
     }
 
     private void OnOpenBrowser(object sender, RoutedEventArgs e) => OpenBrowser();

@@ -20,6 +20,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
     // 로그인 직후에는 세션이 해상도 변경을 아직 받지 못해 실패할 때가 있어 잠시 뒤 한 번 더 시도한다
     private readonly DispatcherTimer _displayRetryTimer = new() { Interval = TimeSpan.FromMilliseconds(1500) };
     private Button? _reconnectButton;
+    // 마지막으로 원격에 보낸 해상도·배율 (같은 값이면 UpdateSessionDisplaySettings 를 다시 부르지 않는다). default = 아직 안 보냄
+    private (int w, int h, int scale) _appliedDisplay;
 
     private bool _initialized, _closed, _loggedIn;
     // 인증 실패(비밀번호 오류·계정 잠김 등)로 끊겼으면 저장된 비밀번호가 있어도 다음 연결 때 반드시 다시 묻는다 (같은 비밀번호 재시도로 계정이 잠기지 않게)
@@ -56,15 +58,18 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
         _displayRetryTimer.Tick += (_, _) => { _displayRetryTimer.Stop(); UpdateDisplay(); };   // 재시도도 실패하면 SmartSizing 으로 대체
         SizeChanged += (_, _) => RestartResizeTimer();
+        // 숨은 탭은 해상도를 바꾸지 않고(크기 0 → 640x480 로 줄였다 되돌리는 낭비 방지), 다시 보일 때 한 번 맞춘다
+        IsVisibleChanged += (_, _) => { if (IsVisible) RestartResizeTimer(); };
         Loaded += (_, _) => { if (!_initialized) { _initialized = true; Dispatcher.BeginInvoke(Connect, DispatcherPriority.Loaded); } };
     }
 
     /// <summary>RDP 컨트롤 이벤트 연결 (생성 때, 그리고 치명적 오류 뒤 컨트롤을 바꿀 때)</summary>
     private void WireEvents()
     {
-        _rdp.Connected += () => { HideOverlay(); SetStatus(SessionStatus.Connected); if (IsVisible) _rdp.Focus(); };
+        _rdp.Connected += () => { if (_closed) return; HideOverlay(); SetStatus(SessionStatus.Connected); if (IsVisible) _rdp.Focus(); };
         _rdp.LoginComplete += () =>
         {
+            if (_closed) return;
             _loggedIn = true;
             _forcePrompt = false;
             if (!TryUpdateDisplay()) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
@@ -78,7 +83,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             }
         };
         _rdp.Disconnected += OnDisconnected;
-        _rdp.LeftFullScreen += () => Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background);
+        _rdp.LeftFullScreen += () => { if (_closed) return; _appliedDisplay = default; Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background); };
         _rdp.FatalError += code => OnDisconnected(-code);
         // 네트워크 순단 때 컨트롤이 스스로 다시 연결하는 동안(컨트롤이 자체 안내 화면을 그린다) 탭 상태만 "연결 중" 으로 보여 준다
         _rdp.AutoReconnecting += (_, _) => { if (!_closed && _status == SessionStatus.Connected) SetStatus(SessionStatus.Connecting); };
@@ -88,7 +93,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             HideOverlay();
             SetStatus(SessionStatus.Connected);
             // 다시 붙은 세션이 이전 해상도를 잃었을 수 있어 탭 크기로 다시 맞춘다
-            if (_loggedIn) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
+            if (_loggedIn) { _appliedDisplay = default; _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
         };
     }
 
@@ -107,7 +112,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
     private void RestartResizeTimer()
     {
-        if (_loggedIn && !_closed) { _resizeTimer.Stop(); _resizeTimer.Start(); }
+        // 숨은 탭에서는 타이머를 돌리지 않는다 (보일 때 IsVisibleChanged 가 다시 부른다) — 쉬는 동안 CPU 0
+        if (_loggedIn && !_closed && IsVisible) { _resizeTimer.Stop(); _resizeTimer.Start(); }
     }
 
     /// <summary>DPI 가 다른 모니터로 창을 옮기면 DIP 크기는 그대로라 SizeChanged 가 오지 않는다 → 원격 해상도·배율을 다시 맞춘다</summary>
@@ -117,52 +123,94 @@ public sealed class RdpSessionView : UserControl, ISessionView
         RestartResizeTimer();
     }
 
+    /// <summary>안내 화면 종류 — 상태 아이콘의 모양·색과 "다시 연결" 버튼 표시를 정한다</summary>
+    private enum OverlayKind { Connecting, Neutral, Error }
+
+    // 안내 카드의 상태 아이콘 (원형 배지 안의 글리프). 계속 도는 애니메이션은 쓰지 않는다 — 연결 중에도 정지 아이콘
+    private readonly Border _overlayBadge = new();
+    private readonly TextBlock _overlayIcon = new();
+
+    private static T Res<T>(string key) => (T)Application.Current.Resources[key];
+
     private Border BuildOverlay()
     {
-        _overlayTitle.FontSize = 18;
-        _overlayTitle.FontWeight = FontWeights.SemiBold;
-        _overlayTitle.Foreground = (Brush)Application.Current.Resources["Text"];
-        _overlayTitle.HorizontalAlignment = HorizontalAlignment.Center;
+        _overlayIcon.FontFamily = Res<FontFamily>("IconFont");
+        _overlayIcon.FontSize = 24;
+        _overlayIcon.HorizontalAlignment = HorizontalAlignment.Center;
+        _overlayIcon.VerticalAlignment = VerticalAlignment.Center;
 
-        _overlayText.Foreground = (Brush)Application.Current.Resources["SubText"];
-        _overlayText.Margin = new Thickness(0, 8, 0, 20);
+        _overlayBadge.Width = 56;
+        _overlayBadge.Height = 56;
+        _overlayBadge.CornerRadius = new CornerRadius(28);
+        _overlayBadge.HorizontalAlignment = HorizontalAlignment.Center;
+        _overlayBadge.Margin = new Thickness(0, 0, 0, 16);
+        _overlayBadge.Child = _overlayIcon;
+
+        _overlayTitle.Style = Res<Style>("TextSubtitle");
+        _overlayTitle.HorizontalAlignment = HorizontalAlignment.Center;
+        _overlayTitle.TextAlignment = TextAlignment.Center;
+        _overlayTitle.TextWrapping = TextWrapping.Wrap;
+
+        _overlayText.FontSize = 13;
+        _overlayText.Foreground = Res<Brush>("TextSecondary");
+        _overlayText.Margin = new Thickness(0, 6, 0, 0);
         _overlayText.TextAlignment = TextAlignment.Center;
         _overlayText.TextWrapping = TextWrapping.Wrap;
-        _overlayText.MaxWidth = 520;
+        _overlayText.LineHeight = 19;
 
         var reconnect = _reconnectButton = new Button
         {
             Content = L.T("다시 연결"),
-            Style = (Style)Application.Current.Resources["PrimaryButton"],
+            Style = Res<Style>("PrimaryButton"),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Padding = new Thickness(22, 9, 22, 9),
+            Padding = new Thickness(20, 8, 20, 8),
+            Margin = new Thickness(0, 20, 0, 0),
+            MinWidth = 120,
         };
         reconnect.Click += (_, _) => Connect();
 
-        var icon = new TextBlock
-        {
-            Text = "",
-            FontFamily = (FontFamily)Application.Current.Resources["IconFont"],
-            FontSize = 40,
-            Foreground = (Brush)Application.Current.Resources["RdpBrush"],
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 16),
-        };
-
-        var panel = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center };
-        panel.Children.Add(icon);
+        var panel = new StackPanel();
+        panel.Children.Add(_overlayBadge);
         panel.Children.Add(_overlayTitle);
         panel.Children.Add(_overlayText);
         panel.Children.Add(reconnect);
 
-        return new Border { Background = (Brush)Application.Current.Resources["Bg"], Child = panel, Visibility = Visibility.Collapsed };
+        // 가운데 카드 1장 (Layer3 + 머리카락 선 + 큰 반경). 그림자는 이 카드 하나에만 — 안내 화면이 보일 때만 그려진다
+        var card = new Border
+        {
+            Background = Res<Brush>("Layer3Bg"),
+            BorderBrush = Res<Brush>("Stroke"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = Res<CornerRadius>("RadiusXl"),
+            Padding = new Thickness(32, 28, 32, 28),
+            MinWidth = 360,
+            MaxWidth = 520,
+            Margin = new Thickness(24),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Effect = Res<System.Windows.Media.Effects.Effect>("Shadow8"),
+            Child = panel,
+        };
+
+        return new Border { Background = Res<Brush>("Layer2Bg"), Child = card, Visibility = Visibility.Collapsed };
     }
 
-    private void ShowOverlay(string title, string text, bool showReconnect = true)
+    private void ShowOverlay(string title, string text, OverlayKind kind)
     {
+        // 연결 중: 정보(파랑) 모니터 · 정상 종료/취소: 중립 모니터 · 오류: 경고(노랑) 삼각형
+        var (glyph, fg, bg) = kind switch
+        {
+            OverlayKind.Connecting => ("\uE7F4", "Info", "InfoSubtle"),
+            OverlayKind.Error => ("\uE7BA", "Warning", "WarningSubtle"),
+            _ => ("\uE7F4", "TextSecondary", "ControlFillHover"),
+        };
+        _overlayIcon.Text = glyph;
+        _overlayIcon.Foreground = Res<Brush>(fg);
+        _overlayBadge.Background = Res<Brush>(bg);
         _overlayTitle.Text = title;
         _overlayText.Text = text;
-        _reconnectButton!.Visibility = showReconnect ? Visibility.Visible : Visibility.Collapsed;
+        _overlayText.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
+        _reconnectButton!.Visibility = kind == OverlayKind.Connecting ? Visibility.Collapsed : Visibility.Visible;
         _overlay.Visibility = Visibility.Visible;
         _wfh.Visibility = Visibility.Collapsed;   // ActiveX(HWND)는 WPF 위에 그려지므로 숨겨야 오버레이가 보인다
     }
@@ -222,7 +270,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
                     else _user = null;
                     LastConnectCancelled = true;
                     SetStatus(SessionStatus.Disconnected);
-                    ShowOverlay(L.T("연결 취소됨"), L.T("인증 정보 입력이 취소되었습니다."));
+                    ShowOverlay(L.T("연결 취소됨"), L.T("인증 정보 입력이 취소되었습니다."), OverlayKind.Neutral);
                     return;
                 }
                 _user = cred.Value.User;
@@ -232,9 +280,10 @@ public sealed class RdpSessionView : UserControl, ISessionView
         }
 
         // 연결 중에는 ActiveX 의 흰 화면 대신 어두운 안내 화면을 보여주고, OnConnected 때 컨트롤을 드러낸다
-        ShowOverlay(L.F("{0} 에 연결 중...", _host.DisplayName), $"{_host.Address}:{_host.Port}", showReconnect: false);
+        ShowOverlay(L.F("{0} 에 연결 중...", _host.DisplayName), $"{_host.Address}:{_host.Port}", OverlayKind.Connecting);
         SetStatus(SessionStatus.Connecting);
         _loggedIn = false;
+        _appliedDisplay = default;   // 새 세션 — 로그인 뒤 한 번은 반드시 맞춘다
 
         try
         {
@@ -287,7 +336,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         catch (Exception ex)
         {
             SetStatus(SessionStatus.Disconnected);
-            ShowOverlay(L.T("연결 실패"), ex.Message);
+            ShowOverlay(L.T("연결 실패"), ex.Message, OverlayKind.Error);
         }
     }
 
@@ -330,10 +379,15 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private bool TryUpdateDisplay()
     {
         if (_closed || !_loggedIn || _status != SessionStatus.Connected) return true;
-        var (w, h, scale) = DesktopSize();
+        // 숨은 탭(크기 0)은 건너뛴다 — 640x480 으로 줄였다가 되돌리며 원격 창 배치를 흔들지 않게. 보일 때 다시 불린다
+        if (!IsVisible || ActualWidth < 1 || ActualHeight < 1) return true;
+        var size = DesktopSize();
+        if (size == _appliedDisplay) return true;   // 같은 값이면 원격에 다시 보내지 않는다
+        var (w, h, scale) = size;
         try
         {
             _rdp.Ocx.UpdateSessionDisplaySettings((uint)w, (uint)h, (uint)w, (uint)h, 0u, (uint)scale, 100u);
+            _appliedDisplay = size;
             return true;
         }
         catch { return false; /* 지원하지 않는 서버는 SmartSizing 으로 대체 */ }
@@ -369,7 +423,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
         // 로그오프·원격에서 연결 끊기·관리자가 끊음(사유 1·2·3)은 오류가 아니므로 제목을 구분한다
         ShowOverlay(IsNormalDisconnectReason(reason)
             ? L.F("{0} 세션 정상 종료", _host.DisplayName)
-            : L.F("{0} 연결 종료", _host.DisplayName), text);
+            : L.F("{0} 연결 종료", _host.DisplayName), text,
+            IsNormalDisconnectReason(reason) ? OverlayKind.Neutral : OverlayKind.Error);
     }
 
     /// <summary>
@@ -406,6 +461,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
                 try { _rdp.Ocx.UpdateSessionDisplaySettings((uint)(screen.Width & ~1), (uint)screen.Height, (uint)screen.Width, (uint)screen.Height, 0u, (uint)Math.Clamp(scale, 100, 500), 100u); }
                 catch { }
             }
+            _appliedDisplay = default;   // 전체 화면 해상도로 바뀜 — 나오면 탭 크기로 다시 보낸다
             _rdp.Ocx.FullScreenTitle = _host.DisplayName;
             _rdp.Ocx.FullScreen = true;
         }
@@ -414,17 +470,23 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
     public void FocusSession()
     {
-        if (_wfh.Visibility == Visibility.Visible) _rdp.Focus();
+        // 닫은 탭(SelectTab 이 예약한 늦은 포커스 등)은 풀로 돌아가 다른 탭이 쓰는 컨트롤에 포커스를 주지 않는다
+        if (!_closed && _wfh.Visibility == Visibility.Visible) _rdp.Focus();
     }
 
     public void CloseSession()
     {
+        // 두 번 불려도(탭 닫기 + 앱 종료 등) 같은 컨트롤을 풀에 두 번 넣지 않게 한 번만 정리한다
+        // — 두 번 넣으면 두 탭이 한 컨트롤을 나눠 갖고, 풀 자리를 차지해 다른 컨트롤이 해제되며 핸들·스레드가 샌다
+        if (_closed) return;
         _closed = true;
         _resizeTimer.Stop();
         _displayRetryTimer.Stop();
+        StatusChanged = null;   // 닫은 뒤에는 MainWindow 쪽 탭 상태를 건드리지 않는다
         _password = null;   // 닫은 탭에 비밀번호를 남겨 두지 않는다
         try { _wfh.Child = null; } catch { }
         RdpAxHost.Release(_rdp);   // 연결 끊고 풀에 반납 (풀이 차면 해제)
+        HwndHostRelease.Detach(_wfh);   // 키보드 입력 사이트 등록을 풀고 트리에서 뺀 뒤 Dispose (WebView2 와 같은 HwndHost 누수 방지)
         _wfh.Dispose();
     }
 }

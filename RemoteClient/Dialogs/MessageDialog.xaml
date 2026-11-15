@@ -1,47 +1,60 @@
 <Window x:Class="Nubis.MessageDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Nubis" Width="460" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        Title="Nubis" Width="480" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}"
         FontSize="13">
-    <Border x:Name="Frame" Background="{StaticResource DialogBg}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+    <!-- 공통 대화상자 틀: Overlay 면 · RadiusXl · Shadow16(창마다 외곽 1개) · 본문(PadDialog) + 아래 버튼 띠.
+         바깥 여백은 그림자 자리 (아래쪽이 더 넓다) -->
+    <Border x:Name="Frame" Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <Grid Margin="24,22,24,20">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
+        <Grid>
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <Border x:Name="IconBadge" Width="34" Height="34" CornerRadius="17" Margin="0,0,14,0" VerticalAlignment="Top"
-                    Grid.RowSpan="3" Visibility="Collapsed">
-                <TextBlock x:Name="IconGlyph" FontFamily="{StaticResource IconFont}" FontSize="16"
-                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            <Grid Margin="{StaticResource PadDialog}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 아이콘: 옅은 의미 색 원형 타일 + Fluent 글리프 (색은 코드에서 토큰으로) -->
+                <Border x:Name="IconBadge" Width="32" Height="32" CornerRadius="16" Margin="0,0,14,0" VerticalAlignment="Top"
+                        Grid.RowSpan="3" Visibility="Collapsed">
+                    <TextBlock x:Name="IconGlyph" FontFamily="{StaticResource IconFont}" FontSize="15"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+
+                <TextBlock x:Name="TitleText" Grid.Column="1" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap" Margin="0,5,0,0"/>
+                <TextBlock x:Name="MessageText" Grid.Column="1" Grid.Row="1" Style="{StaticResource TextBody}" Foreground="{StaticResource DialogText}"
+                           Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="20"/>
+                <!-- 상세: 안쪽으로 파인 코드 상자 (고정폭 · 선택 · 복사 가능) -->
+                <TextBox x:Name="DetailBox" Grid.Column="1" Grid.Row="2" Margin="0,14,0,0" IsReadOnly="True" Height="Auto" MaxHeight="220"
+                         Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" Foreground="{StaticResource TextSecondary}"
+                         Padding="10,8" FontFamily="{StaticResource MonoFont}" FontSize="12" TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed"/>
+            </Grid>
+
+            <!-- 버튼 띠: 본문보다 한 단계 어두운 바탕, 오른쪽 정렬 (주 동작이 맨 오른쪽) -->
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="ExtraButton" Style="{StaticResource GhostButton}" MinWidth="96" Margin="0,0,8,0"
+                            Click="OnExtra" Visibility="Collapsed"/>
+                    <Button x:Name="SecondaryButton" Style="{StaticResource GhostButton}" MinWidth="96" Margin="0,0,8,0"
+                            Click="OnSecondary" Visibility="Collapsed"/>
+                    <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}" MinWidth="96" Click="OnPrimary"/>
+                </StackPanel>
             </Border>
-
-            <TextBlock x:Name="TitleText" Grid.Column="1" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,5,0,0"/>
-            <TextBlock x:Name="MessageText" Grid.Column="1" Grid.Row="1" Margin="0,10,0,0" TextWrapping="Wrap" LineHeight="20"
-                       Foreground="{StaticResource DialogText}"/>
-            <TextBox x:Name="DetailBox" Grid.Column="1" Grid.Row="2" Margin="0,12,0,0" IsReadOnly="True" Height="Auto" MaxHeight="220"
-                     Padding="10,8" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="Wrap"
-                     VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Visibility="Collapsed"/>
-
-            <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-                <Button x:Name="ExtraButton" Style="{StaticResource GhostButton}" MinWidth="88" Margin="0,0,8,0"
-                        Click="OnExtra" Visibility="Collapsed"/>
-                <Button x:Name="SecondaryButton" Style="{StaticResource GhostButton}" MinWidth="88" Margin="0,0,8,0"
-                        Click="OnSecondary" Visibility="Collapsed"/>
-                <Button x:Name="PrimaryButton" Style="{StaticResource PrimaryButton}" MinWidth="88" Click="OnPrimary"/>
-            </StackPanel>
         </Grid>
     </Border>
 </Window>

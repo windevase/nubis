@@ -215,6 +215,9 @@ public partial class MainWindow
     /// <summary>현재 탭 정보를 파일에 쓴다 (탭 선택·닫기·연결 상태 변경 때 호출)</summary>
     private void UpdateActiveContext()
     {
+        // Claude 패널을 한 번도 열지 않았으면 읽을 쪽이 없다 — 탭을 바꿀 때마다 디스크에 쓰지 않는다
+        // (패널을 처음 열 때 EnsureClaude 가 _mcp 를 만든 뒤 바로 다시 불러 그때의 탭을 쓴다)
+        if (_mcp == null) return;
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(UpdateActiveContext); return; }
         var text = ActiveContextText(_tabs.FirstOrDefault(t => t.IsSelected), _tabs.Count);
         if (text == _lastActiveContext) return;
