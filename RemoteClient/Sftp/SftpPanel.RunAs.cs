@@ -132,6 +132,6 @@ public partial class SftpPanel
     private void UpdateRunAsBadge()
     {
         RunAsBadge.Visibility = _runAs != null ? Visibility.Visible : Visibility.Collapsed;
-        RunAsText.Text = _runAs ?? "";
+        RunAsText.Text = _runAs != null ? L.F("{0} 권한으로 열림 (sudo)", _runAs) : "";
     }
 }

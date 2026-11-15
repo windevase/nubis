@@ -96,7 +96,10 @@ public partial class MainWindow
         var sub = g.IsCloud
             ? L.F("'{0}' 의 {1} 서버 {2}개가 이 계정으로 로그인합니다. 앞으로 동기화로 추가되는 서버에도 적용됩니다.", g.Name, proto == Protocol.Rdp ? "RDP" : "SSH", targets.Count)
             : L.F("'{0}' 의 {1} 호스트 {2}개가 이 계정으로 로그인합니다.", g.Name, proto == Protocol.Rdp ? "RDP" : "SSH", targets.Count);
-        if (VaultPickerDialog.Pick(this, current, proto, sub) is not { } id || VaultStore.Get(id) is not { } v) return;
+        if (VaultPickerDialog.Pick(this, current, proto, sub, allowClear: true) is not { } id) return;
+        // "지정 해제": 우클릭 메뉴의 "Vault 계정 지정 해제" 와 같다 (고르기 창에서 이미 눌렀으므로 다시 묻지 않음)
+        if (id == VaultPickerDialog.Cleared) { ClearGroupVault(g, proto, confirm: false); return; }
+        if (VaultStore.Get(id) is not { } v) return;
 
         // 일반 그룹은 호스트에 직접 지정 → Vault 계정이 우선이라 묻지 않는다.
         // 클라우드 그룹은 프로필 기본 계정으로 저장 → 기본 계정은 호스트에 적힌 값보다 뒤라 지울지 묻는다
@@ -157,10 +160,10 @@ public partial class MainWindow
     }
 
     /// <summary>그룹의 SSH(또는 RDP) 호스트에 지정한 Vault 계정과, 클라우드 그룹이면 프로필의 같은 프로토콜 기본 계정을 해제</summary>
-    private void ClearGroupVault(HostGroup g, Protocol proto)
+    private void ClearGroupVault(HostGroup g, Protocol proto, bool confirm = true)
     {
         var name = proto == Protocol.Rdp ? "RDP" : "SSH";
-        if (Dialog.Show(this, L.F("'{0}' 의 {1} 호스트에 지정한 Vault 계정을 해제할까요?\n해제한 호스트는 직접 적은 값 → 프로필 기본 계정 → 설정의 기본 Vault 계정 순으로 씁니다.", g.Name, name),
+        if (confirm && Dialog.Show(this, L.F("'{0}' 의 {1} 호스트에 지정한 Vault 계정을 해제할까요?\n해제한 호스트는 직접 적은 값 → 프로필 기본 계정 → 설정의 기본 Vault 계정 순으로 씁니다.", g.Name, name),
                 L.T("Vault 계정 해제"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         foreach (var h in GroupMembers(g).Where(h => h.Protocol == proto)) h.VaultId = null;
         if (g.Profile is { } p)

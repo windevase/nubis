@@ -2,52 +2,98 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:Nubis"
-        Title="{l:Tr 'Claude 실행 승인'}" Width="620" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        Title="{l:Tr 'Claude 실행 승인'}" Width="660" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="True" Topmost="True"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="#1B1E2C" BorderBrush="#F5B740" BorderThickness="1" CornerRadius="12" Margin="12"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+    <!-- 보안상 중요한 창: 다른 대화상자와 같은 틀이지만 테두리를 경고색으로 둘러 한눈에 구별한다.
+         위험 명령(IsDangerous · 보이지 않는 제어 문자)이면 코드가 테두리를 빨강으로, 실행 버튼을 DangerFilledButton 으로 바꾼다 -->
+    <Border x:Name="Frame" Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource Warning}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <StackPanel Margin="24,22,24,22">
-            <StackPanel Orientation="Horizontal">
-                <Border Background="#F5B740" CornerRadius="6" Width="26" Height="26">
-                    <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="13" Foreground="#1B1E2C"
-                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                </Border>
-                <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold" Margin="10,0,0,0" VerticalAlignment="Center"/>
-            </StackPanel>
-            <!-- 요청한 MCP 도구 이름 · 뒤에 기다리는 승인 요청 수 -->
-            <StackPanel Orientation="Horizontal" Margin="36,6,0,0">
-                <Border x:Name="ToolBadge" Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}" BorderThickness="1"
-                        CornerRadius="4" Padding="6,1" Visibility="Collapsed">
-                    <TextBlock x:Name="ToolText" FontFamily="Cascadia Mono, Consolas" FontSize="11" Foreground="{StaticResource SubText}"/>
-                </Border>
-                <TextBlock x:Name="QueueText" Foreground="#F5B740" FontSize="12" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
-            </StackPanel>
-            <TextBlock x:Name="DescText" Foreground="{StaticResource SubText}" Margin="0,8,0,0" TextWrapping="Wrap"/>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-            <TextBlock x:Name="TargetsLabel" Style="{StaticResource FieldLabel}"/>
-            <Border Background="{StaticResource InputBg}" CornerRadius="8" BorderBrush="{StaticResource Line}" BorderThickness="1"
-                    MaxHeight="180">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <TextBlock x:Name="TargetsText" Margin="12,10" FontFamily="Cascadia Mono, Consolas" FontSize="12"
-                               TextWrapping="Wrap" LineHeight="19"/>
-                </ScrollViewer>
+            <StackPanel Margin="{StaticResource PadDialog}">
+                <!-- 제목 줄: 경고 타일 + 제목, 그 아래 도구 이름 배지 · 대기 건수 알약 -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="IconTile" Width="36" Height="36" CornerRadius="18" Background="{StaticResource WarningSubtle}"
+                            VerticalAlignment="Top" Margin="0,0,14,0">
+                        <TextBlock x:Name="IconGlyph" Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="16"
+                                   Foreground="{StaticResource Warning}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
+                        <WrapPanel Margin="0,6,0,0">
+                            <!-- 요청한 MCP 도구 이름 -->
+                            <Border x:Name="ToolBadge" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                    CornerRadius="{StaticResource RadiusSm}" Padding="7,2" Margin="0,0,8,0" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE943;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="{StaticResource TextTertiary}"
+                                               VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                    <TextBlock x:Name="ToolText" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <!-- 뒤에 기다리는 승인 요청 수 (0 이면 숨김 — SetWaiting) -->
+                            <Border x:Name="QueuePill" Background="{StaticResource WarningSubtle}" CornerRadius="9" Padding="9,2" Visibility="Collapsed">
+                                <TextBlock x:Name="QueueText" Foreground="{StaticResource Warning}" FontSize="11.5" FontWeight="SemiBold"
+                                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                            </Border>
+                        </WrapPanel>
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock x:Name="DescText" Style="{StaticResource TextBody}" Foreground="{StaticResource DialogText}" Margin="0,16,0,0"
+                           TextWrapping="Wrap" LineHeight="20"/>
+
+                <!-- 대상: 고정폭 · 줄마다 한 대상 · 길면 스크롤 -->
+                <TextBlock x:Name="TargetsLabel" Style="{StaticResource TextOverline}" Foreground="{StaticResource TextSecondary}" Margin="0,18,0,6"/>
+                <Border Background="{StaticResource Layer3Bg}" CornerRadius="{StaticResource RadiusLg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                        MaxHeight="180">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                        <TextBlock x:Name="TargetsText" Margin="12,9" FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                   Foreground="{StaticResource DialogText}" TextWrapping="Wrap" LineHeight="19"/>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- 명령: 안쪽으로 파인 코드 상자 (고정폭 · 줄바꿈 · 스크롤, 읽기 전용이지만 선택·복사 가능) -->
+                <TextBlock Text="{l:Tr '명령'}" Style="{StaticResource TextOverline}" Foreground="{StaticResource TextSecondary}" Margin="0,16,0,6"/>
+                <TextBox x:Name="CommandBox" IsReadOnly="True" Height="Auto" MinHeight="44" MaxHeight="240" Padding="12,10"
+                         Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" Foreground="{StaticResource TextPrimary}"
+                         l:Ui.CornerRadius="{StaticResource RadiusLg}"
+                         FontFamily="{StaticResource MonoFont}" FontSize="12.5" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                         VerticalContentAlignment="Top" AcceptsReturn="True"/>
+
+                <!-- 경고 띠 (위험 명령 · 보이지 않는 제어 문자) -->
+                <Border x:Name="WarnBox" Background="{StaticResource DangerSubtle}" CornerRadius="{StaticResource RadiusLg}" Padding="12,10"
+                        Margin="0,12,0,0" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xEA39;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="{StaticResource Danger}"
+                                   VerticalAlignment="Top" Margin="0,2,10,0"/>
+                        <TextBlock x:Name="WarnText" Grid.Column="1" Foreground="{StaticResource DangerHover}" TextWrapping="Wrap" LineHeight="19"/>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- 버튼 띠: 거부(Esc) = 보조, 실행 = 주 동작 (창이 뜨거나 활성화될 때마다 1.5초 잠김) -->
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="{l:Tr '거부'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="100"/>
+                    <Button x:Name="OkButton" Content="{l:Tr '실행'}" Style="{StaticResource PrimaryButton}" Click="OnOk" MinWidth="100"/>
+                </StackPanel>
             </Border>
-
-            <TextBlock Text="{l:Tr '명령'}" Style="{StaticResource FieldLabel}"/>
-            <TextBox x:Name="CommandBox" IsReadOnly="True" Height="Auto" MinHeight="44" MaxHeight="220" Padding="12,10"
-                     FontFamily="Cascadia Mono, Consolas" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
-                     VerticalContentAlignment="Top" AcceptsReturn="True"/>
-
-            <TextBlock x:Name="WarnText" Foreground="#F0616D" Margin="2,10,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
-
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-                <Button Content="{l:Tr '거부'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="90"/>
-                <Button x:Name="OkButton" Content="{l:Tr '실행'}" Style="{StaticResource PrimaryButton}" Click="OnOk" MinWidth="90"/>
-            </StackPanel>
-        </StackPanel>
+        </Grid>
     </Border>
 </Window>

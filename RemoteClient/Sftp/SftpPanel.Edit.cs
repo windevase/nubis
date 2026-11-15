@@ -122,7 +122,7 @@ public partial class SftpPanel
             OpenInEditor(local);
         }
         catch (OperationCanceledException) { DeleteTempDirs([dir]); EndTransfer(L.T("편집 열기를 취소했습니다.")); }
-        catch (Exception ex) { DeleteTempDirs([dir]); EndTransfer(L.F("편집 열기 실패: {0}", ex.Message)); }
+        catch (Exception ex) { DeleteTempDirs([dir]); EndTransfer(L.F("편집 열기 실패: {0}", ex.Message), ToastKind.Error); }
     }
 
     private void Watch(EditSession s)
@@ -204,13 +204,13 @@ public partial class SftpPanel
                 s.Hash = hash;
                 return a;
             });
-            ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)));
+            ShowStatus(L.F("저장됨 → 서버에 올림: {0}  ({1:HH:mm:ss}, {2})", name, DateTime.Now, HumanSize(data.Length)), kind: ToastKind.Success);
             if (ParentPath(s.Remote) == _cwd && !_busy) await NavigateAsync(_cwd);   // 목록의 크기·시각 갱신
         }
         // 실패는 전송 중이어도 버리지 않는다 — 전송이 끝날 때 결과 문구에 붙여 보인다 (저장이 서버에 안 갔는데 모르는 일이 없게)
-        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name), keepIfBusy: true); }
+        catch (OperationCanceledException) when (!_closed) { ShowStatus(L.F("자동 업로드 시간 초과: {0} (다시 저장하면 재시도)", name), keepIfBusy: true, kind: ToastKind.Warning); }
         catch (Exception) when (_closed) { /* 탭이 닫힘 — Close 가 마지막으로 올리고 실패하면 알린다 */ }
-        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message), keepIfBusy: true); }
+        catch (Exception ex) { ShowStatus(L.F("자동 업로드 실패: {0} — {1} (다시 저장하면 재시도)", name, ex.Message), keepIfBusy: true, kind: ToastKind.Error); }
         finally { s.Uploading = false; }
     }
 
@@ -474,19 +474,26 @@ public partial class SftpPanel
     /// 아래 상태 줄에 잠깐 알림. 전송 중이면 기본은 버리고(진행 표시를 가리지 않게),
     /// keepIfBusy 면 전송이 끝날 때 결과 문구에 붙인다 (자동 업로드 실패처럼 놓치면 안 되는 알림)
     /// </summary>
-    private async void ShowStatus(string text, bool keepIfBusy = false)
+    /// <param name="kind">알림 종류 — 상태 줄 아이콘. 경고 · 실패는 토스트로도 띄운다 (편집기에서 저장하느라 패널을 안 보고 있을 때도 알게)</param>
+    private async void ShowStatus(string text, bool keepIfBusy = false, ToastKind kind = ToastKind.Info)
     {
+        var toast = (kind is ToastKind.Error or ToastKind.Warning) && !_closed;
         if (_busy)
         {
             if (keepIfBusy && !(_pendingNotice?.Contains(text, StringComparison.Ordinal) ?? false))
                 _pendingNotice = AppendNotice(_pendingNotice, text);
+            if (toast && keepIfBusy) Toast.Show(text, kind, 6000);   // 상태 줄은 진행 표시 중 — 토스트로는 바로 알린다
             return;
         }
         var seq = ++_statusSeq;
         TransferBar.Visibility = Visibility.Visible;
         CancelButton.Visibility = Visibility.Collapsed;
+        // 알림에는 진행 막대를 보이지 않는다 (가득 찬 막대가 전송 완료처럼 보이지 않게)
+        TransferProgress.Visibility = Visibility.Collapsed;
         TransferProgress.IsIndeterminate = false;
         TransferProgress.Value = 1;
+        SetStatusIcon(kind);
+        if (toast) Toast.Show(text, kind, 6000);
         TransferText.Text = text;
         TransferText.ToolTip = text;
         await Task.Delay(7000);

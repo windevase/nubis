@@ -40,9 +40,9 @@ public partial class SftpPanel
         if (selected is { Count: > 0 })
             foreach (var i in view)
                 if (selected.Contains(i.FullName)) FileList.SelectedItems.Add(i);
-        ShowMessage(view.Count > 0 ? null
-            : _allItems.Count > 0 ? L.T("숨김 파일만 있습니다.\nCtrl+H 를 누르면 숨김 파일을 표시합니다.")
-            : L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다."));
+        if (view.Count > 0) ShowMessage(null);
+        else if (_allItems.Count > 0) ShowMessage(L.T("숨김 파일만 있습니다.\nCtrl+H 를 누르면 숨김 파일을 표시합니다."), GlyphHiddenOnly);
+        else ShowMessage(L.T("빈 폴더입니다.\n파일을 끌어다 놓으면 업로드합니다."), GlyphEmptyFolder);
         UpdateSortHeaders();
     }
 
@@ -62,7 +62,7 @@ public partial class SftpPanel
     /// <summary>유닉스 숨김 파일 (점으로 시작)</summary>
     public static bool IsHiddenName(string name) => name.StartsWith('.');
 
-    private void OnSortHeader(object sender, MouseButtonEventArgs e)
+    private void OnSortHeader(object sender, RoutedEventArgs e)
     {
         if ((sender as FrameworkElement)?.Tag is not string tag || !Enum.TryParse<SftpSortKey>(tag, out var key)) return;
         // 같은 열을 다시 누르면 방향만 바꾼다. 크기·날짜는 처음 누를 때 큰 것·최신이 위로
@@ -72,12 +72,19 @@ public partial class SftpPanel
         e.Handled = true;
     }
 
+    /// <summary>머리글: 정렬 중인 열만 글자를 한 단계 밝게 + 방향 화살표(글리프). 나머지는 3차 글자색, 화살표 숨김</summary>
     private void UpdateSortHeaders()
     {
-        string Arrow(SftpSortKey k) => k != _sortKey ? "" : _sortDesc ? " ▼" : " ▲";
-        NameHeader.Text = L.T("이름") + Arrow(SftpSortKey.Name);
-        SizeHeader.Text = L.T("크기") + Arrow(SftpSortKey.Size);
-        ModifiedHeader.Text = L.T("수정한 날짜") + Arrow(SftpSortKey.Modified);
+        void Set(TextBlock label, TextBlock arrow, SftpSortKey k)
+        {
+            var on = k == _sortKey;
+            arrow.Text = _sortDesc ? "" : "";   // ChevronDown / ChevronUp
+            arrow.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            label.SetResourceReference(TextBlock.ForegroundProperty, on ? "TextSecondary" : "TextTertiary");
+        }
+        Set(NameHeader, NameArrow, SftpSortKey.Name);
+        Set(SizeHeader, SizeArrow, SftpSortKey.Size);
+        Set(ModifiedHeader, ModifiedArrow, SftpSortKey.Modified);
     }
 
     private void OnToggleHidden(object sender, RoutedEventArgs e) => ToggleHidden();

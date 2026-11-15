@@ -88,25 +88,28 @@ public partial class MessageDialog : Window
             dlg.DetailBox.Visibility = Visibility.Visible;
         }
 
-        // 아이콘: 원형 배지 + Fluent 글리프
+        // 아이콘: 옅은 의미 색 원형 타일 + Fluent 글리프 (색은 Themes\Tokens.xaml 의 의미 색)
         var (glyph, color) = icon switch
         {
-            MessageBoxImage.Question => ("", Color.FromRgb(0x4F, 0x8C, 0xFF)),
-            MessageBoxImage.Warning => ("", Color.FromRgb(0xF5, 0xB7, 0x40)),
-            MessageBoxImage.Error => ("", Color.FromRgb(0xF0, 0x61, 0x6D)),
-            MessageBoxImage.Information => ("", Color.FromRgb(0x20, 0xC5, 0xA0)),
+            MessageBoxImage.Question => ("", Token("InfoColor")),
+            MessageBoxImage.Warning => ("", Token("WarningColor")),
+            MessageBoxImage.Error => ("", Token("DangerBaseColor")),
+            MessageBoxImage.Information => ("", Token("AccentTextColor")),
             _ => ((string?)null, default(Color)),
         };
         if (glyph != null)
         {
             dlg.IconBadge.Visibility = Visibility.Visible;
-            dlg.IconBadge.Background = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
+            dlg.IconBadge.Background = new SolidColorBrush(Color.FromArgb(0x29, color.R, color.G, color.B));
             dlg.IconGlyph.Text = glyph;
             dlg.IconGlyph.Foreground = new SolidColorBrush(color);
-            if (icon is MessageBoxImage.Warning or MessageBoxImage.Error) dlg.Frame.BorderBrush = new SolidColorBrush(Color.FromArgb(0x99, color.R, color.G, color.B));
+            if (icon is MessageBoxImage.Warning or MessageBoxImage.Error) dlg.Frame.BorderBrush = new SolidColorBrush(Color.FromArgb(0x80, color.R, color.G, color.B));
         }
         return dlg;
     }
+
+    /// <summary>토큰 색 (앱 리소스가 없을 때 — 테스트 등 — 는 회색)</summary>
+    private static Color Token(string key) => Application.Current?.TryFindResource(key) is Color c ? c : Colors.Gray;
 
     private static void ConfigureButtons(MessageDialog dlg, MessageBoxButton buttons, MessageBoxImage icon)
     {

@@ -167,7 +167,7 @@ public partial class MainWindow
         {
             // 검색어 없이 ↓ 로 카드를 골랐으면 그 호스트로
             if (_highlighted != null && _hosts.Contains(_highlighted)) Connect(_highlighted);
-            else FlashHostStatus(L.T("검색어나 user@host 를 입력하세요"));
+            else { FlashHostStatus(L.T("검색어나 user@host 를 입력하세요"), ToastKind.Info); SearchBox.Focus(); }
             return;
         }
 

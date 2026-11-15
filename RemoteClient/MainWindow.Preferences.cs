@@ -62,7 +62,9 @@ public partial class MainWindow
         var sub = rdp
             ? L.T("계정을 따로 정하지 않은 모든 RDP(Windows) 호스트가 이 계정으로 로그인합니다.")
             : L.T("계정을 따로 정하지 않은 모든 SSH(Linux) 호스트가 이 계정으로 로그인합니다.");
-        if (VaultPickerDialog.Pick(this, rdp ? s.DefaultRdpVaultId : s.DefaultSshVaultId, rdp ? Protocol.Rdp : Protocol.Ssh, sub) is not { } id) return;
+        if (VaultPickerDialog.Pick(this, rdp ? s.DefaultRdpVaultId : s.DefaultSshVaultId, rdp ? Protocol.Rdp : Protocol.Ssh, sub, allowClear: true) is not { } picked) return;
+        // "지정 해제" 는 옆의 해제 버튼과 같다 (기본 계정 없음)
+        Guid? id = picked == VaultPickerDialog.Cleared ? null : picked;
         SettingsStore.Update(x => { if (rdp) x.DefaultRdpVaultId = id; else x.DefaultSshVaultId = id; });
         RefreshPreferences();
         RefreshHosts();

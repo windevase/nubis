@@ -2,56 +2,95 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:Nubis"
-        Title="{l:Tr 'Nubis 로그인'}" Width="460" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        Title="{l:Tr 'Nubis 로그인'}" Width="480" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen"
-        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+    <!-- 가운데 정렬 카드: 로고 · 앱 이름 · 안내 · (진행 중) 큰 고정폭 기기 코드 + 복사 · 버튼 띠 -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <StackPanel Margin="28,26,28,24">
-            <StackPanel Orientation="Horizontal">
-                <Image Source="/Assets/nubis-256.png" Width="34" Height="34" RenderOptions.BitmapScalingMode="HighQuality"/>
-                <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                    <TextBlock Text="Nubis" FontSize="17" FontWeight="SemiBold"/>
-                    <TextBlock x:Name="SubTitle" FontSize="12" Foreground="{StaticResource SubText}" Margin="0,2,0,0"/>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel Margin="32,30,32,24">
+                <Image Source="/Assets/nubis-256.png" Width="52" Height="52" HorizontalAlignment="Center" RenderOptions.BitmapScalingMode="HighQuality"/>
+                <TextBlock Text="Nubis" Style="{StaticResource TextTitle}" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                <TextBlock x:Name="SubTitle" Style="{StaticResource TextCaption}" Foreground="{StaticResource TextTertiary}" HorizontalAlignment="Center" Margin="0,2,0,0"/>
+
+                <TextBlock x:Name="TitleText" Style="{StaticResource TextSubtitle}" HorizontalAlignment="Center" TextAlignment="Center"
+                           Margin="0,24,0,0" TextWrapping="Wrap"/>
+                <TextBlock x:Name="InfoText" Style="{StaticResource TextBody}" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"
+                           TextAlignment="Center" LineHeight="19" Margin="0,8,0,0" TextWrapping="Wrap"/>
+
+                <!-- 기기 코드: 큰 고정폭 글자 (선택 가능) + 오른쪽 복사 아이콘 -->
+                <StackPanel x:Name="CodePanel" Visibility="Collapsed" Margin="0,20,0,0">
+                    <Border Background="{StaticResource Layer3Bg}" CornerRadius="{StaticResource RadiusLg}" Padding="12,10"
+                            BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="36"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="36"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="CodeBox" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Background="Transparent" Height="Auto"
+                                     FontFamily="{StaticResource MonoFont}" FontSize="30" FontWeight="SemiBold" HorizontalContentAlignment="Center"
+                                     Foreground="{StaticResource TextPrimary}"/>
+                            <Button x:Name="CopyCodeButton" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE8C8;" FontSize="14"
+                                    Width="32" Height="32" VerticalAlignment="Center" Click="OnCopyCode" ToolTip="{l:Tr '코드 복사'}"/>
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="UrlText" FontFamily="{StaticResource MonoFont}" FontSize="12" Foreground="{StaticResource TextSecondary}"
+                               HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
+                        <Button Style="{StaticResource GhostButton}" Click="OnOpenBrowser">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE774;" FontFamily="{StaticResource IconFont}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Text="{l:Tr '브라우저 열기'}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
+                        <ProgressBar IsIndeterminate="True" Width="18" Height="4" Background="Transparent" Foreground="{StaticResource Accent}"
+                                     BorderThickness="0" VerticalAlignment="Center"/>
+                        <TextBlock Text="{l:Tr '브라우저에서 승인을 기다리는 중...'}" Style="{StaticResource TextCaption}" Margin="8,0,0,0"/>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
 
-            <TextBlock x:Name="TitleText" FontSize="16" FontWeight="SemiBold" Margin="0,24,0,0" TextWrapping="Wrap"/>
-            <TextBlock x:Name="InfoText" Foreground="{StaticResource SubText}" FontSize="12.5" Margin="0,8,0,0" TextWrapping="Wrap"/>
-
-            <!-- 코드 표시 -->
-            <StackPanel x:Name="CodePanel" Visibility="Collapsed" Margin="0,18,0,0">
-                <Border Background="{StaticResource InputBg}" CornerRadius="10" Padding="12" BorderBrush="{StaticResource Accent}" BorderThickness="1">
-                    <TextBox x:Name="CodeBox" IsReadOnly="True" BorderThickness="0" Background="Transparent" Height="Auto"
-                             FontFamily="Cascadia Mono, Consolas" FontSize="30" FontWeight="SemiBold" HorizontalContentAlignment="Center"
-                             Foreground="{StaticResource Text}"/>
+                <!-- 오류 띠 (ErrorText 가 보일 때만 — ShowError) -->
+                <Border Background="{StaticResource DangerSubtle}" CornerRadius="{StaticResource RadiusLg}" Padding="12,9" Margin="0,16,0,0"
+                        Visibility="{Binding Visibility, ElementName=ErrorText}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xEA39;" FontFamily="{StaticResource IconFont}" FontSize="13" Foreground="{StaticResource Danger}"
+                                   VerticalAlignment="Top" Margin="0,2,10,0"/>
+                        <TextBlock x:Name="ErrorText" Grid.Column="1" Foreground="{StaticResource DangerHover}" FontSize="12.5" LineHeight="19"
+                                   TextWrapping="Wrap" Visibility="Collapsed"/>
+                    </Grid>
                 </Border>
-                <TextBlock x:Name="UrlText" FontSize="12" Foreground="{StaticResource SubText}" HorizontalAlignment="Center" Margin="0,8,0,0"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,12,0,0">
-                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '코드 복사'}" Margin="0,0,8,0" Click="OnCopyCode"/>
-                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '브라우저 열기'}" Click="OnOpenBrowser"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,16,0,0">
-                    <ProgressBar IsIndeterminate="True" Width="18" Height="4" Background="Transparent" Foreground="{StaticResource Accent}"
-                                 BorderThickness="0" VerticalAlignment="Center"/>
-                    <TextBlock Text="{l:Tr '브라우저에서 승인을 기다리는 중...'}" FontSize="12" Foreground="{StaticResource SubText}" Margin="8,0,0,0"/>
-                </StackPanel>
             </StackPanel>
 
-            <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" FontSize="12.5" Margin="0,14,0,0" TextWrapping="Wrap"
-                       Visibility="Collapsed"/>
-
-            <Grid Margin="0,22,0,0">
-                <Button x:Name="OfflineButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Visibility="Collapsed"
-                        Click="OnOffline"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button x:Name="CancelButton" Style="{StaticResource GhostButton}" Content="{l:Tr '종료'}" Margin="0,0,8,0" MinWidth="80" Click="OnCancel"/>
-                    <Button x:Name="LoginButton" Style="{StaticResource PrimaryButton}" MinWidth="120" Click="OnLogin" IsDefault="True"/>
-                </StackPanel>
-            </Grid>
-        </StackPanel>
+            <!-- 버튼 띠: (해당될 때만) 오프라인 진입 한 줄, 그 아래 오른쪽 종료/취소 · 로그인 -->
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <!-- 문구가 길어(마지막 로그인 시각 · 계정) 오른쪽 버튼과 겹치지 않게 따로 한 줄 -->
+                    <Button x:Name="OfflineButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" Margin="0,0,0,10"
+                            Visibility="Collapsed" Click="OnOffline"/>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="CancelButton" Style="{StaticResource GhostButton}" Content="{l:Tr '종료'}" Margin="0,0,8,0" MinWidth="96" Click="OnCancel"/>
+                        <Button x:Name="LoginButton" Style="{StaticResource PrimaryButton}" MinWidth="128" Click="OnLogin" IsDefault="True"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
     </Border>
 </Window>

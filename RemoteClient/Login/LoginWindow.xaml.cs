@@ -184,7 +184,24 @@ public partial class LoginWindow : Window
 
     private void OnCopyCode(object sender, RoutedEventArgs e)
     {
-        try { if (_code != null) Clipboard.SetText(_code.UserCode); } catch { }
+        try { if (_code != null) Clipboard.SetText(_code.UserCode); } catch { return; }
+        // 복사됐음을 잠깐 보여 준다: 복사 아이콘 → 확인 표시(강조색) 1.5초
+        _copiedTimer ??= new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
+        _copiedTimer.Stop();
+        _copiedTimer.Tick -= OnCopiedTimer;
+        _copiedTimer.Tick += OnCopiedTimer;
+        CopyCodeButton.Content = "";
+        CopyCodeButton.Foreground = (System.Windows.Media.Brush)FindResource("AccentText");
+        _copiedTimer.Start();
+    }
+
+    private System.Windows.Threading.DispatcherTimer? _copiedTimer;
+
+    private void OnCopiedTimer(object? sender, EventArgs e)
+    {
+        _copiedTimer?.Stop();
+        CopyCodeButton.Content = "";
+        CopyCodeButton.ClearValue(ForegroundProperty);
     }
 
     private void OnOpenBrowser(object sender, RoutedEventArgs e) => OpenBrowser();

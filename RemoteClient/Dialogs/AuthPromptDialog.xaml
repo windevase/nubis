@@ -2,29 +2,52 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:l="clr-namespace:Nubis"
-        Title="{l:Tr '인증'}" Width="420" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        Title="{l:Tr '인증'}" Width="440" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
-    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+    <!-- 공통 대화상자 틀 (MessageDialog 와 같음) -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
             MouseLeftButtonDown="OnDrag">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <StackPanel Margin="24,22,24,22">
-            <TextBlock x:Name="TitleText" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap"/>
-            <TextBlock x:Name="TargetText" Foreground="{StaticResource SubText}" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"/>
-            <!-- 서버 안내문(배너 포함)이 길면 잘리지 않게 스크롤 -->
-            <ScrollViewer x:Name="InstructionScroll" Margin="0,10,0,0" MaxHeight="200"
-                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
-                <TextBlock x:Name="InstructionText" Foreground="{StaticResource SubText}" TextWrapping="Wrap"/>
-            </ScrollViewer>
-            <StackPanel x:Name="FieldsPanel"/>
-            <TextBlock x:Name="HintText" Foreground="#E5B567" Margin="0,10,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
-
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,22,0,0">
-                <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
-                <Button Content="{l:Tr '확인'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="80"/>
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel Margin="{StaticResource PadDialog}">
+                <!-- 제목 줄: 열쇠 타일 + 서버가 보낸 제목 · 접속 대상 -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Width="32" Height="32" CornerRadius="16" Background="{StaticResource InfoSubtle}" Margin="0,0,14,0" VerticalAlignment="Top">
+                        <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{StaticResource Info}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText" Style="{StaticResource TextSubtitle}" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="TargetText" Style="{StaticResource TextCaption}" FontFamily="{StaticResource MonoFont}" Margin="0,3,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                </Grid>
+                <!-- 서버 안내문(배너 포함): 서버가 보낸 그대로라 안쪽 상자에 따로 두고, 길면 잘리지 않게 스크롤 -->
+                <Border x:Name="InstructionScroll" Margin="0,16,0,0" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}"
+                        BorderThickness="1" CornerRadius="{StaticResource RadiusLg}">
+                    <ScrollViewer MaxHeight="200" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                        <TextBlock x:Name="InstructionText" Foreground="{StaticResource DialogText}" TextWrapping="Wrap" LineHeight="19" Margin="12,9"/>
+                    </ScrollViewer>
+                </Border>
+                <StackPanel x:Name="FieldsPanel" Margin="0,2,0,0"/>
+                <TextBlock x:Name="HintText" Foreground="{StaticResource Warning}" Margin="0,12,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
             </StackPanel>
-        </StackPanel>
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="96"/>
+                    <Button Content="{l:Tr '확인'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="96"/>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Border>
 </Window>

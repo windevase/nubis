@@ -6,28 +6,83 @@
 <style>
   html, body { margin: 0; height: 100%; background: #161925; overflow: hidden; }
   #t { position: absolute; top: 10px; left: 14px; right: 6px; bottom: 6px; }
-  .xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: #2E3350 transparent; }
-  /* 화면 내용 찾기 (Ctrl+Shift+F) */
-  #find { position: absolute; top: 8px; right: 18px; z-index: 10; display: none; align-items: center; gap: 6px;
-          background: #1B1E2C; border: 1px solid #2E3350; border-radius: 8px; padding: 5px 6px 5px 10px;
-          font: 12px "Segoe UI", "Malgun Gothic", sans-serif; color: #9AA0B8; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  #find input { width: 220px; background: #12141E; color: #E6E8F0; border: 1px solid #2E3350; border-radius: 6px;
-                padding: 4px 8px; font: 13px "Segoe UI", "Malgun Gothic", sans-serif; outline: none; }
-  #find input:focus { border-color: #20C5A0; }
-  #find button { background: transparent; color: #C9CDDB; border: 0; border-radius: 5px; cursor: pointer; padding: 3px 7px; font-size: 13px; }
-  #find button:hover { background: #262B40; }
-  /* 연결이 끊겼을 때 보이는 "다시 연결" 막대 */
-  #reconnect { position: absolute; bottom: 14px; right: 18px; z-index: 10; display: none; }
-  #reconnect button { background: #20C5A0; color: #10131C; border: 0; border-radius: 6px; cursor: pointer; padding: 6px 14px;
-                      font: 600 12px "Segoe UI", "Malgun Gothic", sans-serif; box-shadow: 0 4px 16px rgba(0,0,0,.4); }
-  #reconnect button:hover { background: #4BE0BC; }
+  /* 앱 디자인 토큰(Themes\Tokens.xaml)을 옮긴 값 — 터미널 글자색은 사용자 테마를 따르고, 둘레 크롬(찾기 상자·끊김 카드)만 앱 색을 쓴다.
+     성능: 계속 도는 애니메이션·backdrop-filter 는 쓰지 않는다. 움직임은 hover·나타날 때 한 번(≤150ms)뿐 */
+  :root {
+    --overlay: #1E2129; --stroke: rgba(255,255,255,.09); --stroke-strong: rgba(255,255,255,.16);
+    --text: #EDEFF4; --text2: #A0A6B4; --text3: #717789;
+    --accent: #2CC9A3; --accent-hover: #46D6B3; --accent-pressed: #23AD8B; --on-accent: #04241C;
+    --fill-hover: rgba(255,255,255,.06); --fill-pressed: rgba(255,255,255,.04); --input: rgba(255,255,255,.04); --input-focus: rgba(0,0,0,.16);
+    --danger: #EC5257; --warning: #F5B740;
+    --thumb: rgba(255,255,255,.14); --thumb-show: rgba(255,255,255,.24); --thumb-hover: rgba(255,255,255,.42);
+    --ui-font: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", sans-serif;
+    --icon-font: "Segoe Fluent Icons", "Segoe MDL2 Assets";
+  }
+  /* 밝은 터미널 테마: 스크롤바만 어두운 색으로 (찾기 상자·카드는 앱과 같은 어두운 카드 그대로) */
+  body.light { --thumb: rgba(0,0,0,.16); --thumb-show: rgba(0,0,0,.26); --thumb-hover: rgba(0,0,0,.45); }
+
+  /* 스크롤바: 가는 둥근 막대 · 투명 트랙. 평소엔 옅게, 터미널 위에 마우스가 있으면 진하게, 막대 위면 더 진하게.
+     (scrollbar-width/scrollbar-color 표준 속성을 쓰면 Chromium 이 ::-webkit-scrollbar 를 무시하므로 쓰지 않는다) */
+  .xterm .xterm-viewport::-webkit-scrollbar { width: 10px; background: transparent; }
+  .xterm .xterm-viewport::-webkit-scrollbar-track,
+  .xterm .xterm-viewport::-webkit-scrollbar-corner { background: transparent; }
+  .xterm .xterm-viewport::-webkit-scrollbar-button { display: none; }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--thumb); background-clip: content-box;
+                                                    border: 3px solid transparent; border-radius: 6px; min-height: 32px; }
+  .xterm:hover .xterm-viewport::-webkit-scrollbar-thumb { background-color: var(--thumb-show); }
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover,
+  .xterm .xterm-viewport::-webkit-scrollbar-thumb:active { background-color: var(--thumb-hover); border-width: 2px; }
+
+  /* 나타날 때 한 번만 (display none → flex 마다 다시 재생, 끝나면 멈춘다) */
+  @keyframes pop-down { from { opacity: 0; transform: translateY(-4px); } }
+  @keyframes pop-up { from { opacity: 0; transform: translate(-50%, 4px); } }
+
+  /* 공통: 아이콘 버튼 (Fluent 글리프) */
+  .ib { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; flex: none;
+        background: transparent; color: var(--text2); border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+        font: 12px var(--icon-font); transition: background-color .1s, color .1s; }
+  .ib:hover { background: var(--fill-hover); color: var(--text); }
+  .ib:active { background: var(--fill-pressed); color: var(--text2); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* 화면 내용 찾기 (Ctrl+Shift+F): 오른쪽 위에 뜨는 둥근 카드 */
+  #find { position: absolute; top: 8px; right: 20px; z-index: 10; display: none; align-items: center; gap: 2px;
+          background: var(--overlay); border: 1px solid var(--stroke); border-radius: 8px; padding: 4px;
+          font: 12px var(--ui-font); color: var(--text3); box-shadow: 0 6px 20px rgba(0,0,0,.32);
+          animation: pop-down .12s ease-out; }
+  #find .field { position: relative; display: flex; align-items: center; }
+  #find .field::before { content: "\E721"; position: absolute; left: 9px; font: 12px var(--icon-font); color: var(--text3); pointer-events: none; }
+  #find input { width: 220px; height: 26px; box-sizing: border-box; background: var(--input); color: var(--text);
+                border: 1px solid var(--stroke); border-radius: 6px; padding: 0 8px 0 28px;
+                font: 13px var(--ui-font); outline: none; transition: border-color .1s, background-color .1s; }
+  #find input::placeholder { color: var(--text3); }
+  #find input:hover { border-color: var(--stroke-strong); }
+  #find input:focus { border-color: var(--accent); background: var(--input-focus); }
+  #find input::selection { background: rgba(44,201,163,.35); color: var(--text); }
+  #findCount { min-width: 44px; padding: 0 6px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #findCount:empty { min-width: 0; padding: 0 2px; }
+  #find .sep { width: 1px; height: 16px; margin: 0 3px; background: var(--stroke); flex: none; }
+
+  /* 연결이 끊기면 아래쪽 가운데에 뜨는 알약 카드: "● 세션이 종료되었습니다 [다시 연결 Enter]" */
+  #reconnect { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 10; display: none;
+               align-items: center; gap: 10px; max-width: calc(100% - 48px); box-sizing: border-box;
+               background: var(--overlay); border: 1px solid var(--stroke); border-radius: 999px; padding: 4px 4px 4px 14px;
+               font: 12px var(--ui-font); color: var(--text2); box-shadow: 0 8px 24px rgba(0,0,0,.35);
+               animation: pop-up .12s ease-out; }
+  #reconnect .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--warning); flex: none; }
+  #reconnectMsg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #reconnectBtn { display: inline-flex; align-items: center; gap: 8px; flex: none; height: 28px; box-sizing: border-box;
+                  background: var(--accent); color: var(--on-accent); border: 0; border-radius: 999px; cursor: pointer; padding: 0 6px 0 14px;
+                  font: 600 12px var(--ui-font); transition: background-color .1s; }
+  #reconnectBtn:hover { background: var(--accent-hover); }
+  #reconnectBtn:active { background: var(--accent-pressed); }
+  #reconnectBtn kbd { font: 600 10.5px var(--ui-font); padding: 2px 6px; border-radius: 999px; background: rgba(4,36,28,.16); }
 </style>
 </head>
 <body>
 <div id="t"></div>
-<div id="find"><input id="findText" spellcheck="false"><span id="findCount"></span>
-  <button id="findPrev" title="Shift+Enter">&#x25B2;</button><button id="findNext" title="Enter">&#x25BC;</button><button id="findClose" title="Esc">&#x2715;</button></div>
-<div id="reconnect"><button id="reconnectBtn" title="Enter"></button></div>
+<div id="find" role="search"><span class="field"><input id="findText" spellcheck="false" placeholder="화면에서 찾기" aria-label="화면에서 찾기"></span><span id="findCount"></span><span class="sep"></span><button id="findPrev" class="ib" title="이전 결과 (Shift+Enter)">&#xE70E;</button><button id="findNext" class="ib" title="다음 결과 (Enter)">&#xE70D;</button><button id="findClose" class="ib" title="닫기 (Esc)">&#xE711;</button></div>
+<div id="reconnect" role="status"><span class="dot"></span><span id="reconnectMsg">세션이 종료되었습니다</span><button id="reconnectBtn" title="Enter 키로도 할 수 있습니다"><span id="reconnectLabel"></span><kbd>Enter</kbd></button></div>
 <script src="xterm.js"></script>
 <script src="addon-fit.js"></script>
 <script>
@@ -212,8 +267,8 @@
       }
     }
     // 찾은 게 없으면 입력란 테두리·개수를 빨갛게 (있으면 원래대로)
-    findText.style.borderColor = hits.length ? '' : '#F0616D';
-    findCount.style.color = hits.length ? '' : '#F0616D';
+    findText.style.borderColor = hits.length ? '' : 'var(--danger)';
+    findCount.style.color = hits.length ? '' : 'var(--danger)';
     if (hits.length === 0) { findCount.textContent = '0'; term.clearSelection(); return; }
     let idx;
     if (!findPos) {
@@ -377,6 +432,19 @@
     scan(2000);
   }
 
+  // 크롬 문구(앱 언어). 앱이 보내지 않으면(예전 앱) 마크업의 한국어 기본값을 그대로 둔다
+  function applyUiTexts(u) {
+    if (!u) return;
+    const set = (id, prop, v) => { if (typeof v === 'string' && v) document.getElementById(id)[prop] = v; };
+    set('findText', 'placeholder', u.findPlaceholder);
+    if (u.findPlaceholder) findText.setAttribute('aria-label', u.findPlaceholder);
+    set('findPrev', 'title', u.findPrev);
+    set('findNext', 'title', u.findNext);
+    set('findClose', 'title', u.findClose);
+    set('reconnectMsg', 'textContent', u.offline);
+    set('reconnectBtn', 'title', u.reconnectHint);
+  }
+
   // 테마/글꼴 적용. minimumContrastRatio 로 배경과 대비가 낮은 글자색(밝은 테마의 흰 글자 등)을 자동 보정
   function applySettings(s) {
     term.options.theme = s.theme;
@@ -388,6 +456,8 @@
     term.options.fontFamily = '"' + s.fontFamily + '", "Cascadia Mono", "D2Coding", Consolas, "Malgun Gothic", monospace';
     term.options.minimumContrastRatio = s.autoContrast ? 4.5 : 1;
     document.body.style.background = s.theme.background;
+    document.body.classList.toggle('light', !!s.light);
+    applyUiTexts(s.ui);
     try { fit.fit(); } catch (e) { }
 
     hl = { ip: s.hlIp, num: s.hlNum, kw: s.hlKeywords };
@@ -422,8 +492,9 @@
   // 연결이 끊기면 터미널 아래쪽에 버튼을 보인다 — Enter 키·탭 우클릭 말고도 눌러서 다시 연결할 수 있게
   const reconnectBar = document.getElementById('reconnect');
   const reconnectBtn = document.getElementById('reconnectBtn');
+  const reconnectLabel = document.getElementById('reconnectLabel');
   function showReconnect(label) {
-    reconnectBtn.textContent = label;
+    reconnectLabel.textContent = label;
     reconnectBar.style.display = label ? 'flex' : 'none';
   }
   function hideReconnect() { reconnectBar.style.display = 'none'; }

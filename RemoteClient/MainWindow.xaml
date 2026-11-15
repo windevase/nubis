@@ -17,11 +17,13 @@
         <BooleanToVisibilityConverter x:Key="BoolVis"/>
         <!-- 세션 탭 우클릭 메뉴 (항목은 열 때 만듦) -->
         <ContextMenu x:Key="TabMenu" Opened="OnTabMenuOpened"/>
-        <!-- 세션 탭 -->
+        <!-- 세션 탭 (Windows Terminal · Edge 형태: 위쪽만 둥근 탭, 선택된 탭은 본문 바탕(Layer2)과 이어진다)
+             성능: 항목 템플릿은 얕게 — 상태가 바뀌면 점 색 트리거만 돈다(항목을 다시 만들지 않음). 상시 애니메이션 없음 -->
         <DataTemplate x:Key="TabTemplate">
-            <Border x:Name="bd" Height="30" Margin="4,5,0,5" CornerRadius="8" Padding="12,0,4,0"
+            <Border x:Name="bd" Height="34" Margin="2,6,0,0" VerticalAlignment="Bottom" CornerRadius="8,8,0,0" Padding="12,0,5,0"
                     Background="Transparent" Cursor="Hand" MinWidth="120" MaxWidth="230"
                     WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="{Binding Title}"
+                    AutomationProperties.Name="{Binding Title}"
                     ContextMenu="{StaticResource TabMenu}" AllowDrop="True"
                     MouseLeftButtonUp="OnTabClick" MouseDown="OnTabMouseDown"
                     PreviewMouseLeftButtonDown="OnTabDragStart" PreviewMouseLeftButtonUp="OnTabDragEnd"
@@ -32,25 +34,41 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
+                    <!-- 프로토콜 글리프 + 오른쪽 아래 상태 점 (연결됨 Success · 연결 중 Warning · 끊김 TextTertiary).
+                         점 테두리는 탭 바탕색을 따라가 글리프와 떨어져 보이게 한다 -->
                     <Grid VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="13"
-                                   Foreground="{StaticResource SubText}"/>
-                        <Ellipse Width="7" Height="7" Fill="{Binding StatusBrush}" HorizontalAlignment="Right"
-                                 VerticalAlignment="Bottom" Margin="0,0,-3,-2" Stroke="{StaticResource TitleBg}" StrokeThickness="1"/>
+                        <TextBlock x:Name="glyph" Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="13"
+                                   Foreground="{StaticResource TextTertiary}"/>
+                        <Ellipse x:Name="dot" Width="7" Height="7" Fill="{StaticResource TextTertiary}" HorizontalAlignment="Right"
+                                 VerticalAlignment="Bottom" Margin="0,0,-3,-2" StrokeThickness="1.5"
+                                 Stroke="{Binding Background, ElementName=bd}"/>
                     </Grid>
                     <TextBlock x:Name="title" Grid.Column="1" Text="{Binding Title}" Margin="10,0,6,0" VerticalAlignment="Center"
-                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource SubText}"/>
-                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
-                            Content="&#xE8BB;" Click="OnTabClose" ToolTip="{l:Tr '닫기'}"/>
+                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                    <!-- 닫기: 마우스를 올린 탭 · 선택된 탭에만 보인다 (Hidden — 자리는 유지해 탭 폭이 흔들리지 않게) -->
+                    <Button x:Name="closeBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
+                            Content="&#xE8BB;" Click="OnTabClose" Visibility="Hidden"
+                            ToolTip="{l:Tr '탭 닫기 (Ctrl+Shift+W)'}" AutomationProperties.Name="{l:Tr '탭 닫기'}"/>
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Status}" Value="Connected">
+                    <Setter TargetName="dot" Property="Fill" Value="{StaticResource Success}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Status}" Value="Connecting">
+                    <Setter TargetName="dot" Property="Fill" Value="{StaticResource Warning}"/>
+                </DataTrigger>
                 <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#151826"/>
+                    <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                    <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                    <Setter TargetName="closeBtn" Property="Visibility" Value="Visible"/>
                 </Trigger>
+                <!-- 선택: 본문과 같은 Layer2 바탕 + 밝은 글자 (선택이 hover 보다 뒤에 있어 이긴다) -->
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                    <Setter TargetName="bd" Property="Background" Value="#1E2232"/>
-                    <Setter TargetName="title" Property="Foreground" Value="{StaticResource Text}"/>
+                    <Setter TargetName="bd" Property="Background" Value="{StaticResource Layer2Bg}"/>
+                    <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                    <Setter TargetName="glyph" Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                    <Setter TargetName="closeBtn" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -70,61 +88,84 @@
         <ContextMenu x:Key="GroupMenu" Opened="OnGroupMenuOpened"/>
 
 
-        <!-- 호스트 카드 -->
+        <!-- 호스트 카드 아이콘 타일의 옅은 채움 (프로토콜 색 약 16% — 진한 색 덩어리 대신, 글리프는 IconBrush 원색) -->
+        <SolidColorBrush x:Key="HostTileSsh" Color="#2920C5A0"/>
+        <SolidColorBrush x:Key="HostTileRdp" Color="#294F8CFF"/>
+        <!-- 카드 오른쪽 위 "3일 전" (마지막 접속, 30일 이내만) -->
+        <local:RelativeTimeConverter x:Key="RelTime"/>
+
+        <!-- 호스트 카드 (가상화 목록 · 1000장 이상 — 요소 수를 늘리지 말 것, 상시 그림자 금지)
+             요소: card > Grid > [타일 > 글리프] [StackPanel > (DockPanel > 별 · 이름) · 부제] [시간] [동작 버튼 2개] [체크]
+             동작 버튼은 평소 Collapsed 라 템플릿이 펼쳐지지 않는다 (마우스가 올라간 카드 1장만). 그림자는 HoverLift 로 그 1장만 -->
         <DataTemplate x:Key="HostCardTemplate">
-            <Border x:Name="card" Width="290" Height="74" Margin="0,0,12,12" CornerRadius="10"
-                    BorderThickness="1.5" BorderBrush="Transparent"
-                    Background="{StaticResource CardBg}" Cursor="Hand" MouseLeftButtonDown="OnCardMouseDown"
+            <Border x:Name="card" Width="290" Height="68" Margin="0,0,12,12" CornerRadius="{StaticResource RadiusLg}"
+                    BorderThickness="1" BorderBrush="{StaticResource StrokeSubtle}"
+                    Background="{StaticResource Layer3Bg}" Cursor="Hand" MouseLeftButtonDown="OnCardMouseDown"
+                    l:Anim.HoverLift="True"
                     ToolTip="{Binding ToolTipText, Mode=OneTime}" Opacity="{Binding CardOpacity, Mode=OneTime}"
                     AutomationProperties.Name="{Binding DisplayName, Mode=OneTime}" AutomationProperties.HelpText="{Binding Subtitle, Mode=OneTime}"
                     ContextMenu="{StaticResource HostCardMenu}" ContextMenuOpening="OnCardContextMenuOpening">
 
-                <Grid Margin="14,0,10,0">
+                <Grid Margin="12,0,8,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Border Width="42" Height="42" CornerRadius="10" Background="{Binding IconBrush, Mode=OneTime}">
-                        <TextBlock Text="{Binding IconGlyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" FontSize="18"
-                                   Foreground="#0B0D14" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Border x:Name="tile" Width="36" Height="36" CornerRadius="{StaticResource RadiusLg}" Background="{StaticResource HostTileSsh}">
+                        <TextBlock Text="{Binding IconGlyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" FontSize="16"
+                                   Foreground="{Binding IconBrush, Mode=OneTime}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="12,0,6,0" VerticalAlignment="Center">
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Left" Text="&#xE735;" FontFamily="{StaticResource IconFont}" FontSize="11"
-                                       Foreground="#F5B740" Margin="0,0,6,0" VerticalAlignment="Center"
+                                       Foreground="{StaticResource Warning}" Margin="0,0,6,0" VerticalAlignment="Center"
                                        Visibility="{Binding FavoriteVisibility, Mode=OneTime}"/>
-                            <TextBlock Text="{Binding DisplayName, Mode=OneTime}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding DisplayName, Mode=OneTime}" Style="{StaticResource TextBodyStrong}" TextTrimming="CharacterEllipsis"/>
                         </DockPanel>
-                        <TextBlock Text="{Binding Subtitle, Mode=OneTime}" FontSize="12" Foreground="{StaticResource SubText}"
+                        <TextBlock Text="{Binding Subtitle, Mode=OneTime}" FontSize="12" Foreground="{StaticResource TextSecondary}"
                                    Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/>
                     </StackPanel>
-                    <Button x:Name="editBtn" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE70F;"
-                            Visibility="Hidden" Click="OnEditHost" ToolTip="{l:Tr '편집'}"/>
+                    <!-- 마지막 접속 (값이 없거나 오래됐으면 빈 글자 = 자리 차지 없음) -->
+                    <TextBlock x:Name="lastSeen" Grid.Column="2" Text="{Binding LastConnected, Mode=OneTime, Converter={StaticResource RelTime}}"
+                               FontSize="11" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Top" Margin="0,10,4,0"/>
+                    <!-- hover 때만: 연결 · 편집 (키보드는 Enter · F2) -->
+                    <StackPanel x:Name="actions" Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Visibility="Collapsed">
+                        <Button Style="{StaticResource IconButton}" Width="26" Height="26" Content="&#xE768;" Foreground="{StaticResource AccentText}"
+                                Click="OnMenuConnect" ToolTip="{l:Tr '연결'}" AutomationProperties.Name="{l:Tr '연결'}"/>
+                        <Button Style="{StaticResource IconButton}" Width="26" Height="26" Content="&#xE70F;"
+                                Click="OnEditHost" ToolTip="{l:Tr '편집'}" AutomationProperties.Name="{l:Tr '편집'}"/>
+                    </StackPanel>
                     <!-- 여러 개 선택했을 때 표시 -->
-                    <Border x:Name="checkMark" Grid.Column="2" Width="22" Height="22" CornerRadius="11" Background="{StaticResource Accent}"
-                            VerticalAlignment="Center" Visibility="Collapsed" IsHitTestVisible="False">
-                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="#0B0D14"
+                    <Border x:Name="checkMark" Grid.Column="2" Width="20" Height="20" CornerRadius="10" Background="{StaticResource Accent}"
+                            VerticalAlignment="Center" Margin="0,0,4,0" Visibility="Collapsed" IsHitTestVisible="False">
+                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="10" Foreground="{StaticResource OnAccent}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding ProtocolText, Mode=OneTime}" Value="RDP">
+                    <Setter TargetName="tile" Property="Background" Value="{StaticResource HostTileRdp}"/>
+                </DataTrigger>
                 <Trigger SourceName="card" Property="IsMouseOver" Value="True">
-                    <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
-                    <Setter TargetName="editBtn" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
+                    <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Stroke}"/>
+                    <Setter TargetName="actions" Property="Visibility" Value="Visible"/>
+                    <Setter TargetName="lastSeen" Property="Visibility" Value="Collapsed"/>
                 </Trigger>
                 <!-- 검색창에서 ↑↓ 로 고른 카드 (Enter 로 연결) -->
                 <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
                     <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
-                    <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                    <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
                 </DataTrigger>
-                <!-- Ctrl/Shift+클릭으로 고른 카드 -->
+                <!-- Ctrl/Shift+클릭으로 고른 카드 (hover 보다 뒤 — 선택 표시가 이긴다) -->
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
-                    <Setter TargetName="card" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                    <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
                     <Setter TargetName="checkMark" Property="Visibility" Value="Visible"/>
-                    <Setter TargetName="editBtn" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="actions" Property="Visibility" Value="Collapsed"/>
+                    <Setter TargetName="lastSeen" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
@@ -145,13 +186,43 @@
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <Border x:Name="HomeTab" Height="30" Margin="8,5,0,5" CornerRadius="8" Padding="12,0,14,0" Cursor="Hand"
-                    WindowChrome.IsHitTestVisibleInChrome="True" MouseLeftButtonUp="OnHomeTab">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="&#xE80F;" FontFamily="{StaticResource IconFont}" FontSize="13" VerticalAlignment="Center"
-                               Foreground="{StaticResource Accent}"/>
-                    <TextBlock Text="Hosts" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                </StackPanel>
+            <!-- 홈 탭: 세션 탭과 같은 모양. 선택 여부는 코드가 Background 로 정한다
+                 (선택 = Layer2Bg, 아니면 Brushes.Transparent — MainWindow.Tabs.cs SelectHome/SelectTab, McpCapture.ShowTabWithoutFocus) -->
+            <Border x:Name="HomeTab" Height="34" Margin="8,6,0,0" VerticalAlignment="Bottom" CornerRadius="8,8,0,0" Cursor="Hand"
+                    WindowChrome.IsHitTestVisibleInChrome="True" MouseLeftButtonUp="OnHomeTab"
+                    ToolTip="{l:Tr '홈 (호스트 목록)'}" AutomationProperties.Name="Hosts">
+                <Border CornerRadius="8,8,0,0" Padding="12,0,14,0">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding IsMouseOver, ElementName=HomeTab}" Value="True"/>
+                                        <Condition Binding="{Binding Background, ElementName=HomeTab}" Value="{x:Static Brushes.Transparent}"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="&#xE80F;" FontFamily="{StaticResource IconFont}" FontSize="13" VerticalAlignment="Center"
+                                   Foreground="{StaticResource AccentText}"/>
+                        <TextBlock Text="Hosts" Margin="8,0,0,0" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Background, ElementName=HomeTab}" Value="{x:Static Brushes.Transparent}">
+                                            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
             </Border>
 
             <!-- 탭이 넘치면 휠로 가로 스크롤, 오른쪽 목록 버튼으로 모든 탭 보기 -->
@@ -166,18 +237,33 @@
                 </ItemsControl>
             </ScrollViewer>
 
-            <StackPanel Grid.Column="2" Orientation="Horizontal">
-                <Button x:Name="TabListButton" Style="{StaticResource IconButton}" Content="&#xE70D;" Width="30" Height="30" Margin="4,0,2,0"
+            <!-- 오른쪽: 넘친 탭 목록 · 새 탭(+) · Claude 토글 · 캡션 버튼(Mica 면 DWM 기본 버튼 자리만 비움 — MainWindow.xaml.cs UseNativeCaptionButtons) -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Stretch">
+                <Button x:Name="TabListButton" Style="{StaticResource IconButton}" Content="&#xE70D;" Width="28" Height="28" Margin="4,2,0,0"
                         FontSize="10" Visibility="Collapsed" WindowChrome.IsHitTestVisibleInChrome="True" Click="OnTabListClick"
-                        ToolTip="{l:Tr '모든 탭 보기'}"/>
-                <Button Style="{StaticResource IconButton}" Content="&#xE710;" Width="30" Height="30" Margin="0,0,6,0"
-                        WindowChrome.IsHitTestVisibleInChrome="True" Click="OnNewLocalTerminal" ToolTip="{l:Tr '로컬 PowerShell (Ctrl+Shift+T)'}"/>
-                <Button x:Name="ClaudeToggleButton" Style="{StaticResource GhostButton}" Height="30" Padding="12,0" Margin="0,0,10,0"
+                        VerticalAlignment="Center" ToolTip="{l:Tr '모든 탭 보기'}" AutomationProperties.Name="{l:Tr '모든 탭 보기'}"/>
+                <Button Style="{StaticResource IconButton}" Content="&#xE710;" Width="28" Height="28" Margin="2,2,8,0"
+                        VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True" Click="OnNewLocalTerminal"
+                        ToolTip="{l:Tr '로컬 PowerShell (Ctrl+Shift+T)'}" AutomationProperties.Name="{l:Tr '새 PowerShell 탭'}"/>
+                <!-- Claude 토글: 옅은 알약 버튼. ClaudePanel.cs 가 x:Name 으로 찾아 Content(StackPanel) 끝에 "실행 중" 점을 붙인다 —
+                     이름 · Content 가 Panel 인 구조 · 클릭 처리기를 바꾸지 말 것 -->
+                <Button x:Name="ClaudeToggleButton" Height="28" Padding="10,0,12,0" Margin="0,2,10,0"
+                        VerticalAlignment="Center" l:Ui.CornerRadius="14"
                         WindowChrome.IsHitTestVisibleInChrome="True" Click="OnToggleClaude" ToolTip="{l:Tr 'Claude Code 패널 (Ctrl+Shift+A)'}"
                         AutomationProperties.Name="Claude">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
                     <StackPanel Orientation="Horizontal">
-                        <Image Source="{x:Static local:BrandIcons.ClaudeMark}" Width="15" Height="15" VerticalAlignment="Center"/>
-                        <TextBlock Text="Claude" Margin="6,0,0,0" FontSize="12" VerticalAlignment="Center"/>
+                        <Image Source="{x:Static local:BrandIcons.ClaudeMark}" Width="14" Height="14" VerticalAlignment="Center"/>
+                        <TextBlock Text="Claude" Margin="7,0,0,0" FontSize="12" VerticalAlignment="Center"/>
                         <!-- "실행 중" 점은 Claude\MainWindow.ClaudePanel.cs UpdateClaudeIndicator 가 이 StackPanel 끝에 붙인다 -->
                     </StackPanel>
                 </Button>
@@ -247,14 +333,17 @@
                 <Border Grid.Column="1" Background="{StaticResource Bg}"/>
 
                 <!-- 사이드바 -->
-                <Border Background="{DynamicResource SidebarBackdrop}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+                <!-- 사이드바 (Layer1 · Mica). 위: 로고 + 주 메뉴 / 아래: Settings + 버전 (Fluent NavigationView 의 바닥 영역처럼) -->
+                <Border Background="{DynamicResource SidebarBackdrop}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,0,1,0">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Top">
-                            <StackPanel Orientation="Horizontal" Margin="20,18,20,20">
-                                <Image Source="Assets/nubis-256.png" Width="30" Height="30" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <StackPanel Orientation="Horizontal" Margin="20,18,20,18">
+                                <Image Source="Assets/nubis-256.png" Width="28" Height="28" RenderOptions.BitmapScalingMode="HighQuality"
+                                       VerticalAlignment="Center"/>
                                 <StackPanel Margin="10,0,0,0" VerticalAlignment="Center">
-                                    <TextBlock Text="Nubis" FontSize="16" FontWeight="SemiBold"/>
-                                    <TextBlock Text="Cloud &amp; AI Remote" FontSize="10.5" Foreground="{StaticResource SubText}" Margin="0,1,0,0"/>
+                                    <TextBlock Text="Nubis" FontFamily="{StaticResource DisplayFont}" FontSize="15" FontWeight="SemiBold"
+                                               Foreground="{StaticResource TextPrimary}"/>
+                                    <TextBlock Text="Cloud &amp; AI Remote" FontSize="11" Foreground="{StaticResource TextTertiary}" Margin="0,1,0,0"/>
                                 </StackPanel>
                             </StackPanel>
                             <RadioButton x:Name="NavHosts" Style="{StaticResource NavItem}" Tag="&#xE7F4;" Content="Hosts"
@@ -265,11 +354,15 @@
                                          GroupName="nav" Checked="OnNavChanged"/>
                             <RadioButton x:Name="NavKnown" Style="{StaticResource NavItem}" Tag="&#xE72E;" Content="Known Hosts"
                                          GroupName="nav" Checked="OnNavChanged"/>
+                        </StackPanel>
+                        <!-- 바닥: 구분선 · Settings · 버전 (FooterText 는 MainWindow.xaml.cs 가 버전·데이터 폴더 툴팁을 채운다) -->
+                        <StackPanel DockPanel.Dock="Bottom" VerticalAlignment="Bottom" Margin="0,0,0,14">
+                            <Border Height="1" Margin="20,0,20,8" Background="{StaticResource StrokeSubtle}"/>
                             <RadioButton x:Name="NavSettings" Style="{StaticResource NavItem}" Tag="&#xE713;" Content="Settings"
                                          GroupName="nav" Checked="OnNavChanged"/>
+                            <TextBlock x:Name="FooterText" FontSize="11" Foreground="{StaticResource TextTertiary}"
+                                       Margin="22,10,20,0" TextWrapping="Wrap"/>
                         </StackPanel>
-                        <TextBlock DockPanel.Dock="Bottom" x:Name="FooterText" FontSize="11" Foreground="{StaticResource SubText}"
-                                   Margin="20,0,20,16" VerticalAlignment="Bottom" TextWrapping="Wrap"/>
                     </DockPanel>
                 </Border>
 
@@ -281,61 +374,94 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
 
-                    <Grid Margin="28,22,28,0">
-                        <TextBox x:Name="SearchBox" Height="46" FontSize="14" Padding="40,0,110,0"
+                    <!-- 검색 · 빠른 접속: Layer3 둥근 입력란 + 돋보기 + Ctrl+K 힌트 + CONNECT -->
+                    <Grid Margin="28,24,28,0">
+                        <TextBox x:Name="SearchBox" Height="44" FontSize="14" Padding="38,0,168,0"
+                                 Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" l:Ui.CornerRadius="{StaticResource RadiusLg}"
                                  Tag="{l:Tr '호스트 검색, 또는 user@host[:port] 입력 후 Enter  (RDP 는 rdp host)'}"
-                                 ToolTip="{l:Tr '↑↓ 줄 이동 · Tab 한 장씩 · Enter 연결 · F2 편집 · Esc 지우기 · vault:이름 으로 그 계정을 쓰는 호스트 (Ctrl+K)'}"
+                                 ToolTip="{l:Tr '↑↓ 줄 이동 · Tab 한 장씩 · Enter 연결 · F2 편집 · Esc 지우기 · vault:이름 으로 그 계정을 쓰는 호스트 (Ctrl+F · 전체 검색은 Ctrl+K)'}"
                                  AutomationProperties.Name="{l:Tr '호스트 검색'}"
                                  TextChanged="OnSearchChanged" PreviewKeyDown="OnSearchKeyDown"/>
-                        <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="{StaticResource SubText}"
-                                   VerticalAlignment="Center" Margin="16,0,0,0" IsHitTestVisible="False"/>
-                        <Button Content="CONNECT" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right"
-                                Margin="0,0,6,0" Height="34" Padding="16,0" FontSize="12" Click="OnQuickConnect"/>
+                        <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="14" Foreground="{StaticResource TextTertiary}"
+                                   VerticalAlignment="Center" Margin="15,0,0,0" IsHitTestVisible="False"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,6,0">
+                            <!-- 단축키 힌트: 비어 있고 포커스가 없을 때만 -->
+                            <Border CornerRadius="{StaticResource RadiusSm}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                    Background="{StaticResource ControlFill}" Padding="6,1,6,2" Margin="0,0,10,0" VerticalAlignment="Center"
+                                    IsHitTestVisible="False">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding Text, ElementName=SearchBox}" Value=""/>
+                                                    <Condition Binding="{Binding IsKeyboardFocused, ElementName=SearchBox}" Value="False"/>
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <TextBlock Text="Ctrl+F" FontSize="11" Foreground="{StaticResource TextTertiary}"/>
+                            </Border>
+                            <Button Content="CONNECT" Style="{StaticResource PrimaryButton}"
+                                    Height="32" Padding="16,0" FontSize="12" Click="OnQuickConnect"
+                                    ToolTip="{l:Tr '검색 결과가 하나면 그 호스트로, 아니면 입력한 user@host 로 바로 접속합니다 (Enter)'}"/>
+                        </StackPanel>
                     </Grid>
 
-                    <Grid Grid.Row="1" Margin="28,18,28,8">
+                    <Grid Grid.Row="1" Margin="28,16,28,10">
                         <Grid x:Name="HostToolbar">
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
-                                <Button Style="{StaticResource GhostButton}" Click="OnNewHost" Padding="14,8"
+                                <Button Style="{StaticResource GhostButton}" Click="OnNewHost" Padding="12,7"
                                         ToolTip="{l:Tr '새 호스트 추가 (Ctrl+N)'}" AutomationProperties.Name="{l:Tr '새 호스트 추가'}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource Accent}"/>
+                                                   Foreground="{StaticResource AccentText}"/>
                                         <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                                 <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory 에서 한꺼번에 등록 -->
-                                <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="14,8" Margin="8,0,0,0"
+                                <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="12,7" Margin="8,0,0,0"
                                         ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 서버를 한꺼번에 가져옵니다'}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource Accent}"/>
+                                                   Foreground="{StaticResource TextSecondary}"/>
                                         <TextBlock Text="IMPORT" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
-                            <TextBlock x:Name="CountText" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubText}"
+                            <TextBlock x:Name="CountText" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="12"
+                                       Foreground="{StaticResource TextTertiary}"
                                        ToolTip="{l:Tr 'Ctrl+클릭 · Shift+클릭으로 카드를 여러 개 골라 한 번에 편집할 수 있습니다 (Ctrl+A 전체 선택)'}"/>
                         </Grid>
-                        <!-- 카드를 여러 개 골랐을 때: 일괄 작업 막대 -->
-                        <Border x:Name="SelectionBar" Visibility="Collapsed" Background="{StaticResource CardBg}" CornerRadius="8"
-                                BorderBrush="{StaticResource Accent}" BorderThickness="1" Padding="12,4" Margin="0,-3">
+                        <!-- 카드를 여러 개 골랐을 때: 일괄 작업 막대 (떠 있는 Overlay 층).
+                             그림자는 내용 없는 뒤판에만 — 버튼 hover 가 그림자 효과를 다시 그리게 하지 않는다 -->
+                        <Border Visibility="{Binding Visibility, ElementName=SelectionBar}" Margin="0,-4" CornerRadius="{StaticResource RadiusLg}"
+                                Background="{StaticResource OverlayBg}" Effect="{StaticResource Shadow8}" IsHitTestVisible="False"/>
+                        <Border x:Name="SelectionBar" Visibility="Collapsed" Background="{StaticResource OverlayBg}" CornerRadius="{StaticResource RadiusLg}"
+                                BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1" Padding="8,4" Margin="0,-4">
                             <DockPanel>
-                                <TextBlock DockPanel.Dock="Left" Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="12"
-                                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="SelectionText" DockPanel.Dock="Left" Margin="8,0,16,0" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                <Border DockPanel.Dock="Left" Width="22" Height="22" CornerRadius="11" Background="{StaticResource Accent}"
+                                        VerticalAlignment="Center" Margin="2,0,0,0">
+                                    <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="{StaticResource OnAccent}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock x:Name="SelectionText" DockPanel.Dock="Left" Margin="10,0,16,0" Style="{StaticResource TextBodyStrong}"
+                                           VerticalAlignment="Center"/>
                                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                                     <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="11" Click="OnSelectionClear"
-                                            ToolTip="{l:Tr '선택 해제 (Esc)'}"/>
+                                            ToolTip="{l:Tr '선택 해제 (Esc)'}" AutomationProperties.Name="{l:Tr '선택 해제 (Esc)'}"/>
                                 </StackPanel>
                                 <WrapPanel VerticalAlignment="Center">
                                     <Button Style="{StaticResource PrimaryButton}" Content="{l:Tr '일괄 편집...'}" Padding="14,6" FontSize="12" Margin="0,0,6,0"
                                             Click="OnSelectionEdit"/>
-                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '연결'}" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                                    <Button Style="{StaticResource SubtleButton}" Content="{l:Tr '연결'}" Padding="12,6" FontSize="12" Margin="0,0,2,0"
                                             Click="OnSelectionConnect"/>
-                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '삭제'}" Padding="12,6" FontSize="12" Margin="0,0,6,0"
+                                    <Button Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}" Padding="12,6" FontSize="12" Margin="0,0,2,0"
                                             Click="OnSelectionDelete"/>
-                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '더 보기 ▾'}" Padding="12,6" FontSize="12"
+                                    <Button Style="{StaticResource SubtleButton}" Content="{l:Tr '더 보기 ▾'}" Padding="12,6" FontSize="12"
                                             Click="OnSelectionMore"/>
                                 </WrapPanel>
                             </DockPanel>
@@ -371,10 +497,10 @@
                             </ListBox.ItemContainerStyle>
                             <ListBox.Resources>
                                 <!-- 그룹 헤더 행: 클릭하면 접기/펼치기 -->
+                                <!-- 그룹 머리글: 접힘 화살표 · (클라우드 배지 | 즐겨찾기·최근 아이콘) · 이름 · 개수 알약 · 동기화 상태 · 동기화 버튼 -->
                                 <DataTemplate DataType="{x:Type local:HostGroup}">
-                                    <StackPanel Margin="0,4,0,0">
-                                            <Border x:Name="header" Background="Transparent" Cursor="Hand" CornerRadius="8"
-                                                    Padding="6,6,8,6" Margin="-6,0,12,10" MouseLeftButtonUp="OnGroupHeaderClick"
+                                            <Border x:Name="header" Background="Transparent" Cursor="Hand" CornerRadius="{StaticResource RadiusMd}"
+                                                    Padding="6,5,6,5" Margin="-6,6,12,8" MouseLeftButtonUp="OnGroupHeaderClick"
                                                     ContextMenu="{StaticResource GroupMenu}" ToolTip="{l:Tr '클릭: 접기·펼치기 · 우클릭: 그룹 전체에 Vault 계정·공인/사설 IP 적용, 모두 연결'}">
                                                 <Grid>
                                                     <Grid.ColumnDefinitions>
@@ -385,22 +511,30 @@
                                                         <ColumnDefinition Width="*"/>
                                                         <ColumnDefinition Width="Auto"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="{Binding Chevron}" FontFamily="{StaticResource IconFont}" FontSize="10"
-                                                               Foreground="{StaticResource SubText}" VerticalAlignment="Center" Width="16"/>
-                                                    <Border x:Name="badge" Grid.Column="1" Background="{Binding BadgeBrush}" CornerRadius="4"
-                                                            Padding="6,1" Margin="4,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
-                                                        <TextBlock Text="{Binding BadgeText}" FontSize="10.5" FontWeight="Bold" Foreground="#0B0D14"/>
+                                                    <TextBlock Text="{Binding Chevron}" FontFamily="{StaticResource IconFont}" FontSize="9"
+                                                               Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Width="16" TextAlignment="Center"/>
+                                                    <!-- 클라우드: 공급자 색 점 + 이름 (진한 색 덩어리 대신 옅은 알약) -->
+                                                    <Border x:Name="badge" Grid.Column="1" Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}"
+                                                            BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="1"
+                                                            Padding="6,1,7,2" Margin="6,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <Ellipse Width="7" Height="7" Fill="{Binding BadgeBrush}" VerticalAlignment="Center" Margin="0,1,5,0"/>
+                                                            <TextBlock Text="{Binding BadgeText}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource TextSecondary}"/>
+                                                        </StackPanel>
                                                     </Border>
                                                     <TextBlock x:Name="glyph" Grid.Column="1" Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}"
-                                                               FontSize="12" Foreground="#F5B740" Margin="4,0,0,0" VerticalAlignment="Center"
+                                                               FontSize="12" Foreground="{StaticResource Warning}" Margin="6,0,0,0" VerticalAlignment="Center"
                                                                Visibility="Collapsed"/>
-                                                    <TextBlock Grid.Column="2" Text="{Binding Name}" FontSize="13" FontWeight="SemiBold"
-                                                               Foreground="{StaticResource Text}" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="3" Text="{Binding CountText}" FontSize="12"
-                                                               Foreground="{StaticResource SubText}" Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Grid.Column="2" Text="{Binding Name}" Style="{StaticResource TextBodyStrong}"
+                                                               Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                                    <Border Grid.Column="3" Background="{StaticResource ControlFill}" CornerRadius="9" Padding="7,0,7,1"
+                                                            Margin="8,0,0,0" VerticalAlignment="Center" MinWidth="20">
+                                                        <TextBlock Text="{Binding CountText}" FontSize="11" Foreground="{StaticResource TextSecondary}"
+                                                                   HorizontalAlignment="Center"/>
+                                                    </Border>
                                                     <!-- 동기화 상태: 헤더에서는 잘리므로 툴팁으로 전체(실패한 리전 · 제거된 호스트 등)를 보여 준다 -->
-                                                    <TextBlock Grid.Column="4" Text="{Binding Profile.StatusText}" FontSize="12" Margin="14,0,8,0"
-                                                               Foreground="{StaticResource SubText}" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                    <TextBlock Grid.Column="4" Text="{Binding Profile.StatusText}" FontSize="12" Margin="12,0,8,0"
+                                                               Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" HorizontalAlignment="Left"
                                                                TextTrimming="CharacterEllipsis">
                                                         <TextBlock.ToolTip>
                                                             <TextBlock Text="{Binding Profile.StatusText}" TextWrapping="Wrap" MaxWidth="520"/>
@@ -415,20 +549,20 @@
                                                             </Style>
                                                         </TextBlock.Style>
                                                     </TextBlock>
-                                                    <Button x:Name="syncBtn" Grid.Column="5" Style="{StaticResource GhostButton}" Padding="10,4"
-                                                            FontSize="12" Click="OnGroupSync" Visibility="Collapsed" ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}">
+                                                    <Button x:Name="syncBtn" Grid.Column="5" Style="{StaticResource SubtleButton}" Padding="8,4"
+                                                            FontSize="12" Foreground="{StaticResource TextSecondary}"
+                                                            Click="OnGroupSync" Visibility="Collapsed" ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}">
                                                         <StackPanel Orientation="Horizontal">
                                                             <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="11"
-                                                                       VerticalAlignment="Center" Foreground="{StaticResource Accent}"/>
+                                                                       VerticalAlignment="Center" Foreground="{StaticResource AccentText}"/>
                                                             <TextBlock Text="{Binding Profile.SyncButtonText}" Margin="6,0,0,0" VerticalAlignment="Center"/>
                                                         </StackPanel>
                                                     </Button>
                                                 </Grid>
                                             </Border>
-                                    </StackPanel>
                                     <DataTemplate.Triggers>
                                         <Trigger SourceName="header" Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="header" Property="Background" Value="#1A1D2B"/>
+                                            <Setter TargetName="header" Property="Background" Value="{StaticResource SubtleFillHover}"/>
                                         </Trigger>
                                         <DataTrigger Binding="{Binding IsCloud}" Value="True">
                                             <Setter TargetName="badge" Property="Visibility" Value="Visible"/>
@@ -436,6 +570,10 @@
                                         </DataTrigger>
                                         <DataTrigger Binding="{Binding IsVirtual}" Value="True">
                                             <Setter TargetName="glyph" Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                        <!-- 최근 접속 시계는 노랑(즐겨찾기 별) 대신 보조색 -->
+                                        <DataTrigger Binding="{Binding Key}" Value="R:">
+                                            <Setter TargetName="glyph" Property="Foreground" Value="{StaticResource TextSecondary}"/>
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
@@ -452,16 +590,20 @@
                             </ListBox.Resources>
                         </ListBox>
 
-                        <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" Margin="0,80,0,0" Visibility="Collapsed">
-                            <TextBlock Text="&#xE968;" FontFamily="{StaticResource IconFont}" FontSize="44"
-                                       Foreground="{StaticResource Line}" HorizontalAlignment="Center"/>
-                            <TextBlock x:Name="EmptyTitle" Text="{l:Tr '등록된 호스트가 없습니다'}" FontSize="16" FontWeight="SemiBold" Margin="0,18,0,6"
+                        <StackPanel x:Name="EmptyState" HorizontalAlignment="Center" Margin="24,72,24,0" Visibility="Collapsed">
+                            <!-- 아이콘 타일 (Layer3 + 머리카락 선) -->
+                            <Border Width="72" Height="72" CornerRadius="{StaticResource RadiusXl}" Background="{StaticResource Layer3Bg}"
+                                    BorderBrush="{StaticResource Stroke}" BorderThickness="1" HorizontalAlignment="Center">
+                                <TextBlock Text="&#xE968;" FontFamily="{StaticResource IconFont}" FontSize="30"
+                                           Foreground="{StaticResource TextTertiary}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock x:Name="EmptyTitle" Text="{l:Tr '등록된 호스트가 없습니다'}" Style="{StaticResource TextSubtitle}" Margin="0,20,0,6"
                                        HorizontalAlignment="Center"/>
                             <TextBlock x:Name="EmptyHint" Text="{l:Tr 'NEW HOST 로 SSH / RDP 서버를 추가하거나, 위 검색창에 user@host 를 입력해 바로 접속하세요.'}"
-                                       Foreground="{StaticResource SubText}" HorizontalAlignment="Center" TextAlignment="Center"
-                                       TextWrapping="Wrap" MaxWidth="560"/>
+                                       Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center" TextAlignment="Center"
+                                       TextWrapping="Wrap" MaxWidth="520" LineHeight="20"/>
                             <!-- 빈 화면에서 바로 추가·가져오기 (검색 결과가 없을 때는 숨김) -->
-                            <StackPanel x:Name="EmptyActions" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+                            <StackPanel x:Name="EmptyActions" Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,20,0,0">
                                 <Button Style="{StaticResource PrimaryButton}" Content="{l:Tr '새 호스트 (Ctrl+N)'}" Padding="16,8" FontSize="12"
                                         Margin="0,0,8,0" Click="OnNewHost"/>
                                 <Button Style="{StaticResource GhostButton}" Content="{l:Tr '가져오기...'}" Padding="16,8" FontSize="12"
@@ -473,64 +615,128 @@
 
                 <!-- Vault 페이지 -->
                 <Grid x:Name="VaultPage" Grid.Column="1" Visibility="Collapsed" Margin="28,24,28,0">
+                    <Grid.Resources>
+                        <!-- 행 안 아이콘 동작 (수정 · 복사 등) / 삭제는 hover 때 빨강 -->
+                        <Style x:Key="VaultRowAction" TargetType="Button" BasedOn="{StaticResource IconButton}">
+                            <Setter Property="FontSize" Value="13"/>
+                            <Setter Property="Width" Value="30"/>
+                            <Setter Property="Height" Value="30"/>
+                            <Setter Property="Margin" Value="2,0,0,0"/>
+                        </Style>
+                        <Style x:Key="VaultRowDanger" TargetType="Button" BasedOn="{StaticResource VaultRowAction}">
+                            <Setter Property="l:Ui.HoverBrush" Value="{StaticResource DangerSubtle}"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Resources>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <Grid>
-                        <StackPanel Margin="0,0,160,0">
-                            <TextBlock Text="Vault" FontSize="20" FontWeight="SemiBold"/>
+                    <!-- 머리글: 제목 + 설명, 오른쪽에 주 동작 -->
+                    <Grid Margin="0,0,0,20">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,24,0">
+                            <TextBlock Text="Vault" Style="{StaticResource TextTitle}"/>
                             <TextBlock Text="{l:Tr '여러 호스트가 함께 쓰는 로그인 계정(사용자명 + 비밀번호 / SSH 키)입니다. 호스트 편집의 \'로그인 계정\' 에서 고르면, 여기서 값을 바꿀 때 그 호스트들에 모두 적용됩니다. \'기본 계정\' 으로 지정하면 계정을 정하지 않은 모든 호스트가 쓰고, 호스트 목록의 그룹 우클릭으로 그룹 전체에 한 번에 지정할 수 있습니다. Windows DPAPI 로 암호화되어 이 PC·이 Windows 계정에서만 풀립니다.'}"
-                                       Foreground="{StaticResource SubText}" Margin="0,6,0,18" TextWrapping="Wrap"/>
+                                       Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="860"
+                                       HorizontalAlignment="Left" LineHeight="19"/>
                         </StackPanel>
-                        <Button Style="{StaticResource PrimaryButton}" Content="{l:Tr '계정 추가'}" HorizontalAlignment="Right" VerticalAlignment="Top"
-                                Click="OnVaultAdd"/>
+                        <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" VerticalAlignment="Top" Click="OnVaultAdd">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock Text="{l:Tr '계정 추가'}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
                     </Grid>
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <StackPanel>
-                            <TextBlock x:Name="VaultEmpty" Text="{l:Tr '아직 저장된 계정이 없습니다.'}" Foreground="{StaticResource SubText}" Margin="0,8,0,0"/>
-                            <ItemsControl x:Name="VaultList">
+                        <StackPanel Margin="0,0,0,24">
+                            <!-- 빈 상태 -->
+                            <Border x:Name="VaultEmpty" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                    CornerRadius="{StaticResource RadiusLg}" Padding="24,32">
+                                <StackPanel HorizontalAlignment="Center">
+                                    <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" FontSize="28" Foreground="{StaticResource TextTertiary}"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{l:Tr '아직 저장된 계정이 없습니다.'}" Foreground="{StaticResource TextSecondary}" Margin="0,10,0,0"
+                                               HorizontalAlignment="Center"/>
+                                </StackPanel>
+                            </Border>
+                            <!-- 계정 행: Layer3 카드 + 머리카락 테두리 (그림자 없음). 동작 버튼은 행에 마우스를 올리거나 키보드로 들어왔을 때 보인다 -->
+                            <ItemsControl x:Name="VaultList" Focusable="False">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="16,12" Margin="0,0,0,8">
+                                        <Border x:Name="row" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                                CornerRadius="{StaticResource RadiusLg}" Padding="14,12" Margin="0,0,0,8">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="34"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="18"
-                                                           Foreground="{StaticResource Accent}" VerticalAlignment="Center"/>
+                                                <!-- 형식 아이콘 (열쇠 = SSH 키, 자물쇠 = 비밀번호만) -->
+                                                <Border Width="36" Height="36" CornerRadius="{StaticResource RadiusMd}" Background="{StaticResource ControlFill}"
+                                                        Margin="0,0,14,0" VerticalAlignment="Center" ToolTip="{Binding MethodsText}">
+                                                    <TextBlock Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="15"
+                                                               Foreground="{StaticResource AccentText}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
                                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                     <StackPanel Orientation="Horizontal">
-                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="14"/>
-                                                        <Border Background="{StaticResource InputBg}" CornerRadius="5" Padding="6,1" Margin="8,0,0,0"
+                                                        <TextBlock Text="{Binding Name}" Style="{StaticResource TextBodyStrong}" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                                                        <Border Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="8,0,0,0"
                                                                 VerticalAlignment="Center">
-                                                            <TextBlock Text="{Binding MethodsText}" FontSize="10.5" Foreground="{StaticResource SubText}"/>
+                                                            <TextBlock Text="{Binding MethodsText}" FontSize="11" Foreground="{StaticResource TextSecondary}"/>
                                                         </Border>
-                                                        <Border Background="#2A2410" CornerRadius="5" Padding="6,1" Margin="8,0,0,0" VerticalAlignment="Center"
-                                                                Visibility="{Binding DefaultBadgeVisibility}">
-                                                            <TextBlock Text="{Binding DefaultBadge}" FontSize="10.5" Foreground="#F5B740"/>
+                                                        <Border Background="{StaticResource AccentSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1" Margin="6,0,0,0"
+                                                                VerticalAlignment="Center" Visibility="{Binding DefaultBadgeVisibility}">
+                                                            <TextBlock Text="{Binding DefaultBadge}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource AccentText}"/>
                                                         </Border>
-                                                        <TextBlock Text="{Binding UsedByText}" FontSize="11" Foreground="{StaticResource SubText}"
-                                                                   Margin="8,0,0,0" VerticalAlignment="Center"/>
                                                     </StackPanel>
-                                                    <TextBlock Text="{Binding Detail}" Foreground="{StaticResource SubText}" FontSize="12"
-                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/>
                                                 </StackPanel>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '공개키 복사'}" Margin="0,0,8,0"
+                                                <!-- 사용 중인 호스트 수 알약 -->
+                                                <Border Grid.Column="2" Background="{StaticResource ControlFill}" CornerRadius="10" Padding="9,2"
+                                                        Margin="12,0,8,0" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="&#xE968;" FontFamily="{StaticResource IconFont}" FontSize="10" Foreground="{StaticResource TextTertiary}"
+                                                                   VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                                        <TextBlock Text="{Binding UsedByText}" FontSize="11" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <StackPanel x:Name="actions" Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Opacity="0">
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE8C8;"
                                                             Visibility="{Binding CopyVisibility}" Click="OnVaultCopyPublic"
-                                                            ToolTip="{l:Tr '서버의 ~/.ssh/authorized_keys 에 붙여넣을 공개키'}"/>
-                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '호스트 보기'}" Margin="0,0,8,0" Click="OnVaultShowHosts"
-                                                            ToolTip="{l:Tr '이 계정으로 로그인하는 호스트만 호스트 목록에 표시'}"/>
-                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '기본 계정'}" Margin="0,0,8,0" Click="OnVaultSetDefault"
-                                                            ToolTip="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 쓰는 기본 계정으로 지정'}"/>
-                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '수정'}" Margin="0,0,8,0" Click="OnVaultEdit"/>
-                                                    <Button Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}" Tag="#2A1A22" Click="OnVaultDelete"/>
+                                                            ToolTip="{l:Tr '서버의 ~/.ssh/authorized_keys 에 붙여넣을 공개키'}"
+                                                            AutomationProperties.Name="{l:Tr '공개키 복사'}"/>
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE8FD;" Click="OnVaultShowHosts"
+                                                            ToolTip="{l:Tr '이 계정으로 로그인하는 호스트만 호스트 목록에 표시'}"
+                                                            AutomationProperties.Name="{l:Tr '호스트 보기'}"/>
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE734;" Click="OnVaultSetDefault"
+                                                            ToolTip="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 쓰는 기본 계정으로 지정'}"
+                                                            AutomationProperties.Name="{l:Tr '기본 계정'}"/>
+                                                    <Button Style="{StaticResource VaultRowAction}" Content="&#xE70F;" Click="OnVaultEdit"
+                                                            ToolTip="{l:Tr '수정'}" AutomationProperties.Name="{l:Tr '수정'}"/>
+                                                    <Button Style="{StaticResource VaultRowDanger}" Content="&#xE74D;" Click="OnVaultDelete"
+                                                            ToolTip="{l:Tr '삭제'}" AutomationProperties.Name="{l:Tr '삭제'}"/>
                                                 </StackPanel>
                                             </Grid>
                                         </Border>
+                                        <DataTemplate.Triggers>
+                                            <Trigger SourceName="row" Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="row" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
+                                                <Setter TargetName="actions" Property="Opacity" Value="1"/>
+                                            </Trigger>
+                                            <Trigger SourceName="row" Property="IsKeyboardFocusWithin" Value="True">
+                                                <Setter TargetName="actions" Property="Opacity" Value="1"/>
+                                            </Trigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -539,147 +745,367 @@
                 </Grid>
 
                 <!-- Known Hosts 페이지 -->
-                <Grid x:Name="KnownPage" Grid.Column="1" Visibility="Collapsed" Margin="28,24,28,0">
+                <Grid x:Name="KnownPage" Grid.Column="1" Visibility="Collapsed" Margin="28,24,28,24">
+                    <Grid.Resources>
+                        <!-- 저장값 "[REJECTED ]형식 SHA256:..." 나누기 (MainWindow.Vault.cs) -->
+                        <local:KnownHostPartConverter x:Key="KnownPart"/>
+                    </Grid.Resources>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
-                    <StackPanel>
-                        <TextBlock Text="Known Hosts" FontSize="20" FontWeight="SemiBold"/>
+                    <!-- 머리글: 제목 + 설명 -->
+                    <StackPanel Margin="0,0,0,20">
+                        <TextBlock Text="Known Hosts" Style="{StaticResource TextTitle}"/>
                         <TextBlock Text="{l:Tr '신뢰한 SSH 서버 호스트키 지문입니다. 서버를 재설치해 키가 바뀌었다면 여기서 삭제 후 다시 접속하세요.'}"
-                                   Foreground="{StaticResource SubText}" Margin="0,6,0,18" TextWrapping="Wrap"/>
+                                   Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="860" HorizontalAlignment="Left"/>
                     </StackPanel>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="KnownList">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Background="{StaticResource CardBg}" CornerRadius="10" Padding="16,12" Margin="0,0,0,8">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <StackPanel>
-                                                <TextBlock Text="{Binding Key}" FontWeight="SemiBold" FontSize="14"/>
-                                                <TextBlock Text="{Binding Value}" Foreground="{StaticResource SubText}" FontFamily="Cascadia Mono, Consolas"
-                                                           FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
-                                            </StackPanel>
-                                            <Button Grid.Column="1" Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}"
-                                                    Tag="#2A1A22" Click="OnKnownDelete" VerticalAlignment="Center"/>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                    <!-- 표: 카드 한 장 안에 열 머리글 + 가상화된 행 목록 (행은 가벼운 Border 1개 · 그림자 없음) -->
+                    <Border Grid.Row="1" Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusLg}" VerticalAlignment="Top">
+                        <DockPanel>
+                            <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,1" Padding="16,10,12,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" MinWidth="160"/>
+                                        <ColumnDefinition Width="150"/>
+                                        <ColumnDefinition Width="3*"/>
+                                        <ColumnDefinition Width="40"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{l:Tr '호스트'}" Style="{StaticResource TextOverline}"/>
+                                    <TextBlock Grid.Column="1" Text="{l:Tr '키 형식'}" Style="{StaticResource TextOverline}"/>
+                                    <TextBlock Grid.Column="2" Text="{l:Tr '지문'}" Style="{StaticResource TextOverline}"/>
+                                </Grid>
+                            </Border>
+                            <Grid>
+                                <!-- 빈 상태 (목록이 비면 보인다) -->
+                                <TextBlock Text="{l:Tr '저장된 호스트키가 없습니다.'}" Foreground="{StaticResource TextTertiary}" Margin="16,18"
+                                           HorizontalAlignment="Center">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Items.Count, ElementName=KnownList}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                                <ItemsControl x:Name="KnownList" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                                              VirtualizingPanel.ScrollUnit="Pixel" Focusable="False">
+                                    <ItemsControl.Template>
+                                        <ControlTemplate TargetType="ItemsControl">
+                                            <ScrollViewer CanContentScroll="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                                                          Focusable="False">
+                                                <ItemsPresenter/>
+                                            </ScrollViewer>
+                                        </ControlTemplate>
+                                    </ItemsControl.Template>
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <VirtualizingStackPanel/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="row" Background="Transparent" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,0,0,1"
+                                                    Padding="16,8,12,8">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="2*" MinWidth="160"/>
+                                                        <ColumnDefinition Width="150"/>
+                                                        <ColumnDefinition Width="3*"/>
+                                                        <ColumnDefinition Width="40"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                                                        <TextBlock Text="{Binding Key, Mode=OneTime}" Style="{StaticResource TextBodyStrong}"
+                                                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding Key, Mode=OneTime}" VerticalAlignment="Center"/>
+                                                        <!-- 확인 창에서 사용자가 거부한 키 -->
+                                                        <Border Background="{StaticResource DangerSubtle}" CornerRadius="{StaticResource RadiusSm}" Padding="6,1"
+                                                                Margin="8,0,0,0" VerticalAlignment="Center"
+                                                                Visibility="{Binding Value, Mode=OneTime, Converter={StaticResource KnownPart}, ConverterParameter=rejected}"
+                                                                ToolTip="{l:Tr '접속 확인 창에서 거부한 키입니다. 이 키는 자동으로 신뢰하지 않습니다.'}">
+                                                            <TextBlock Text="{l:Tr '거부됨'}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource Danger}"/>
+                                                        </Border>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1" Text="{Binding Value, Mode=OneTime, Converter={StaticResource KnownPart}, ConverterParameter=type}"
+                                                               Foreground="{StaticResource TextSecondary}" FontSize="12" VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" Margin="0,0,12,0"/>
+                                                    <TextBlock Grid.Column="2" Text="{Binding Value, Mode=OneTime, Converter={StaticResource KnownPart}, ConverterParameter=fp}"
+                                                               Foreground="{StaticResource TextTertiary}" FontFamily="{StaticResource MonoFont}" FontSize="12"
+                                                               VerticalAlignment="Center" TextTrimming="CharacterEllipsis" ToolTip="{Binding Value, Mode=OneTime}"/>
+                                                    <Button Grid.Column="3" Style="{StaticResource IconButton}" Content="&#xE74D;" HorizontalAlignment="Right"
+                                                            l:Ui.HoverBrush="{StaticResource DangerSubtle}" Click="OnKnownDelete" VerticalAlignment="Center"
+                                                            ToolTip="{l:Tr '호스트키 삭제'}" AutomationProperties.Name="{l:Tr '호스트키 삭제'}"/>
+                                                </Grid>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <Trigger SourceName="row" Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="row" Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                                                </Trigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </DockPanel>
+                    </Border>
                 </Grid>
 
                 <!-- Cloud 페이지 -->
                 <ScrollViewer x:Name="CloudPage" Grid.Column="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
                               Padding="28,24,16,28">
+                    <ScrollViewer.Resources>
+                        <!-- 프로필 표시 (서버 수 알약 · 동기화 시각 줄) — MainWindow.Cloud.cs -->
+                        <local:CloudProfileViewConverter x:Key="CloudView"/>
+                        <!-- 프로필 추가: 평소 기본(Ghost) 버튼, 아직 프로필이 없는 공급자에서는 주 동작(강조 채움)으로 보여 다음 할 일을 알린다 -->
+                        <Style x:Key="CloudAddButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Profiles.Count}" Value="0">
+                                    <Setter Property="Background" Value="{StaticResource Accent}"/>
+                                    <Setter Property="Foreground" Value="{StaticResource OnAccent}"/>
+                                    <Setter Property="BorderBrush" Value="Transparent"/>
+                                    <Setter Property="FontWeight" Value="SemiBold"/>
+                                    <Setter Property="l:Ui.HoverBrush" Value="{StaticResource AccentHover}"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                        <!-- 경로 줄 안의 작은 글자 버튼 -->
+                        <Style x:Key="CloudPathButton" TargetType="Button" BasedOn="{StaticResource SubtleButton}">
+                            <Setter Property="Padding" Value="8,3"/>
+                            <Setter Property="FontSize" Value="12"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                        <!-- 삭제 아이콘 버튼: hover 때 빨강 -->
+                        <Style x:Key="CloudDangerIcon" TargetType="Button" BasedOn="{StaticResource IconButton}">
+                            <Setter Property="l:Ui.HoverBrush" Value="{StaticResource DangerSubtle}"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource Danger}"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                        <!-- 서버 수 알약 -->
+                        <Style x:Key="CloudPill" TargetType="Border">
+                            <Setter Property="Background" Value="{StaticResource ControlFill}"/>
+                            <Setter Property="CornerRadius" Value="10"/>
+                            <Setter Property="Padding" Value="8,1"/>
+                            <Setter Property="VerticalAlignment" Value="Center"/>
+                        </Style>
+                    </ScrollViewer.Resources>
                     <StackPanel>
-                        <Grid>
-                            <StackPanel>
-                                <TextBlock Text="Cloud" FontSize="20" FontWeight="SemiBold"/>
-                                <TextBlock Foreground="{StaticResource SubText}" Margin="0,6,0,0" TextWrapping="Wrap"
+                        <!-- 머리글: 제목 + 설명, 오른쪽에 주 동작 -->
+                        <Grid Margin="0,0,12,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Margin="0,0,24,0">
+                                <TextBlock Text="Cloud" Style="{StaticResource TextTitle}"/>
+                                <TextBlock Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap" MaxWidth="860" HorizontalAlignment="Left"
                                            Text="{l:Tr '클라우드 계정의 서버를 프로필 그룹으로 가져옵니다. 인증은 이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI · OCI 설정 파일)을 그대로 사용합니다.'}"/>
                             </StackPanel>
-                            <Button x:Name="SyncAllButton" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Right"
-                                    VerticalAlignment="Top" Click="OnSyncAll" Content="{l:Tr '전체 동기화'}"/>
+                            <!-- 글자는 동기화 중에 MainWindow.Cloud.cs 가 SyncAllText 로 바꾼다 -->
+                            <Button x:Name="SyncAllButton" Grid.Column="1" Style="{StaticResource PrimaryButton}" VerticalAlignment="Top" Click="OnSyncAll"
+                                    AutomationProperties.Name="{l:Tr '전체 동기화'}">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock x:Name="SyncAllText" Text="{l:Tr '전체 동기화'}" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </Grid>
 
-                        <ItemsControl x:Name="CloudSections" Margin="0,20,0,0">
+                        <ItemsControl x:Name="CloudSections" Margin="0,20,0,0" Focusable="False">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border Background="{StaticResource CardBg}" CornerRadius="12" Padding="18,16" Margin="0,0,12,14">
+                                    <!-- 공급자 카드: Layer3 + 머리카락 테두리 (그림자 없음) -->
+                                    <Border Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"
+                                            CornerRadius="{StaticResource RadiusLg}" Padding="16,14,16,10" Margin="0,0,12,12">
                                         <StackPanel>
+                                            <!-- 카드 머리: 공급자 색 점 + 이름 + 인증 안내 / 로그인 · 프로필 추가 -->
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
-                                                <Border Background="{Binding Brush}" CornerRadius="6" Padding="9,3" VerticalAlignment="Center">
-                                                    <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="12" Foreground="#0B0D14"/>
-                                                </Border>
-                                                <TextBlock Grid.Column="1" Text="{Binding AuthHint}" Foreground="{StaticResource SubText}"
-                                                           Margin="12,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                                    <Button Style="{StaticResource GhostButton}" Content="{l:Tr '로그인'}" Margin="0,0,8,0" Padding="12,6"
-                                                            Click="OnProviderLogin" ToolTip="{l:Tr 'CLI 로그인 명령을 새 창에서 실행합니다'}"/>
-                                                    <Button Style="{StaticResource GhostButton}" Padding="12,6" Click="OnAddProfiles">
+                                                <Ellipse Width="10" Height="10" Fill="{Binding Brush}" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Title}" Style="{StaticResource TextSubtitle}" FontSize="15"
+                                                           Margin="10,0,0,0" VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Column="2" Text="{Binding AuthHint}" Foreground="{StaticResource TextTertiary}" FontSize="12"
+                                                           Margin="12,1,12,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                                                           ToolTip="{Binding AuthHint}"/>
+                                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Button Style="{StaticResource GhostButton}" Margin="0,0,8,0" Padding="12,6"
+                                                            Click="OnProviderLogin" ToolTip="{l:Tr 'CLI 로그인 명령을 새 창에서 실행합니다'}">
                                                         <StackPanel Orientation="Horizontal">
-                                                            <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="10"
-                                                                       VerticalAlignment="Center" Foreground="{StaticResource Accent}"/>
-                                                            <TextBlock Text="{Binding AddButtonText}" Margin="7,0,0,0"/>
+                                                            <TextBlock Text="&#xE8D7;" FontFamily="{StaticResource IconFont}" FontSize="11"
+                                                                       VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" Margin="0,0,7,0"/>
+                                                            <TextBlock Text="{l:Tr '로그인'}" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                    </Button>
+                                                    <Button Style="{StaticResource CloudAddButton}" Padding="12,6" Click="OnAddProfiles">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="10" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="{Binding AddButtonText}" Margin="7,0,0,0" VerticalAlignment="Center"/>
                                                         </StackPanel>
                                                     </Button>
                                                 </StackPanel>
                                             </Grid>
 
-                                            <!-- 인증 파일 경로 -->
-                                            <Grid Margin="0,10,0,0">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource SubText}"
-                                                           VerticalAlignment="Center" FontSize="12"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding PathText}" Foreground="{StaticResource SubText}" FontSize="12"
-                                                           FontFamily="Cascadia Mono, Consolas" Margin="8,0,8,0" VerticalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis" ToolTip="{Binding PathText}"/>
-                                                <StackPanel Grid.Column="2" Orientation="Horizontal">
-                                                    <Button Style="{StaticResource GhostButton}" Padding="10,3" FontSize="11.5" Click="OnChangeCloudPath"
-                                                            Content="{l:Tr '경로 변경'}" ToolTip="{l:Tr '인증 파일(폴더) 위치를 직접 선택'}"/>
-                                                    <Button x:Name="resetPathBtn" Style="{StaticResource GhostButton}" Padding="10,3" FontSize="11.5" Margin="6,0,0,0"
-                                                            Click="OnResetCloudPath" Content="{l:Tr '기본값'}" Visibility="{Binding IsCustomPath, Converter={StaticResource BoolVis}}"/>
-                                                </StackPanel>
-                                            </Grid>
+                                            <!-- 인증 파일 경로 (안쪽으로 들어간 띠) -->
+                                            <Border Background="{StaticResource InputFill}" CornerRadius="{StaticResource RadiusMd}" Padding="10,4,4,4" Margin="0,12,0,0">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="&#xE8B7;" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource TextTertiary}"
+                                                               VerticalAlignment="Center" FontSize="12"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding PathText}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                                                               FontFamily="{StaticResource MonoFont}" Margin="8,0,8,0" VerticalAlignment="Center"
+                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding PathText}"/>
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                                        <Button Style="{StaticResource CloudPathButton}" Click="OnChangeCloudPath"
+                                                                Content="{l:Tr '경로 변경'}" ToolTip="{l:Tr '인증 파일(폴더) 위치를 직접 선택'}"/>
+                                                        <Button x:Name="resetPathBtn" Style="{StaticResource CloudPathButton}" Margin="2,0,0,0"
+                                                                Click="OnResetCloudPath" Content="{l:Tr '기본값'}" Visibility="{Binding IsCustomPath, Converter={StaticResource BoolVis}}"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
 
-                                            <TextBlock Text="{Binding Message}" Foreground="#F5B740" Margin="0,10,0,0" TextWrapping="Wrap">
-                                                <TextBlock.Style>
-                                                    <Style TargetType="TextBlock">
+                                            <!-- 안내 · 경고 띠 (메시지가 있을 때만) -->
+                                            <Border Background="{StaticResource WarningSubtle}" CornerRadius="{StaticResource RadiusMd}" Padding="10,7" Margin="0,10,0,0">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
                                                         <Style.Triggers>
-                                                            <Trigger Property="Text" Value="">
+                                                            <DataTrigger Binding="{Binding Message}" Value="">
                                                                 <Setter Property="Visibility" Value="Collapsed"/>
-                                                            </Trigger>
+                                                            </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
-                                                </TextBlock.Style>
-                                            </TextBlock>
+                                                </Border.Style>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Text="&#xE946;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource Warning}"
+                                                               Margin="0,2,8,0" VerticalAlignment="Top"/>
+                                                    <TextBlock Grid.Column="1" Text="{Binding Message}" Foreground="{StaticResource Warning}" FontSize="12" TextWrapping="Wrap"/>
+                                                </Grid>
+                                            </Border>
 
-                                            <ItemsControl ItemsSource="{Binding Profiles}" Margin="0,8,0,0">
+                                            <!-- 프로필 행: 가벼운 행 (hover 때만 옅은 채움) -->
+                                            <ItemsControl ItemsSource="{Binding Profiles}" Margin="-8,8,-8,0" Focusable="False">
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="2,10,0,2">
+                                                        <Border x:Name="row" Background="Transparent" CornerRadius="{StaticResource RadiusMd}" Padding="8,8" Margin="0,1">
                                                             <Grid>
                                                                 <Grid.ColumnDefinitions>
                                                                     <ColumnDefinition Width="220"/>
                                                                     <ColumnDefinition Width="*"/>
                                                                     <ColumnDefinition Width="Auto"/>
                                                                 </Grid.ColumnDefinitions>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                </Grid.RowDefinitions>
                                                                 <StackPanel VerticalAlignment="Center">
-                                                                    <TextBlock Text="{Binding GroupName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                                    <TextBlock Text="{Binding Name}" FontSize="11" Foreground="{StaticResource SubText}"
+                                                                    <TextBlock Text="{Binding GroupName}" Style="{StaticResource TextBodyStrong}" TextTrimming="CharacterEllipsis"
+                                                                               ToolTip="{Binding GroupName}"/>
+                                                                    <TextBlock Text="{Binding Name}" FontSize="11" Foreground="{StaticResource TextTertiary}"
                                                                                TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                                                                 </StackPanel>
-                                                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0">
-                                                                    <TextBlock Text="{Binding SummaryText}" Foreground="{StaticResource SubText}" FontSize="12"/>
-                                                                    <TextBlock Text="{Binding StatusText}" Foreground="#F5B740" FontSize="11.5" Margin="0,2,0,0"
-                                                                               TextWrapping="Wrap"/>
+                                                                <!-- 서버 수 알약 + 동기화 시각 · 결과 -->
+                                                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+                                                                    <Border Style="{StaticResource CloudPill}" Margin="0,0,6,0">
+                                                                        <Border.Visibility>
+                                                                            <MultiBinding Converter="{StaticResource CloudView}" ConverterParameter="synced">
+                                                                                <Binding/>
+                                                                                <Binding Path="SummaryText"/>
+                                                                            </MultiBinding>
+                                                                        </Border.Visibility>
+                                                                        <TextBlock FontSize="11" Foreground="{StaticResource TextSecondary}">
+                                                                            <TextBlock.Text>
+                                                                                <MultiBinding Converter="{StaticResource CloudView}" ConverterParameter="total">
+                                                                                    <Binding/>
+                                                                                    <Binding Path="SummaryText"/>
+                                                                                </MultiBinding>
+                                                                            </TextBlock.Text>
+                                                                        </TextBlock>
+                                                                    </Border>
+                                                                    <Border Style="{StaticResource CloudPill}" Background="{StaticResource SuccessSubtle}" Margin="0,0,10,0">
+                                                                        <Border.Visibility>
+                                                                            <MultiBinding Converter="{StaticResource CloudView}" ConverterParameter="synced">
+                                                                                <Binding/>
+                                                                                <Binding Path="SummaryText"/>
+                                                                            </MultiBinding>
+                                                                        </Border.Visibility>
+                                                                        <StackPanel Orientation="Horizontal">
+                                                                            <Ellipse Width="6" Height="6" Fill="{StaticResource Success}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                                                            <TextBlock FontSize="11" Foreground="{StaticResource Success}">
+                                                                                <TextBlock.Text>
+                                                                                    <MultiBinding Converter="{StaticResource CloudView}" ConverterParameter="running">
+                                                                                        <Binding/>
+                                                                                        <Binding Path="SummaryText"/>
+                                                                                    </MultiBinding>
+                                                                                </TextBlock.Text>
+                                                                            </TextBlock>
+                                                                        </StackPanel>
+                                                                    </Border>
+                                                                    <TextBlock FontSize="12" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center"
+                                                                               TextTrimming="CharacterEllipsis" ToolTip="{Binding SummaryText}">
+                                                                        <TextBlock.Text>
+                                                                            <MultiBinding Converter="{StaticResource CloudView}" ConverterParameter="meta">
+                                                                                <Binding/>
+                                                                                <Binding Path="SummaryText"/>
+                                                                            </MultiBinding>
+                                                                        </TextBlock.Text>
+                                                                    </TextBlock>
                                                                 </StackPanel>
                                                                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                                                                    <Button Style="{StaticResource GhostButton}" Padding="12,6" Margin="0,0,6,0"
-                                                                            Content="{Binding SyncButtonText}" Click="OnProfileSync"
-                                                                            ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}"/>
+                                                                    <!-- 동기화 중이면 같은 버튼이 "취소" (SyncButtonText) -->
+                                                                    <Button Style="{StaticResource GhostButton}" Padding="10,5" Margin="0,0,6,0" FontSize="12"
+                                                                            Click="OnProfileSync" AutomationProperties.Name="{Binding SyncButtonText}"
+                                                                            ToolTip="{l:Tr '이 프로필의 서버 목록을 다시 가져옵니다 (동기화 중에 누르면 취소)'}">
+                                                                        <StackPanel Orientation="Horizontal">
+                                                                            <TextBlock x:Name="syncGlyph" Text="&#xE72C;" FontFamily="{StaticResource IconFont}" FontSize="11"
+                                                                                       VerticalAlignment="Center" Foreground="{StaticResource AccentText}" Margin="0,0,6,0"/>
+                                                                            <TextBlock Text="{Binding SyncButtonText}" VerticalAlignment="Center"/>
+                                                                        </StackPanel>
+                                                                    </Button>
                                                                     <Button Style="{StaticResource IconButton}" Content="&#xE713;" Click="OnProfileSettings"
-                                                                            ToolTip="{l:Tr '기본 계정·포트 설정'}" Margin="0,0,2,0"/>
-                                                                    <Button Style="{StaticResource IconButton}" Content="&#xE74D;" Click="OnProfileRemove"
-                                                                            ToolTip="{l:Tr '프로필과 동기화된 호스트 제거'}"/>
+                                                                            ToolTip="{l:Tr '기본 계정·포트 설정'}" AutomationProperties.Name="{l:Tr '기본 계정·포트 설정'}" Margin="0,0,2,0"/>
+                                                                    <Button Style="{StaticResource CloudDangerIcon}" Content="&#xE74D;" Click="OnProfileRemove"
+                                                                            ToolTip="{l:Tr '프로필과 동기화된 호스트 제거'}" AutomationProperties.Name="{l:Tr '프로필과 동기화된 호스트 제거'}"/>
                                                                 </StackPanel>
+                                                                <!-- 동기화 상태 · 경고 (길면 두 줄까지, 전체는 툴팁) -->
+                                                                <TextBlock x:Name="status" Grid.Row="1" Grid.ColumnSpan="3" Text="{Binding StatusText}" ToolTip="{Binding StatusText}"
+                                                                           Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,6,0,0"
+                                                                           TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="34"/>
                                                             </Grid>
                                                         </Border>
+                                                        <DataTemplate.Triggers>
+                                                            <Trigger SourceName="row" Property="IsMouseOver" Value="True">
+                                                                <Setter TargetName="row" Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                                                            </Trigger>
+                                                            <DataTrigger Binding="{Binding StatusText}" Value="">
+                                                                <Setter TargetName="status" Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding IsSyncing}" Value="True">
+                                                                <Setter TargetName="syncGlyph" Property="Text" Value="&#xE711;"/>
+                                                                <Setter TargetName="syncGlyph" Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                                            </DataTrigger>
+                                                        </DataTemplate.Triggers>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -694,16 +1120,18 @@
                 <!-- Settings 페이지 -->
                 <!-- 제목 · 섹션 바로가기는 스크롤해도 위에 남는다. 표시 여부는 OnNavChanged 가 SettingsPage(스크롤 영역)와 함께 바꾼다 -->
                 <DockPanel x:Name="SettingsView" Grid.Column="1" Visibility="Collapsed">
-                    <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Line}" BorderThickness="0,0,0,1" Padding="28,24,16,8">
+                    <Border DockPanel.Dock="Top" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,1" Padding="28,24,16,10">
                         <StackPanel>
-                            <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold"/>
-                            <!-- 섹션 바로가기 — Tag = 이동할 제목의 x:Name. 지금 보고 있는 섹션은 강조 (OnSettingsScrollChanged) -->
-                            <WrapPanel x:Name="SettingsJumpBar" Margin="0,12,0,0">
+                            <TextBlock Text="Settings" Style="{StaticResource TextTitle}"/>
+                            <!-- 섹션 바로가기 (알약 모양) — Tag = 이동할 제목의 x:Name. 지금 보고 있는 섹션은 AccentSubtle 로 강조 (UpdateSettingsJumpHighlight) -->
+                            <WrapPanel x:Name="SettingsJumpBar" Margin="0,14,0,0">
                                 <WrapPanel.Resources>
                                     <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
-                                        <Setter Property="Padding" Value="10,4"/>
+                                        <Setter Property="Padding" Value="12,4"/>
                                         <Setter Property="FontSize" Value="12"/>
                                         <Setter Property="Margin" Value="0,0,6,6"/>
+                                        <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+                                        <Setter Property="l:Ui.CornerRadius" Value="13"/>
                                     </Style>
                                 </WrapPanel.Resources>
                                 <Button Content="{l:Tr '언어 · Language'}" Tag="SecLang" Click="OnSettingsJump"/>
@@ -722,75 +1150,212 @@
                     </Border>
                 <ScrollViewer x:Name="SettingsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto"
                               Padding="28,0,16,28" ScrollChanged="OnSettingsScrollChanged">
-                    <StackPanel>
-                        <TextBlock x:Name="SecLang" Text="{l:Tr '언어 · Language'}" FontSize="14" FontWeight="SemiBold" Margin="0,22,0,4"/>
-                        <TextBlock Text="{l:Tr '화면 언어를 바꾸면 Nubis 를 다시 시작해야 적용됩니다.'}" Foreground="{StaticResource SubText}" Margin="0,0,0,10"/>
-                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1" Width="280" HorizontalAlignment="Left">
-                            <UniformGrid Columns="2">
-                                <RadioButton x:Name="LangKorean" Style="{StaticResource Segment}" Content="한국어" GroupName="lang" Click="OnLanguageClick"/>
-                                <RadioButton x:Name="LangEnglish" Style="{StaticResource Segment}" Content="English" GroupName="lang" Click="OnLanguageClick"/>
-                            </UniformGrid>
+                    <!-- Windows 11 설정 앱 모양: 섹션 제목 → (설명) → 카드(Layer3Bg + Stroke) 안에 설정 줄. 줄은 왼쪽 이름·설명, 오른쪽 컨트롤.
+                         넓은 창에서 줄이 지나치게 길어지지 않게 폭을 제한하고 왼쪽에 붙인다 (Stretch + MaxWidth 는 가운데 정렬이 된다) -->
+                    <StackPanel MaxWidth="980" HorizontalAlignment="Left">
+                        <StackPanel.Resources>
+                            <!-- 섹션 제목 (바로가기가 이 위치로 스크롤) -->
+                            <Style x:Key="SetHeader" TargetType="TextBlock" BasedOn="{StaticResource TextSubtitle}">
+                                <Setter Property="Margin" Value="2,30,0,10"/>
+                            </Style>
+                            <!-- 섹션 설명 (제목과 카드 사이) · 카드 아래 도움말 -->
+                            <Style x:Key="SetIntro" TargetType="TextBlock" BasedOn="{StaticResource TextCaption}">
+                                <Setter Property="TextWrapping" Value="Wrap"/>
+                                <Setter Property="Margin" Value="2,-4,0,10"/>
+                                <Setter Property="LineHeight" Value="18"/>
+                            </Style>
+                            <Style x:Key="SetNote" TargetType="TextBlock" BasedOn="{StaticResource TextCaption}">
+                                <Setter Property="TextWrapping" Value="Wrap"/>
+                                <Setter Property="Margin" Value="2,8,0,0"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
+                            </Style>
+                            <!-- 카드 -->
+                            <Style x:Key="SetCard" TargetType="Border">
+                                <Setter Property="Background" Value="{StaticResource Layer3Bg}"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource Stroke}"/>
+                                <Setter Property="BorderThickness" Value="1"/>
+                                <Setter Property="CornerRadius" Value="{StaticResource RadiusLg}"/>
+                            </Style>
+                            <!-- 카드 안 설정 줄: 둘째 줄부터 위쪽 머리카락 선 -->
+                            <Style x:Key="SetRow" TargetType="Border">
+                                <Setter Property="Padding" Value="16,12"/>
+                                <Setter Property="BorderBrush" Value="{StaticResource StrokeSubtle}"/>
+                                <Setter Property="BorderThickness" Value="0,1,0,0"/>
+                                <Setter Property="MinHeight" Value="60"/>
+                            </Style>
+                            <Style x:Key="SetRowFirst" TargetType="Border" BasedOn="{StaticResource SetRow}">
+                                <Setter Property="BorderThickness" Value="0"/>
+                            </Style>
+                            <!-- 줄 이름 · 설명 -->
+                            <Style x:Key="SetLabel" TargetType="TextBlock" BasedOn="{StaticResource TextBody}">
+                                <Setter Property="TextWrapping" Value="Wrap"/>
+                            </Style>
+                            <Style x:Key="SetDesc" TargetType="TextBlock" BasedOn="{StaticResource TextCaption}">
+                                <Setter Property="TextWrapping" Value="Wrap"/>
+                                <Setter Property="Margin" Value="0,3,0,0"/>
+                            </Style>
+                            <!-- 줄 오른쪽 스위치 (글자 없이 — 템플릿의 글자 자리 10px 은 음수 여백으로 상쇄해 입력란과 오른쪽 끝을 맞춘다) -->
+                            <Style x:Key="SetSwitch" TargetType="CheckBox" BasedOn="{StaticResource ToggleSwitch}">
+                                <Setter Property="Grid.Column" Value="1"/>
+                                <Setter Property="VerticalAlignment" Value="Center"/>
+                                <Setter Property="HorizontalAlignment" Value="Right"/>
+                                <Setter Property="Margin" Value="24,0,-10,0"/>
+                            </Style>
+                        </StackPanel.Resources>
+
+                        <!-- ===== 언어 ===== -->
+                        <TextBlock x:Name="SecLang" Text="{l:Tr '언어 · Language'}" Style="{StaticResource SetHeader}" Margin="2,20,0,10"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SetLabel}" VerticalAlignment="Center"
+                                                   Text="{l:Tr '화면 언어를 바꾸면 Nubis 를 다시 시작해야 적용됩니다.'}"/>
+                                        <Border Grid.Column="1" Margin="24,0,0,0" Background="{StaticResource InputBg}" CornerRadius="8" Padding="3"
+                                                BorderBrush="{StaticResource Line}" BorderThickness="1" Width="240" VerticalAlignment="Center">
+                                            <UniformGrid Columns="2">
+                                                <RadioButton x:Name="LangKorean" Style="{StaticResource Segment}" Content="한국어" GroupName="lang" Click="OnLanguageClick"/>
+                                                <RadioButton x:Name="LangEnglish" Style="{StaticResource Segment}" Content="English" GroupName="lang" Click="OnLanguageClick"/>
+                                            </UniformGrid>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '시작하기 안내'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '처음 쓰는 분을 위한 안내 창을 다시 엽니다.'}"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Margin="24,0,0,0" VerticalAlignment="Center" Style="{StaticResource GhostButton}"
+                                                Content="{l:Tr '시작하기 안내 다시 보기'}" Click="OnShowOnboarding"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
                         </Border>
-                        <Button Style="{StaticResource GhostButton}" Content="{l:Tr '시작하기 안내 다시 보기'}" HorizontalAlignment="Left" Margin="0,12,0,0"
-                                Click="OnShowOnboarding"/>
 
-                        <TextBlock x:Name="SecVault" Text="{l:Tr '기본 Vault 계정'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
+                        <!-- ===== 기본 Vault 계정 ===== -->
+                        <TextBlock x:Name="SecVault" Text="{l:Tr '기본 Vault 계정'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}"
                                    Text="{l:Tr '계정을 따로 정하지 않은 모든 호스트가 이 계정으로 로그인합니다. 우선순위: 호스트에 고른 계정 → 호스트에 직접 입력한 값 → 클라우드 프로필 기본 계정 → 여기 기본 계정. 호스트 목록에서 그룹을 우클릭하면 그룹 전체에 다른 계정을 지정할 수 있습니다.'}"/>
-                        <!-- Grid 자체에 MaxWidth 를 주면 넓은 창에서 Stretch 가 가운데 정렬로 바뀌어 줄이 오른쪽으로 밀린다 —
-                             폭 제한은 계정 이름 칸(*)에만 두고 남는 폭은 오른쪽에 비워 둔다 (섹션 글과 왼쪽 맞춤) -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="130"/>
-                                <ColumnDefinition Width="*" MaxWidth="380"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition/>
-                                <RowDefinition/>
-                            </Grid.RowDefinitions>
-                            <TextBlock Text="{l:Tr 'SSH (Linux)'}" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="DefSshVaultText" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                            <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,8">
-                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="ssh" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
-                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="ssh" Click="OnDefaultVaultClear"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <!-- Grid 에 MaxWidth 를 주지 않는다 (넓은 창에서 Stretch 가 가운데 정렬로 바뀌어 줄이 밀림) -->
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{l:Tr 'SSH (Linux)'}" Style="{StaticResource SetLabel}"/>
+                                            <TextBlock x:Name="DefSshVaultText" Style="{StaticResource SetDesc}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="24,0,0,0" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="ssh" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
+                                            <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="ssh" Click="OnDefaultVaultClear"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Text="{l:Tr 'RDP (Windows)'}" Style="{StaticResource SetLabel}"/>
+                                            <TextBlock x:Name="DefRdpVaultText" Style="{StaticResource SetDesc}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="24,0,0,0" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="rdp" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
+                                            <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="rdp" Click="OnDefaultVaultClear"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
-                            <TextBlock Grid.Row="1" Text="{l:Tr 'RDP (Windows)'}" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="DefRdpVaultText" Grid.Row="1" Grid.Column="1" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                            <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal" Margin="8,0,0,0">
-                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '선택'}" Tag="rdp" Click="OnDefaultVaultPick" Margin="0,0,6,0"/>
-                                <Button Style="{StaticResource GhostButton}" Content="{l:Tr '해제'}" Tag="rdp" Click="OnDefaultVaultClear"/>
+                        </Border>
+
+                        <!-- ===== 호스트 목록 · 탭 ===== -->
+                        <TextBlock Text="{l:Tr '호스트 목록 · 탭'}" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '최근 접속 그룹 표시'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '최근 30일 안에 접속한 호스트를 맨 위에 (카드 우클릭 → 즐겨찾기는 항상 맨 위)'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="ShowRecentBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '최근 접속 그룹 표시'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '연결 중인 탭을 닫을 때 확인'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr 'X · 휠 클릭 · Ctrl+Shift+W 로 잘못 닫는 것 방지'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="ConfirmCloseBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '연결 중인 탭을 닫을 때 확인'}"/>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
-                        </Grid>
+                        </Border>
+                        <TextBlock Style="{StaticResource SetNote}"
+                                   Text="{l:Tr '단축키: Ctrl+K 명령 팔레트 (호스트 · 탭 · 동작 검색) · Ctrl+F 호스트 검색 · Ctrl+Shift+R 닫은 탭 다시 열기 · Ctrl+1~9 탭 이동 · Ctrl+Tab 다음 탭 · Ctrl+Shift+W 탭 닫기 · 탭 우클릭: 다시 연결 · 복제 · 이름 바꾸기 · 다른 탭 닫기'}"/>
 
-                        <TextBlock Text="{l:Tr '호스트 목록 · 탭'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="ShowRecentBox" Click="OnPrefClick" Margin="0,0,0,10">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '최근 접속 그룹 표시'}"/>
-                                <Run Text="{l:Tr '  최근 30일 안에 접속한 호스트를 맨 위에 (카드 우클릭 → 즐겨찾기는 항상 맨 위)'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="ConfirmCloseBox" Click="OnPrefClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '연결 중인 탭을 닫을 때 확인'}"/>
-                                <Run Text="{l:Tr '  X · 휠 클릭 · Ctrl+Shift+W 로 잘못 닫는 것 방지'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <TextBlock Text="{l:Tr '단축키: Ctrl+K 호스트 검색 (↑↓ 로 고르고 Enter 로 연결) · Ctrl+1~9 탭 이동 · Ctrl+Tab 다음 탭 · Ctrl+Shift+W 탭 닫기 · 탭 우클릭: 다시 연결 · 복제 · 이름 바꾸기 · 다른 탭 닫기'}"
-                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,12,0,0" TextWrapping="Wrap"/>
+                        <!-- ===== 클라우드 자동 동기화 ===== -->
+                        <TextBlock Text="{l:Tr '클라우드 자동 동기화'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}" Text="{l:Tr '새 서버·바뀐 IP 를 자동으로 반영합니다. 일부 리전 조회가 실패하면 그 회차에는 지우지 않습니다.'}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SetLabel}" VerticalAlignment="Center" Text="{l:Tr '앱을 시작할 때 전체 동기화'}"/>
+                                        <CheckBox x:Name="CloudSyncStartBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '앱을 시작할 때 전체 동기화'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SetLabel}" VerticalAlignment="Center" Text="{l:Tr '주기적으로 동기화 (분, 0 = 끔, 최소 5)'}"/>
+                                        <TextBox x:Name="CloudSyncIntervalBox" Grid.Column="1" Margin="24,0,0,0" Width="96" TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="0" LostFocus="OnCloudSyncIntervalChanged" KeyDown="OnSettingsBoxKeyDown"
+                                                 AutomationProperties.Name="{l:Tr '주기적으로 동기화 (분, 0 = 끔, 최소 5)'}"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock Text="{l:Tr '클라우드 자동 동기화'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Text="{l:Tr '새 서버·바뀐 IP 를 자동으로 반영합니다. 일부 리전 조회가 실패하면 그 회차에는 지우지 않습니다.'}"
-                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
-                        <CheckBox x:Name="CloudSyncStartBox" Content="{l:Tr '앱을 시작할 때 전체 동기화'}" Click="OnPrefClick" Margin="0,0,0,10"/>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="{l:Tr '주기적으로 동기화 (분, 0 = 끔, 최소 5)'}" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                            <TextBox x:Name="CloudSyncIntervalBox" Width="90" Tag="0" LostFocus="OnCloudSyncIntervalChanged" KeyDown="OnSettingsBoxKeyDown"/>
-                        </StackPanel>
-
-                        <TextBlock x:Name="SecTheme" Text="{l:Tr '터미널 테마'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Text="{l:Tr '선택하면 열려 있는 SSH 터미널에도 바로 적용됩니다.'}" Foreground="{StaticResource SubText}" Margin="0,0,0,14"/>
-                        <ItemsControl x:Name="ThemeList">
+                        <!-- ===== 터미널 테마 ===== -->
+                        <TextBlock x:Name="SecTheme" Text="{l:Tr '터미널 테마'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}" Text="{l:Tr '선택하면 열려 있는 SSH 터미널에도 바로 적용됩니다.'}"/>
+                        <!-- 테마 카드: 둥근 미리보기, 고른 테마는 Accent 테두리 + 체크. Tab 으로 옮겨 와 Enter · Space 로 고른다 (OnThemeKeyDown) -->
+                        <ItemsControl x:Name="ThemeList" Focusable="False">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
                                     <WrapPanel/>
@@ -798,14 +1363,15 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Border x:Name="card" Width="232" Margin="0,0,12,12" CornerRadius="10" BorderThickness="2"
-                                            BorderBrush="Transparent" Background="{StaticResource CardBg}" Cursor="Hand"
+                                    <Border x:Name="card" Width="228" Margin="0,0,12,12" CornerRadius="10" BorderThickness="2" Padding="4"
+                                            BorderBrush="{StaticResource Stroke}" Background="{StaticResource Layer3Bg}" Cursor="Hand"
                                             MouseLeftButtonUp="OnThemeClick" KeyDown="OnThemeKeyDown"
                                             Focusable="True" FocusVisualStyle="{StaticResource FocusRing}"
                                             AutomationProperties.Name="{Binding Theme.Name}">
                                         <StackPanel>
-                                            <Border Background="{Binding Theme.BgBrush}" CornerRadius="8,8,0,0" Padding="12,10" Height="104">
-                                                <StackPanel TextElement.FontFamily="Cascadia Mono, Consolas" TextElement.FontSize="11.5">
+                                            <Border Background="{Binding Theme.BgBrush}" CornerRadius="6" Padding="12,10" Height="100"
+                                                    BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="1">
+                                                <StackPanel TextElement.FontFamily="{StaticResource MonoFont}" TextElement.FontSize="11.5">
                                                     <TextBlock>
                                                         <Run Text="user@server" Foreground="{Binding Theme.GreenBrush, Mode=OneWay}"/><Run
                                                              Text=":" Foreground="{Binding Theme.FgBrush, Mode=OneWay}"/><Run
@@ -829,213 +1395,448 @@
                                                     </TextBlock>
                                                 </StackPanel>
                                             </Border>
-                                            <Grid Margin="12,9">
-                                                <TextBlock Text="{Binding Theme.Name}" FontWeight="SemiBold"/>
-                                                <TextBlock x:Name="check" Text="&#xE73E;" FontFamily="{StaticResource IconFont}"
-                                                           Foreground="{StaticResource Accent}" HorizontalAlignment="Right"
-                                                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                                            <Grid Margin="8,8,6,4">
+                                                <TextBlock Text="{Binding Theme.Name}" Style="{StaticResource TextBodyStrong}"
+                                                           TextTrimming="CharacterEllipsis" Margin="0,0,20,0"/>
+                                                <Border x:Name="check" Width="18" Height="18" CornerRadius="9" Background="{StaticResource Accent}"
+                                                        HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed">
+                                                    <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="10"
+                                                               Foreground="{StaticResource OnAccent}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
                                             </Grid>
                                         </StackPanel>
                                     </Border>
                                     <DataTemplate.Triggers>
                                         <Trigger SourceName="card" Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource InputHoverLine}"/>
+                                            <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource StrokeStrong}"/>
+                                            <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
                                         </Trigger>
                                         <DataTrigger Binding="{Binding IsSelected}" Value="True">
                                             <Setter TargetName="card" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                            <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3Bg}"/>
                                             <Setter TargetName="check" Property="Visibility" Value="Visible"/>
                                         </DataTrigger>
                                     </DataTemplate.Triggers>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-
-                        <CheckBox x:Name="AutoContrastBox" Margin="0,8,0,0" Click="OnAutoContrastClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '글자색 자동 대비 보정'}"/>
-                                <Run Text="{l:Tr '  배경과 비슷해 안 보이는 글자색(밝은 테마의 흰 글자 등)을 읽을 수 있게 자동 조정'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-
-                        <TextBlock x:Name="SecFont" Text="{l:Tr '터미널 글꼴'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <WrapPanel x:Name="FontPanel"/>
-                        <Button Style="{StaticResource GhostButton}" Content="{l:Tr '다른 글꼴...'}" HorizontalAlignment="Left" Click="OnOtherFont"
-                                ToolTip="{l:Tr '설치된 글꼴 이름을 직접 입력'}"/>
-
-                        <TextBlock Text="{l:Tr '글꼴 크기'}" FontSize="14" FontWeight="SemiBold" Margin="0,24,0,4"/>
-                        <TextBlock Text="{l:Tr '터미널에서 Ctrl+휠 · Ctrl+= · Ctrl+- 로 그 탭만 잠깐 키우고 줄일 수 있습니다 (Ctrl+0 = 원래 크기).'}"
-                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
-                        <StackPanel Orientation="Horizontal">
-                            <Button Style="{StaticResource GhostButton}" Content="&#xE738;" FontFamily="{StaticResource IconFont}"
-                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontSmaller"
-                                    ToolTip="{l:Tr '글꼴 작게'}" AutomationProperties.Name="{l:Tr '글꼴 작게'}"/>
-                            <TextBlock x:Name="FontSizeText" Width="56" TextAlignment="Center" VerticalAlignment="Center" FontSize="15"/>
-                            <Button Style="{StaticResource GhostButton}" Content="&#xE710;" FontFamily="{StaticResource IconFont}"
-                                    Width="38" Height="38" Padding="0" FontSize="11" Click="OnFontBigger"
-                                    ToolTip="{l:Tr '글꼴 크게'}" AutomationProperties.Name="{l:Tr '글꼴 크게'}"/>
-                        </StackPanel>
-
-                        <TextBlock x:Name="SecTermUse" Text="{l:Tr '터미널 사용'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="SmartCopyBox" Click="OnPrefClick" Margin="0,0,0,10">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr 'Ctrl+C 로 복사 · Ctrl+V 로 붙여넣기'}"/>
-                                <Run Text="{l:Tr '  글자를 선택했을 때만 Ctrl+C 가 복사 (선택이 없으면 실행 중인 명령 중단). Windows Terminal 과 같음'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="CopyOnSelectBox" Click="OnPrefClick" Margin="0,0,0,10">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '선택하면 바로 복사 · 우클릭은 붙여넣기'}"/>
-                                <Run Text="{l:Tr '  마우스로 끌어 선택하면 바로 클립보드에 복사하고, 우클릭은 항상 붙여넣기. PuTTY · mRemoteNG 와 같음'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="PasteConfirmBox" Click="OnPrefClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '여러 줄 붙여넣기 전에 확인'}"/>
-                                <Run Text="{l:Tr '  줄마다 바로 실행되는 사고 방지 (우클릭 붙여넣기 포함)'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <TextBlock Text="{l:Tr '터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 호스트 검색'}"
-                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,12,0,0" TextWrapping="Wrap"/>
-
-                        <TextBlock Text="{l:Tr '구문 강조'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Foreground="{StaticResource SubText}" Margin="0,0,0,12" TextWrapping="Wrap"
-                                   Text="{l:Tr '출력 내용은 그대로 두고 화면에 색만 덧입힙니다. 서버가 이미 색을 준 글자와 vim·htop 같은 전체 화면 프로그램은 건드리지 않습니다.'}"/>
-                        <StackPanel>
-                            <CheckBox x:Name="HlIpBox" Click="OnHighlightClick" Margin="0,0,0,10">
-                                <TextBlock><Run Text="{l:Tr 'IP 주소'}"/><Run Text="   10.0.1.20  10.0.0.0/16  192.168.0.5:22" Foreground="{StaticResource SubText}"/></TextBlock>
-                            </CheckBox>
-                            <CheckBox x:Name="HlNumBox" Click="OnHighlightClick" Margin="0,0,0,10">
-                                <TextBlock><Run Text="{l:Tr '숫자'}"/><Run Text="   1024  512M  99%  30ms" Foreground="{StaticResource SubText}"/></TextBlock>
-                            </CheckBox>
-                            <CheckBox x:Name="HlKwBox" Click="OnHighlightClick">
-                                <TextBlock><Run Text="{l:Tr '상태 키워드'}"/><Run Text="{l:Tr '   error·failed·denied (빨강)  warning·timeout (노랑)  ok·success·running (초록)'}" Foreground="{StaticResource SubText}"/></TextBlock>
-                            </CheckBox>
-                        </StackPanel>
-
-                        <TextBlock Text="{l:Tr '성능'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="GpuBox" Click="OnGpuClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '터미널 GPU 가속'}"/>
-                                <Run Text="{l:Tr '  대량 출력이 잦을 때만 켜세요. 끄면 메모리 약 70MB 절약 (앱을 다시 시작하면 적용)'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-
-                        <TextBlock x:Name="SecSsh" Text="SSH" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="SshAutoReconnectBox" Click="OnPrefClick" Margin="0,0,0,10">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '연결이 끊기면 자동으로 다시 연결'}"/>
-                                <Run Text="{l:Tr '  네트워크 끊김·절전 후 2·4·8·16·32초 간격으로 5번까지 (인증 실패는 다시 시도하지 않음)'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="SshKeyPromptBox" Click="OnSshKeyPromptClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '처음 접속하는 서버의 호스트키 확인'}"/>
-                                <Run Text="{l:Tr '  끄면 확인 없이 저장 후 접속. 저장된 키와 다르면(중간자 공격 가능) 항상 경고'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-
-                        <TextBlock x:Name="SecSftp" Text="SFTP" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="SftpAutoOpenBox" Click="OnSftpOptionClick" Margin="0,0,0,10">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr 'SSH 접속 시 SFTP 패널 자동 열기'}"/>
-                                <Run Text="{l:Tr '  로그인에 성공하면 왼쪽에 원격 파일 목록을 붙인다'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="SftpFollowBox" Click="OnSftpOptionClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '터미널 폴더 따라가기'}"/>
-                                <Run Text="{l:Tr '  터미널에서 cd 하면 SFTP 패널도 그 폴더로 (프롬프트 또는 OSC 7 로 현재 폴더를 읽음). 안 되면 패널의 터미널 버튼으로 이동'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
-                        <CheckBox x:Name="SftpOpenFolderBox" Click="OnPrefClick" Margin="0,10,0,0" Content="{l:Tr '다운로드가 끝나면 탐색기에서 폴더 열기'}"/>
-                        <TextBlock Text="{l:Tr '파일 편집기'}" Margin="0,16,0,4"/>
-                        <TextBlock Text="{l:Tr 'SFTP 파일을 더블클릭하면 이 프로그램으로 열고, 저장할 때마다 서버에 자동으로 올린다. 비우면 Windows 기본 프로그램'}"
-                                   Foreground="{StaticResource SubText}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap"/>
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="SftpEditorBox" Tag="{l:Tr 'Windows 기본 프로그램'}" LostFocus="OnSftpEditorChanged" KeyDown="OnSettingsBoxKeyDown"/>
-                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="VS Code" Margin="8,0,0,0" Height="38" Click="OnSftpEditorVsCode"/>
-                            <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="{l:Tr '찾기'}" Margin="8,0,0,0" Height="38" Click="OnSftpEditorBrowse"/>
-                        </Grid>
-
-                        <TextBlock x:Name="SecPorts" Text="{l:Tr '기본 포트'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Text="{l:Tr '새로 추가하는 호스트와 클라우드 동기화로 만들어지는 서버에 쓰는 포트. 프로필 설정에서 포트를 따로 지정한 프로필은 그 포트를 쓴다'}" Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="SSH" VerticalAlignment="Center" Width="40"/>
-                            <TextBox x:Name="DefSshPortBox" Width="90" Tag="22" LostFocus="OnDefaultPortChanged" KeyDown="OnSettingsBoxKeyDown"/>
-                            <TextBlock Text="RDP" VerticalAlignment="Center" Width="40" Margin="24,0,0,0"/>
-                            <TextBox x:Name="DefRdpPortBox" Width="90" Tag="3389" LostFocus="OnDefaultPortChanged" KeyDown="OnSettingsBoxKeyDown"/>
-                        </StackPanel>
-
-                        <TextBlock x:Name="SecLogin" Text="{l:Tr '시작 화면 로그인'}" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,4"/>
-                        <TextBlock Text="{l:Tr 'Nubis 를 열 때 GitHub · Google · Microsoft 계정으로 로그인하게 합니다. 허용한 계정만 들어올 수 있습니다. 저장된 서버 목록·계정은 로그인과 별도로 Windows DPAPI 로 암호화되어 있습니다.'}"
-                                   Foreground="{StaticResource SubText}" Margin="0,0,0,10" TextWrapping="Wrap"/>
-                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1" MaxWidth="560" HorizontalAlignment="Left">
-                            <UniformGrid Columns="4">
-                                <RadioButton x:Name="LoginNone" Style="{StaticResource Segment}" Content="{l:Tr '사용 안 함'}" GroupName="login" Checked="OnLoginProviderChanged" MinWidth="120"/>
-                                <RadioButton x:Name="LoginGitHub" Style="{StaticResource Segment}" Content="GitHub" GroupName="login" Checked="OnLoginProviderChanged"/>
-                                <RadioButton x:Name="LoginGoogle" Style="{StaticResource Segment}" Content="Google" GroupName="login" Checked="OnLoginProviderChanged"/>
-                                <RadioButton x:Name="LoginMicrosoft" Style="{StaticResource Segment}" Content="Microsoft" GroupName="login" Checked="OnLoginProviderChanged"/>
-                            </UniformGrid>
+                        <Border Style="{StaticResource SetCard}" Margin="0,0,0,0">
+                            <Border Style="{StaticResource SetRowFirst}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '글자색 자동 대비 보정'}"/>
+                                        <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '배경과 비슷해 안 보이는 글자색(밝은 테마의 흰 글자 등)을 읽을 수 있게 자동 조정'}"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutoContrastBox" Style="{StaticResource SetSwitch}" Click="OnAutoContrastClick"
+                                              AutomationProperties.Name="{l:Tr '글자색 자동 대비 보정'}"/>
+                                </Grid>
+                            </Border>
                         </Border>
-                        <StackPanel x:Name="LoginFields" MaxWidth="560" HorizontalAlignment="Left">
-                            <TextBlock x:Name="LoginHelpText" Foreground="{StaticResource SubText}" FontSize="12" Margin="2,10,0,0" TextWrapping="Wrap"/>
-                            <TextBlock Text="Client ID" Style="{StaticResource FieldLabel}"/>
-                            <TextBox x:Name="LoginClientIdBox"/>
-                            <StackPanel x:Name="LoginSecretPanel">
-                                <TextBlock Text="{l:Tr 'Client Secret (Google 만 — 비워 두면 저장된 값 유지)'}" Style="{StaticResource FieldLabel}"/>
-                                <PasswordBox x:Name="LoginSecretBox"/>
-                            </StackPanel>
-                            <StackPanel x:Name="LoginTenantPanel">
-                                <TextBlock Text="{l:Tr '테넌트 (회사·학교 계정은 organizations, 특정 회사만이면 테넌트 ID 또는 도메인)'}" Style="{StaticResource FieldLabel}"/>
-                                <TextBox x:Name="LoginTenantBox" Tag="organizations"/>
-                            </StackPanel>
-                            <TextBlock x:Name="LoginAllowedLabel" Text="{l:Tr '허용 계정'}" Style="{StaticResource FieldLabel}"/>
-                            <TextBox x:Name="LoginAllowedBox"/>
-                            <StackPanel x:Name="LoginOrgPanel">
-                                <TextBlock Text="{l:Tr 'GitHub Organization (이 조직 멤버면 허용 — 선택)'}" Style="{StaticResource FieldLabel}"/>
-                                <TextBox x:Name="LoginOrgBox" Tag="{l:Tr '예: my-org'}"/>
-                            </StackPanel>
-                            <Grid Margin="0,4,0,0">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition/>
-                                    <ColumnDefinition Width="16"/>
-                                    <ColumnDefinition/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel>
-                                    <TextBlock Text="{l:Tr '로그인 유지 (시간, 0 = 실행할 때마다)'}" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="LoginRememberBox" Tag="0"/>
-                                </StackPanel>
-                                <StackPanel Grid.Column="2">
-                                    <TextBlock Text="{l:Tr '오프라인 허용 (일, 0 = 막음)'}" Style="{StaticResource FieldLabel}"/>
-                                    <TextBox x:Name="LoginOfflineBox" Tag="0"/>
-                                </StackPanel>
-                            </Grid>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                            <Button x:Name="LoginSaveButton" Style="{StaticResource PrimaryButton}" Content="{l:Tr '테스트 로그인 후 저장'}" Click="OnLoginSave"/>
-                        </StackPanel>
-                        <TextBlock x:Name="LoginStatusText" Foreground="{StaticResource SubText}" FontSize="12" Margin="2,8,0,0" TextWrapping="Wrap" MaxWidth="560" HorizontalAlignment="Left"/>
 
-                        <TextBlock x:Name="SecClaude" Text="Claude" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="AutoReadOnlyBox" Click="OnAutoReadOnlyClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '읽기 전용 명령은 승인 없이 실행'}"/>
-                                <Run Text="{l:Tr '  조회 명령(ls, pwd, df, systemctl status, Get-* 등)만 바로 실행 — 터미널 입력은 셸 프롬프트일 때만. 그 외 명령은 승인 창, 감사 로그 기록'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
+                        <!-- ===== 터미널 글꼴 ===== -->
+                        <TextBlock x:Name="SecFont" Text="{l:Tr '터미널 글꼴'}" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <!-- 글꼴 선택지는 RefreshSettingsPage 가 설치된 글꼴로 채운다 -->
+                                <Border Style="{StaticResource SetRowFirst}" Padding="16,14,16,8">
+                                    <StackPanel>
+                                        <WrapPanel x:Name="FontPanel"/>
+                                        <Button Style="{StaticResource GhostButton}" Content="{l:Tr '다른 글꼴...'}" HorizontalAlignment="Left" Click="OnOtherFont"
+                                                Margin="0,0,0,6" ToolTip="{l:Tr '설치된 글꼴 이름을 직접 입력'}"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '글꼴 크기'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '터미널에서 Ctrl+휠 · Ctrl+= · Ctrl+- 로 그 탭만 잠깐 키우고 줄일 수 있습니다 (Ctrl+0 = 원래 크기).'}"/>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="24,0,0,0" VerticalAlignment="Center">
+                                            <Button Style="{StaticResource GhostButton}" Content="&#xE738;" FontFamily="{StaticResource IconFont}"
+                                                    Width="34" Height="34" Padding="0" FontSize="11" Click="OnFontSmaller"
+                                                    ToolTip="{l:Tr '글꼴 작게'}" AutomationProperties.Name="{l:Tr '글꼴 작게'}"/>
+                                            <TextBlock x:Name="FontSizeText" Width="56" TextAlignment="Center" VerticalAlignment="Center"
+                                                       Style="{StaticResource TextBodyStrong}"/>
+                                            <Button Style="{StaticResource GhostButton}" Content="&#xE710;" FontFamily="{StaticResource IconFont}"
+                                                    Width="34" Height="34" Padding="0" FontSize="11" Click="OnFontBigger"
+                                                    ToolTip="{l:Tr '글꼴 크게'}" AutomationProperties.Name="{l:Tr '글꼴 크게'}"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
 
-                        <TextBlock x:Name="SecRdp" Text="RDP" FontSize="14" FontWeight="SemiBold" Margin="0,28,0,12"/>
-                        <CheckBox x:Name="RdpCertBox" Click="OnRdpCertClick">
-                            <TextBlock TextWrapping="Wrap">
-                                <Run Text="{l:Tr '서버 인증서 경고 표시'}"/>
-                                <Run Text="{l:Tr '  끄면 인증서를 확인할 수 없는 서버(자체 서명)도 경고 없이 바로 접속 — 다음 접속부터 적용'}" Foreground="{StaticResource SubText}"/>
-                            </TextBlock>
-                        </CheckBox>
+                        <!-- ===== 터미널 사용 ===== -->
+                        <TextBlock x:Name="SecTermUse" Text="{l:Tr '터미널 사용'}" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr 'Ctrl+C 로 복사 · Ctrl+V 로 붙여넣기'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '글자를 선택했을 때만 Ctrl+C 가 복사 (선택이 없으면 실행 중인 명령 중단). Windows Terminal 과 같음'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SmartCopyBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr 'Ctrl+C 로 복사 · Ctrl+V 로 붙여넣기'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '선택하면 바로 복사 · 우클릭은 붙여넣기'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '마우스로 끌어 선택하면 바로 클립보드에 복사하고, 우클릭은 항상 붙여넣기. PuTTY · mRemoteNG 와 같음'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="CopyOnSelectBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '선택하면 바로 복사 · 우클릭은 붙여넣기'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '여러 줄 붙여넣기 전에 확인'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '줄마다 바로 실행되는 사고 방지 (우클릭 붙여넣기 포함)'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="PasteConfirmBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '여러 줄 붙여넣기 전에 확인'}"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+                        <TextBlock Style="{StaticResource SetNote}"
+                                   Text="{l:Tr '터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 호스트 검색'}"/>
+
+                        <!-- ===== 구문 강조 ===== -->
+                        <TextBlock Text="{l:Tr '구문 강조'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}"
+                                   Text="{l:Tr '출력 내용은 그대로 두고 화면에 색만 덧입힙니다. 서버가 이미 색을 준 글자와 vim·htop 같은 전체 화면 프로그램은 건드리지 않습니다.'}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr 'IP 주소'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" FontFamily="{StaticResource MonoFont}" Text="10.0.1.20  10.0.0.0/16  192.168.0.5:22"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="HlIpBox" Style="{StaticResource SetSwitch}" Click="OnHighlightClick"
+                                                  AutomationProperties.Name="{l:Tr 'IP 주소'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '숫자'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" FontFamily="{StaticResource MonoFont}" Text="1024  512M  99%  30ms"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="HlNumBox" Style="{StaticResource SetSwitch}" Click="OnHighlightClick"
+                                                  AutomationProperties.Name="{l:Tr '숫자'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '상태 키워드'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}"
+                                                       Text="{l:Tr 'error·failed·denied (빨강)  warning·timeout (노랑)  ok·success·running (초록)'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="HlKwBox" Style="{StaticResource SetSwitch}" Click="OnHighlightClick"
+                                                  AutomationProperties.Name="{l:Tr '상태 키워드'}"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== 성능 ===== -->
+                        <TextBlock Text="{l:Tr '성능'}" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <Border Style="{StaticResource SetRowFirst}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '터미널 GPU 가속'}"/>
+                                        <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '대량 출력이 잦을 때만 켜세요. 끄면 메모리 약 70MB 절약 (앱을 다시 시작하면 적용)'}"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="GpuBox" Style="{StaticResource SetSwitch}" Click="OnGpuClick"
+                                              AutomationProperties.Name="{l:Tr '터미널 GPU 가속'}"/>
+                                </Grid>
+                            </Border>
+                        </Border>
+
+                        <!-- ===== SSH ===== -->
+                        <TextBlock x:Name="SecSsh" Text="SSH" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '연결이 끊기면 자동으로 다시 연결'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '네트워크 끊김·절전 후 2·4·8·16·32초 간격으로 5번까지 (인증 실패는 다시 시도하지 않음)'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SshAutoReconnectBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '연결이 끊기면 자동으로 다시 연결'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '처음 접속하는 서버의 호스트키 확인'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '끄면 확인 없이 저장 후 접속. 저장된 키와 다르면(중간자 공격 가능) 항상 경고'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SshKeyPromptBox" Style="{StaticResource SetSwitch}" Click="OnSshKeyPromptClick"
+                                                  AutomationProperties.Name="{l:Tr '처음 접속하는 서버의 호스트키 확인'}"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== SFTP ===== -->
+                        <TextBlock x:Name="SecSftp" Text="SFTP" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr 'SSH 접속 시 SFTP 패널 자동 열기'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '로그인에 성공하면 왼쪽에 원격 파일 목록을 붙인다'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SftpAutoOpenBox" Style="{StaticResource SetSwitch}" Click="OnSftpOptionClick"
+                                                  AutomationProperties.Name="{l:Tr 'SSH 접속 시 SFTP 패널 자동 열기'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '터미널 폴더 따라가기'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '터미널에서 cd 하면 SFTP 패널도 그 폴더로 (프롬프트 또는 OSC 7 로 현재 폴더를 읽음). 안 되면 패널의 터미널 버튼으로 이동'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="SftpFollowBox" Style="{StaticResource SetSwitch}" Click="OnSftpOptionClick"
+                                                  AutomationProperties.Name="{l:Tr '터미널 폴더 따라가기'}"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Style="{StaticResource SetLabel}" VerticalAlignment="Center" Text="{l:Tr '다운로드가 끝나면 탐색기에서 폴더 열기'}"/>
+                                        <CheckBox x:Name="SftpOpenFolderBox" Style="{StaticResource SetSwitch}" Click="OnPrefClick"
+                                                  AutomationProperties.Name="{l:Tr '다운로드가 끝나면 탐색기에서 폴더 열기'}"/>
+                                    </Grid>
+                                </Border>
+                                <!-- 편집기 경로는 길어서 이름·설명 아래에 입력란을 한 줄로 -->
+                                <Border Style="{StaticResource SetRow}" Padding="16,12,16,14">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '파일 편집기'}"/>
+                                        <TextBlock Style="{StaticResource SetDesc}"
+                                                   Text="{l:Tr 'SFTP 파일을 더블클릭하면 이 프로그램으로 열고, 저장할 때마다 서버에 자동으로 올린다. 비우면 Windows 기본 프로그램'}"/>
+                                        <Grid Margin="0,10,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox x:Name="SftpEditorBox" Tag="{l:Tr 'Windows 기본 프로그램'}" LostFocus="OnSftpEditorChanged" KeyDown="OnSettingsBoxKeyDown"
+                                                     AutomationProperties.Name="{l:Tr '파일 편집기'}"/>
+                                            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Content="VS Code" Margin="8,0,0,0" Height="38" Click="OnSftpEditorVsCode"/>
+                                            <Button Grid.Column="2" Style="{StaticResource GhostButton}" Content="{l:Tr '찾기'}" Margin="8,0,0,0" Height="38" Click="OnSftpEditorBrowse"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== 기본 포트 ===== -->
+                        <TextBlock x:Name="SecPorts" Text="{l:Tr '기본 포트'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}" Text="{l:Tr '새로 추가하는 호스트와 클라우드 동기화로 만들어지는 서버에 쓰는 포트. 프로필 설정에서 포트를 따로 지정한 프로필은 그 포트를 쓴다'}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="SSH" Style="{StaticResource SetLabel}" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="DefSshPortBox" Grid.Column="1" Margin="24,0,0,0" Width="96" TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="22" LostFocus="OnDefaultPortChanged" KeyDown="OnSettingsBoxKeyDown" AutomationProperties.Name="SSH"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Text="RDP" Style="{StaticResource SetLabel}" VerticalAlignment="Center"/>
+                                        <TextBox x:Name="DefRdpPortBox" Grid.Column="1" Margin="24,0,0,0" Width="96" TextAlignment="Right" VerticalAlignment="Center"
+                                                 Tag="3389" LostFocus="OnDefaultPortChanged" KeyDown="OnSettingsBoxKeyDown" AutomationProperties.Name="RDP"/>
+                                    </Grid>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== 시작 화면 로그인 ===== -->
+                        <!-- 소유자가 아니면 방식 선택·입력란을 IsEnabled=false 로 막는다 — 흐린 모양은 각 컨트롤 템플릿이 맡고, 카드·설명 글은 그대로 읽힌다 -->
+                        <TextBlock x:Name="SecLogin" Text="{l:Tr '시작 화면 로그인'}" Style="{StaticResource SetHeader}"/>
+                        <TextBlock Style="{StaticResource SetIntro}"
+                                   Text="{l:Tr 'Nubis 를 열 때 GitHub · Google · Microsoft 계정으로 로그인하게 합니다. 허용한 계정만 들어올 수 있습니다. 저장된 서버 목록·계정은 로그인과 별도로 Windows DPAPI 로 암호화되어 있습니다.'}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <StackPanel>
+                                <Border Style="{StaticResource SetRowFirst}" Padding="16,14">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '로그인 방식'}" Margin="0,0,0,8"/>
+                                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                                                MaxWidth="560" HorizontalAlignment="Left">
+                                            <UniformGrid Columns="4">
+                                                <RadioButton x:Name="LoginNone" Style="{StaticResource Segment}" Content="{l:Tr '사용 안 함'}" GroupName="login" Checked="OnLoginProviderChanged" MinWidth="120"/>
+                                                <RadioButton x:Name="LoginGitHub" Style="{StaticResource Segment}" Content="GitHub" GroupName="login" Checked="OnLoginProviderChanged"/>
+                                                <RadioButton x:Name="LoginGoogle" Style="{StaticResource Segment}" Content="Google" GroupName="login" Checked="OnLoginProviderChanged"/>
+                                                <RadioButton x:Name="LoginMicrosoft" Style="{StaticResource Segment}" Content="Microsoft" GroupName="login" Checked="OnLoginProviderChanged"/>
+                                            </UniformGrid>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+                                <!-- 방식이 '사용 안 함' 이면 LoginFields 와 함께 이 줄(구분선 포함)도 숨는다 -->
+                                <Border Style="{StaticResource SetRow}" Padding="16,4,16,14" Visibility="{Binding Visibility, ElementName=LoginFields}">
+                                    <StackPanel x:Name="LoginFields" MaxWidth="560" HorizontalAlignment="Left">
+                                        <TextBlock x:Name="LoginHelpText" Style="{StaticResource SetDesc}" Margin="0,10,0,0" LineHeight="18"/>
+                                        <TextBlock Text="Client ID" Style="{StaticResource FieldLabel}"/>
+                                        <TextBox x:Name="LoginClientIdBox"/>
+                                        <StackPanel x:Name="LoginSecretPanel">
+                                            <TextBlock Text="{l:Tr 'Client Secret (Google 만 — 비워 두면 저장된 값 유지)'}" Style="{StaticResource FieldLabel}"/>
+                                            <PasswordBox x:Name="LoginSecretBox"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="LoginTenantPanel">
+                                            <TextBlock Text="{l:Tr '테넌트 (회사·학교 계정은 organizations, 특정 회사만이면 테넌트 ID 또는 도메인)'}" Style="{StaticResource FieldLabel}" TextWrapping="Wrap"/>
+                                            <TextBox x:Name="LoginTenantBox" Tag="organizations"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="LoginAllowedLabel" Text="{l:Tr '허용 계정'}" Style="{StaticResource FieldLabel}" TextWrapping="Wrap"/>
+                                        <TextBox x:Name="LoginAllowedBox"/>
+                                        <StackPanel x:Name="LoginOrgPanel">
+                                            <TextBlock Text="{l:Tr 'GitHub Organization (이 조직 멤버면 허용 — 선택)'}" Style="{StaticResource FieldLabel}"/>
+                                            <TextBox x:Name="LoginOrgBox" Tag="{l:Tr '예: my-org'}"/>
+                                        </StackPanel>
+                                        <Grid Margin="0,4,0,0">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition/>
+                                                <ColumnDefinition Width="16"/>
+                                                <ColumnDefinition/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{l:Tr '로그인 유지 (시간, 0 = 실행할 때마다)'}" Style="{StaticResource FieldLabel}" TextWrapping="Wrap"/>
+                                                <TextBox x:Name="LoginRememberBox" Tag="0"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="{l:Tr '오프라인 허용 (일, 0 = 막음)'}" Style="{StaticResource FieldLabel}" TextWrapping="Wrap"/>
+                                                <TextBox x:Name="LoginOfflineBox" Tag="0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <!-- 저장 · 로그아웃 · 상태 -->
+                                <Border Style="{StaticResource SetRow}" Padding="16,14">
+                                    <StackPanel>
+                                        <WrapPanel>
+                                            <Button x:Name="LoginSaveButton" Style="{StaticResource PrimaryButton}" Content="{l:Tr '테스트 로그인 후 저장'}" Click="OnLoginSave"
+                                                    Margin="0,0,8,0"/>
+                                            <!-- 시작 화면 로그인을 쓰는 중일 때만 보인다 (LoadLoginSettings). 소유자가 아니어도 자기 로그인은 끝낼 수 있다 -->
+                                            <Button x:Name="LoginSignOutButton" Style="{StaticResource GhostButton}" Content="{l:Tr '로그아웃 (다음 실행 때 로그인)'}"
+                                                    Click="OnLoginSignOut" Visibility="Collapsed"/>
+                                        </WrapPanel>
+                                        <TextBlock x:Name="LoginStatusText" Style="{StaticResource SetDesc}" Margin="0,10,0,0" LineHeight="18"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- ===== Claude ===== -->
+                        <TextBlock x:Name="SecClaude" Text="Claude" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <Border Style="{StaticResource SetRowFirst}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '읽기 전용 명령은 승인 없이 실행'}"/>
+                                        <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '조회 명령(ls, pwd, df, systemctl status, Get-* 등)만 바로 실행 — 터미널 입력은 셸 프롬프트일 때만. 그 외 명령은 승인 창, 감사 로그 기록'}"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="AutoReadOnlyBox" Style="{StaticResource SetSwitch}" Click="OnAutoReadOnlyClick"
+                                              AutomationProperties.Name="{l:Tr '읽기 전용 명령은 승인 없이 실행'}"/>
+                                </Grid>
+                            </Border>
+                        </Border>
+
+                        <!-- ===== RDP ===== -->
+                        <TextBlock x:Name="SecRdp" Text="RDP" Style="{StaticResource SetHeader}"/>
+                        <Border Style="{StaticResource SetCard}">
+                            <Border Style="{StaticResource SetRowFirst}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '서버 인증서 경고 표시'}"/>
+                                        <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '끄면 인증서를 확인할 수 없는 서버(자체 서명)도 경고 없이 바로 접속 — 다음 접속부터 적용'}"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="RdpCertBox" Style="{StaticResource SetSwitch}" Click="OnRdpCertClick"
+                                              AutomationProperties.Name="{l:Tr '서버 인증서 경고 표시'}"/>
+                                </Grid>
+                            </Border>
+                        </Border>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -1043,19 +1844,29 @@
 
                 <!-- 호스트 편집 패널 (오른쪽 슬라이드) -->
                 <Grid x:Name="EditorLayer" Grid.Column="1" Visibility="Collapsed">
-                    <Border Background="#99000000" MouseLeftButtonDown="OnEditorDimClick"/>
-                    <Border Width="390" HorizontalAlignment="Right" Background="#1B1E2C"
-                            BorderBrush="{StaticResource Line}" BorderThickness="1,0,0,0">
-                        <Border.RenderTransform>
+                    <Border Background="#8C000000" MouseLeftButtonDown="OnEditorDimClick"/>
+                    <!-- 패널 + 그림자 뒤판이 함께 미끄러진다 (EditorSlide). 그림자(Shadow16)는 내용 없는 뒤판에만 걸어
+                         입력 칸 캐럿 깜박임 · 버튼 hover 가 그림자 효과를 매번 다시 그리게 하지 않는다 -->
+                    <Grid Width="390" HorizontalAlignment="Right">
+                        <Grid.RenderTransform>
                             <TranslateTransform x:Name="EditorSlide"/>
-                        </Border.RenderTransform>
+                        </Grid.RenderTransform>
+                        <Grid.Resources>
+                            <!-- 편집 패널 구획 머리글 -->
+                            <Style x:Key="EdSection" TargetType="TextBlock" BasedOn="{StaticResource TextOverline}">
+                                <Setter Property="Margin" Value="0,26,0,0"/>
+                            </Style>
+                        </Grid.Resources>
+                        <Border Background="{StaticResource OverlayBg}" Effect="{StaticResource Shadow16}" IsHitTestVisible="False"/>
+                    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1,0,0,0">
                         <DockPanel>
-                            <Grid DockPanel.Dock="Top" Margin="24,20,16,6">
-                                <TextBlock x:Name="EditorTitle" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" HorizontalAlignment="Right" Click="OnEditorClose"/>
+                            <Grid DockPanel.Dock="Top" Margin="24,18,14,2">
+                                <TextBlock x:Name="EditorTitle" Style="{StaticResource TextSubtitle}" VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="11" HorizontalAlignment="Right" Click="OnEditorClose"
+                                        ToolTip="{l:Tr '닫기'}" AutomationProperties.Name="{l:Tr '닫기'}"/>
                             </Grid>
 
-                            <TextBlock x:Name="EditorError" DockPanel.Dock="Bottom" Foreground="#F0616D" FontSize="12" Margin="24,0,24,8"
+                            <TextBlock x:Name="EditorError" DockPanel.Dock="Bottom" Foreground="{StaticResource Danger}" FontSize="12" Margin="24,0,24,8"
                                        TextWrapping="Wrap">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
@@ -1067,7 +1878,8 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
-                            <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="24,14">
+                            <!-- 하단: 삭제(왼쪽) · 저장 · 저장 후 연결(오른쪽, 주 동작) -->
+                            <Border DockPanel.Dock="Bottom" BorderBrush="{StaticResource Stroke}" BorderThickness="0,1,0,0" Padding="20,12,20,14">
                                 <Grid>
                                     <Button x:Name="DeleteButton" Style="{StaticResource DangerButton}" Content="{l:Tr '삭제'}"
                                             HorizontalAlignment="Left" Click="OnEditorDelete"/>
@@ -1079,10 +1891,11 @@
                             </Border>
 
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                <StackPanel Margin="24,0,24,20">
+                                <StackPanel Margin="24,0,24,24">
+                                    <TextBlock Text="{l:Tr '접속 정보'}" Style="{StaticResource EdSection}" Margin="0,14,0,0"/>
                                     <TextBlock Text="{l:Tr '프로토콜'}" Style="{StaticResource FieldLabel}"/>
-                                    <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3"
-                                            BorderBrush="{StaticResource Line}" BorderThickness="1">
+                                    <Border Background="{StaticResource ControlFill}" CornerRadius="{StaticResource RadiusLg}" Padding="3"
+                                            BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="1">
                                         <UniformGrid Columns="2">
                                             <RadioButton x:Name="ProtoSsh" Style="{StaticResource Segment}" Content="SSH" GroupName="proto"
                                                          Checked="OnProtoChanged"/>
@@ -1117,7 +1930,7 @@
                                         <Button x:Name="EdJumpButton" Style="{StaticResource GhostButton}" Height="38" HorizontalAlignment="Stretch"
                                                 HorizontalContentAlignment="Left" Click="OnPickJump"/>
                                         <!-- 이 호스트를 점프 서버로 쓰는 다른 호스트가 있는데 이 호스트에도 점프 서버를 지정하면 (한 단계만 지원) -->
-                                        <TextBlock x:Name="JumpWarning" FontSize="11" Foreground="#F5B740" Margin="2,6,0,0" TextWrapping="Wrap"
+                                        <TextBlock x:Name="JumpWarning" FontSize="11" Foreground="{StaticResource Warning}" Margin="2,6,0,0" TextWrapping="Wrap"
                                                    Visibility="Collapsed"/>
                                         <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
                                                    Text="{l:Tr '이 서버에 바로 닿지 않으면 거쳐 갈 SSH 호스트를 고르세요 (ssh 의 ProxyJump). 점프 서버의 계정·Vault·OTP 설정을 그대로 씁니다.'}"/>
@@ -1130,6 +1943,7 @@
                                         <TextBlock x:Name="GatewayHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
 
+                                    <TextBlock Text="{l:Tr '이름 · 그룹'}" Style="{StaticResource EdSection}"/>
                                     <TextBlock Text="{l:Tr '이름'}" Style="{StaticResource FieldLabel}"/>
                                     <TextBox x:Name="EdLabel" Tag="{l:Tr '비워두면 주소가 표시됩니다'}"/>
 
@@ -1146,16 +1960,16 @@
                                     </Grid>
 
                                     <!-- 로그인: Vault 계정(선택) + 직접 입력(비우면 Vault 값) -->
-                                    <TextBlock Text="{l:Tr '로그인 계정'}" Style="{StaticResource FieldLabel}"/>
-                                    <Border x:Name="VaultCard" Background="{StaticResource CardBg}" CornerRadius="8" Padding="12,10"
-                                            BorderBrush="{StaticResource Accent}" BorderThickness="1">
+                                    <TextBlock Text="{l:Tr '로그인 계정'}" Style="{StaticResource EdSection}" Margin="0,26,0,8"/>
+                                    <Border x:Name="VaultCard" Background="{StaticResource AccentSubtle}" CornerRadius="{StaticResource RadiusLg}" Padding="12,10"
+                                            BorderBrush="{StaticResource AccentSubtleHover}" BorderThickness="1">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="26"/>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <TextBlock x:Name="EdVaultGlyph" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource Accent}"
+                                            <TextBlock x:Name="EdVaultGlyph" FontFamily="{StaticResource IconFont}" Foreground="{StaticResource AccentText}"
                                                        FontSize="15" VerticalAlignment="Center"/>
                                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                 <TextBlock x:Name="EdVaultName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
@@ -1179,7 +1993,7 @@
                                     </Button>
                                     <TextBlock x:Name="VaultHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
                                     <!-- Vault 를 고르면 이 호스트에 따로 저장된 계정 정보는 숨기고 쓰지 않는다 (해제하면 다시 보이고 쓰인다) -->
-                                    <TextBlock x:Name="HiddenCredNote" FontSize="11" Foreground="{StaticResource Accent}" Margin="2,6,0,0" TextWrapping="Wrap"
+                                    <TextBlock x:Name="HiddenCredNote" FontSize="11" Foreground="{StaticResource AccentText}" Margin="2,6,0,0" TextWrapping="Wrap"
                                                Visibility="Collapsed" Text="{l:Tr '이 호스트에 따로 저장된 계정 정보가 있지만 Vault 계정이 우선이라 숨겨 두었습니다. Vault 계정을 해제하면 다시 보이고 그 값으로 로그인합니다.'}"/>
 
                                     <StackPanel x:Name="HostUserPanel">
@@ -1221,6 +2035,7 @@
                             </ScrollViewer>
                         </DockPanel>
                     </Border>
+                    </Grid>
                 </Grid>
             </Grid>
 

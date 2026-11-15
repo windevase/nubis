@@ -129,7 +129,7 @@ public partial class MainWindow
         if (_profiles.Count == 0 || _syncingAll) return;
         _syncingAll = true;
         SyncAllButton.IsEnabled = false;
-        SyncAllButton.Content = L.T("동기화 중...");
+        SyncAllText.Text = L.T("동기화 중...");
         try
         {
             using var gate = new System.Threading.SemaphoreSlim(4);
@@ -143,7 +143,7 @@ public partial class MainWindow
         {
             _syncingAll = false;
             SyncAllButton.IsEnabled = true;
-            SyncAllButton.Content = L.T("전체 동기화");
+            SyncAllText.Text = L.T("전체 동기화");
         }
     }
 
@@ -466,6 +466,33 @@ public partial class MainWindow
         }
         catch (Exception ex) { return L.F("실행 실패: {0}", ex.Message); }
     }
+}
+
+/// <summary>
+/// Cloud 화면 프로필 행 표시용 (UI 전용). values[0] = CloudProfile, 그 뒤 값은 변경 알림만 받는다 (SummaryText 가
+/// 서버 수 · 동기화 시각 · 결과가 바뀔 때 알려지므로 함께 묶어 둔다).
+/// ConverterParameter: "total" = 서버 수 알약, "running" = 실행 중 알약, "synced" = 한 번이라도 동기화했으면 Visible, 그 밖 = 동기화 시각 · 결과 줄
+/// </summary>
+internal sealed class CloudProfileViewConverter : System.Windows.Data.IMultiValueConverter
+{
+    public object Convert(object[] values, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+    {
+        var mode = parameter as string;
+        if (values.Length == 0 || values[0] is not CloudProfile p)
+            return mode == "synced" ? Visibility.Collapsed : "";
+        return mode switch
+        {
+            "synced" => p.LastSync == null ? Visibility.Collapsed : Visibility.Visible,
+            "total" => L.F("{0}대", p.HostCount),
+            "running" => L.F("실행 {0}", p.RunningCount),
+            _ => p.LastSync is not { } at
+                ? L.T("아직 동기화하지 않음")
+                : L.F("{0:MM-dd HH:mm} 동기화", at) + (p.LastResult.Length > 0 ? "  ·  " + p.LastResult : ""),
+        };
+    }
+
+    public object[] ConvertBack(object value, Type[] targetTypes, object? parameter, System.Globalization.CultureInfo culture) =>
+        throw new NotSupportedException();
 }
 
 /// <summary>동기화로 지워진 호스트를 점프 호스트로 쓰던 호스트 정리 (UI 와 무관, 테스트 대상)</summary>

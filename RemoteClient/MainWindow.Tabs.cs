@@ -240,7 +240,7 @@ public partial class MainWindow
             case "localterm": OpenLocalTerminal(); break;
             case "closetab": if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) CloseTabs(new[] { cur }); break;
             case "reopentab": ReopenClosedTab(); break;
-            case "search": FocusSearch(); break;
+            case "search": ShowCommandPalette(); break;   // 터미널 포커스에서 Ctrl+Shift+K → 명령 팔레트
             default:
                 if (key.StartsWith("tab") && int.TryParse(key[3..], out var n)) SelectTabNumber(n);
                 break;
@@ -269,7 +269,8 @@ public partial class MainWindow
         foreach (var t in _tabs) t.IsSelected = false;
         SessionsHost.Visibility = Visibility.Collapsed;
         HomeView.Visibility = Visibility.Visible;
-        HomeTab.Background = (Brush)FindResource("CardBg");
+        // 선택된 홈 탭은 본문 바탕(Layer2)과 이어진다. 선택 해제는 Brushes.Transparent — XAML 트리거가 이 인스턴스로 판단한다
+        HomeTab.Background = (Brush)FindResource("Layer2Bg");
         UpdateActiveContext();
     }
 
@@ -355,7 +356,12 @@ public partial class MainWindow
             SelectTabNumber(e.Key - Key.D0);
             e.Handled = true;
         }
-        else if (ctrl && (e.Key == Key.K || (e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)))
+        else if (ctrl && !shift && e.Key == Key.K)
+        {
+            ShowCommandPalette();   // 호스트 · 탭 · 동작 통합 검색 (Ctrl+K)
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key == Key.F && !shift && EditorLayer.Visibility != Visibility.Visible && Keyboard.FocusedElement is not TextBox)
         {
             FocusSearch();
             e.Handled = true;
@@ -382,7 +388,7 @@ public partial class MainWindow
         else if (n - 1 < _tabs.Count) SelectTab(_tabs[n - 1]);
     }
 
-    /// <summary>Ctrl+K / Ctrl+F (터미널에서는 Ctrl+Shift+K): 홈으로 가서 검색창에 포커스</summary>
+    /// <summary>Ctrl+F: 홈으로 가서 검색창에 포커스 (Ctrl+K 는 명령 팔레트)</summary>
     private void FocusSearch()
     {
         SelectHome();

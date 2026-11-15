@@ -461,6 +461,17 @@ public sealed class XtermView : UserControl
             t = "settings", theme = theme.ToXterm(), fontSize = s.FontSize, fontFamily = s.FontFamily, autoContrast = s.AutoContrast,
             hlIp = s.HighlightIp, hlNum = s.HighlightNumbers, hlKeywords = s.HighlightKeywords, smartCopy = s.SmartCopyPaste, copyOnSelect = s.CopyOnSelect,
             zoom = includeZoom ? _zoom : (int?)null,
+            // 페이지 크롬(찾기 상자·끊김 카드·스크롤바)용 — 밝은 테마면 스크롤바를 어둡게, 문구는 앱 언어로 (없으면 페이지 기본값)
+            light = theme.IsLight,
+            ui = new
+            {
+                findPlaceholder = L.T("화면에서 찾기"),
+                findPrev = L.T("이전 결과 (Shift+Enter)"),
+                findNext = L.T("다음 결과 (Enter)"),
+                findClose = L.T("닫기 (Esc)"),
+                offline = L.T("세션이 종료되었습니다"),
+                reconnectHint = L.T("Enter 키로도 할 수 있습니다"),
+            },
         });
     }
 

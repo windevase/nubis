@@ -140,10 +140,10 @@ public partial class SftpPanel
                 done += size;
                 SetProgress(done, total);
             }
-            EndTransfer(L.F("업로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), target) + (skipNote != null ? " " + skipNote : ""));
+            EndTransfer(L.F("업로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), target) + (skipNote != null ? " " + skipNote : ""), ToastKind.Success);
         }
         catch (OperationCanceledException) { EndTransfer(L.T("업로드를 취소했습니다.")); }
-        catch (Exception ex) { EndTransfer(L.F("업로드 실패: {0}", ex.Message)); }
+        catch (Exception ex) { EndTransfer(L.F("업로드 실패: {0}", ex.Message), ToastKind.Error); }
         await NavigateAsync(_cwd);
     }
 
@@ -270,7 +270,7 @@ public partial class SftpPanel
             dir = Path.Combine(OpenTempRoot, host, Guid.NewGuid().ToString("N")[..8]);
             Directory.CreateDirectory(dir);
         }
-        catch (Exception ex) { ShowStatus(L.F("다운로드 실패: {0}", ex.Message)); return; }
+        catch (Exception ex) { ShowStatus(L.F("다운로드 실패: {0}", ex.Message), kind: ToastKind.Error); return; }
         TrackTempDir(dir);   // 패널이 닫힐 때 지운다
         await DownloadAsync(new List<SftpItem> { item }, dir, openWhenDone: true);
     }
@@ -364,11 +364,11 @@ public partial class SftpPanel
             }
 
             EndTransfer(L.F("다운로드 완료: {0}개 ({1}) → {2}", files.Count, HumanSize(total), destLabel) +
-                        (skipped.Count > 0 ? " " + L.F("(폴더 링크·끊긴 링크·특수 파일 {0}개는 건너뜀)", skipped.Count) : ""));
+                        (skipped.Count > 0 ? " " + L.F("(폴더 링크·끊긴 링크·특수 파일 {0}개는 건너뜀)", skipped.Count) : ""), ToastKind.Success);
             return files.Select(f => f.Local).ToList();
         }
         catch (OperationCanceledException) { EndTransfer(L.T("다운로드를 취소했습니다.")); }
-        catch (Exception ex) { EndTransfer(L.F("다운로드 실패: {0}", ex.Message)); }
+        catch (Exception ex) { EndTransfer(L.F("다운로드 실패: {0}", ex.Message), ToastKind.Error); }
         return null;
     }
 

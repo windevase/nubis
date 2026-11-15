@@ -119,3 +119,25 @@ public partial class MainWindow
         catch { }
     }
 }
+
+/// <summary>
+/// Known Hosts 화면 표시용: 저장값 "[REJECTED ]형식 SHA256:..." 을 나눠 보여 준다 (UI 전용 — 저장값은 그대로).
+/// ConverterParameter: "type" = 키 형식, "fp" = 지문(형식이 없는 값은 전체), "rejected" = 거부 배지 Visibility
+/// </summary>
+internal sealed class KnownHostPartConverter : System.Windows.Data.IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture)
+    {
+        var v = value as string ?? "";
+        var rejected = KnownHostStore.IsRejected(v);
+        if (parameter as string == "rejected") return rejected ? Visibility.Visible : Visibility.Collapsed;
+        var body = rejected ? v["REJECTED ".Length..] : v;
+        var sp = body.IndexOf(' ');
+        return parameter as string == "type"
+            ? (sp > 0 ? body[..sp] : "")
+            : (sp > 0 ? body[(sp + 1)..] : body);
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, System.Globalization.CultureInfo culture) =>
+        throw new NotSupportedException();
+}

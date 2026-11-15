@@ -4,7 +4,7 @@
         xmlns:l="clr-namespace:Nubis"
         Title="{l:Tr '호스트 가져오기'}" Width="960" Height="700" MinWidth="780" MinHeight="560"
         WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="True" Background="#01000000" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource Text}">
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="0" ResizeBorderThickness="10" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
@@ -32,6 +32,14 @@
             <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
             <Setter Property="Margin" Value="0,0,8,0"/>
         </Style>
+        <!-- 세그먼트 바깥 틀 (옅은 채움 + 머리카락 테두리) -->
+        <Style x:Key="SegmentTrack" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource InputBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="{StaticResource RadiusLg}"/>
+            <Setter Property="Padding" Value="3"/>
+        </Style>
         <Style x:Key="MultiLineBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
             <Setter Property="Height" Value="Auto"/>
             <Setter Property="AcceptsReturn" Value="True"/>
@@ -39,32 +47,44 @@
             <Setter Property="TextWrapping" Value="NoWrap"/>
             <Setter Property="VerticalContentAlignment" Value="Top"/>
             <Setter Property="Padding" Value="10,8"/>
-            <Setter Property="FontFamily" Value="Cascadia Mono, Consolas"/>
+            <Setter Property="FontFamily" Value="{StaticResource MonoFont}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="VerticalScrollBarVisibility" Value="Auto"/>
             <Setter Property="HorizontalScrollBarVisibility" Value="Auto"/>
         </Style>
     </Window.Resources>
 
-    <Border Background="#1B1E2C" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="12" Margin="12">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.5"/>
-        </Border.Effect>
-        <DockPanel Margin="22,16,22,18">
+    <!-- 공통 대화상자 틀: Overlay 면 · RadiusXl · Shadow16(외곽 1개). 크기 조절 창이라 바깥 여백(= 크기 조절 테두리 자리)은 그대로 좁게 -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="12" Effect="{StaticResource Shadow16}">
+        <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <DockPanel Margin="24,18,24,16">
             <!-- 제목 (끌어서 이동) -->
             <Grid DockPanel.Dock="Top" Background="Transparent" MouseLeftButtonDown="OnDrag">
-                <StackPanel>
-                    <TextBlock Text="{l:Tr '호스트 가져오기'}" FontSize="17" FontWeight="SemiBold"/>
-                    <TextBlock Style="{StaticResource Hint}" Margin="0,4,0,0"
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Border Width="32" Height="32" CornerRadius="16" Background="{StaticResource AccentSubtle}" Margin="0,0,14,0" VerticalAlignment="Top">
+                    <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{StaticResource AccentText}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{l:Tr '호스트 가져오기'}" Style="{StaticResource TextSubtitle}"/>
+                    <TextBlock Style="{StaticResource Hint}" Margin="0,3,0,0"
                                Text="{l:Tr '다른 도구나 목록에서 서버를 읽어 미리 본 뒤 등록합니다. 비밀번호는 가져오지 않으니 계정은 Vault 로 지정하세요.'}"/>
                 </StackPanel>
-                <Button Style="{StaticResource IconButton}" Content="&#xE711;" HorizontalAlignment="Right" VerticalAlignment="Top"
+                <Button Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE711;" VerticalAlignment="Top" Margin="12,0,0,0"
                         Click="OnCancel" ToolTip="{l:Tr '닫기'}"/>
             </Grid>
 
             <!-- 출처 선택 -->
-            <Border DockPanel.Dock="Top" Margin="0,14,0,0" Background="{StaticResource InputBg}" CornerRadius="8" Padding="3"
-                    BorderBrush="{StaticResource Line}" BorderThickness="1">
+            <Border DockPanel.Dock="Top" Margin="0,18,0,0" Style="{StaticResource SegmentTrack}">
                 <UniformGrid Columns="5">
                     <RadioButton x:Name="SrcTable" Style="{StaticResource Segment}" GroupName="src" IsChecked="True" Checked="OnSourceChanged"
                                  Content="{l:Tr '엑셀·CSV 붙여넣기'}"/>
@@ -174,17 +194,8 @@
             <!-- 읽은 결과 상태 -->
             <TextBlock x:Name="SourceStatus" DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="2,10,0,0" Visibility="Collapsed"/>
 
-            <!-- 하단: 요약 + 버튼 -->
-            <Grid DockPanel.Dock="Bottom" Margin="0,14,0,0">
-                <TextBlock x:Name="SummaryText" Style="{StaticResource Hint}" FontSize="12.5" VerticalAlignment="Center" Margin="2,0,200,0"/>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="80"/>
-                    <Button x:Name="ImportButton" Content="{l:Tr '등록'}" Style="{StaticResource PrimaryButton}" MinWidth="96" Click="OnImport" IsEnabled="False"/>
-                </StackPanel>
-            </Grid>
-
             <!-- 본문: 미리보기 + 옵션 -->
-            <Grid Margin="0,12,0,0">
+            <Grid Margin="0,14,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="250"/>
@@ -204,10 +215,14 @@
                             <Button Content="{l:Tr '선택 해제'}" Style="{StaticResource GhostButton}" Padding="12,0" Height="30" Margin="6,0,0,0" Click="OnSelectNone"/>
                         </StackPanel>
                         <!-- 검색: 이름 · 주소 · 그룹 · 사용자 · 메모 (그룹 이름으로 찾고 '모두 선택' = 그룹별 선택) -->
-                        <TextBox x:Name="SearchBox" Grid.Column="1" Height="30" Margin="10,0,10,0" MinWidth="120"
-                                 Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"/>
-                        <Border Grid.Column="2" HorizontalAlignment="Right" Background="{StaticResource InputBg}" CornerRadius="8" Padding="2"
-                                BorderBrush="{StaticResource Line}" BorderThickness="1">
+                        <!-- 검색 (돋보기 아이콘은 입력란 안 왼쪽 — 글자·placeholder 는 Padding 만큼 오른쪽에서 시작) -->
+                        <Grid Grid.Column="1" Margin="10,0,10,0" MinWidth="120">
+                            <TextBox x:Name="SearchBox" Height="30" Padding="30,0,10,0"
+                                     Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"/>
+                            <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Center" Margin="11,0,0,0" IsHitTestVisible="False"/>
+                        </Grid>
+                        <Border Grid.Column="2" HorizontalAlignment="Right" Style="{StaticResource SegmentTrack}" Padding="2">
                             <StackPanel Orientation="Horizontal">
                                 <RadioButton x:Name="FilterAll" Style="{StaticResource Segment}" GroupName="filter" IsChecked="True" MinWidth="64"
                                              Checked="OnFilterChanged" Content="{l:Tr '전체'}" FontSize="12"/>
@@ -221,18 +236,29 @@
                         </Border>
                     </Grid>
 
-                    <!-- 경고 -->
-                    <Border x:Name="WarningsBox" DockPanel.Dock="Bottom" Margin="0,8,0,0" Background="{StaticResource CardBg}" CornerRadius="8"
-                            Padding="12,8" Visibility="Collapsed">
+                    <!-- 경고: 옅은 노랑 띠, 머리글을 누르면 펼치기 · 접기 (OnToggleWarnings) -->
+                    <Border x:Name="WarningsBox" DockPanel.Dock="Bottom" Margin="0,10,0,0" Background="{StaticResource WarningSubtle}"
+                            CornerRadius="{StaticResource RadiusLg}" Padding="12,8,12,10" Visibility="Collapsed">
                         <DockPanel>
-                            <TextBlock x:Name="WarningsTitle" DockPanel.Dock="Top" FontSize="12" FontWeight="SemiBold" Foreground="#E5B94D"
-                                       Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnToggleWarnings"
-                                       ToolTip="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}"/>
-                            <ScrollViewer x:Name="WarningsScroll" MaxHeight="74" VerticalScrollBarVisibility="Auto" Margin="0,4,0,0">
+                            <Grid DockPanel.Dock="Top" Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnToggleWarnings"
+                                  ToolTip="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource Warning}"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBlock x:Name="WarningsTitle" Grid.Column="1" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Warning}"
+                                           VerticalAlignment="Center"/>
+                                <TextBlock x:Name="WarningsChevron" Grid.Column="2" Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="10"
+                                           Foreground="{StaticResource Warning}" VerticalAlignment="Center"/>
+                            </Grid>
+                            <ScrollViewer x:Name="WarningsScroll" MaxHeight="74" VerticalScrollBarVisibility="Auto" Margin="20,6,0,0">
                                 <ItemsControl x:Name="WarningsList">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <TextBlock Text="{Binding Mode=OneTime}" Foreground="{StaticResource SubText}" FontSize="12" TextWrapping="Wrap" Margin="0,1"/>
+                                            <TextBlock Text="{Binding Mode=OneTime}" Foreground="{StaticResource DialogText}" FontSize="12" TextWrapping="Wrap" Margin="0,1"/>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -240,7 +266,8 @@
                         </DockPanel>
                     </Border>
 
-                    <Border Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}" BorderThickness="1" CornerRadius="8">
+                    <!-- 미리보기 목록: 안쪽 상자 (Layer3) — 행에는 그림자·테두리 없이 hover/선택 채움만 (가상화 목록 성능) -->
+                    <Border Background="{StaticResource Layer3Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="1" CornerRadius="{StaticResource RadiusLg}">
                         <DockPanel>
                             <!-- 열 머리글 (아래 줄과 같은 열 너비). 오른쪽 여백은 목록 세로 스크롤바가 보일 때만 그 너비만큼 (OnRowListScrollChanged) -->
                             <Grid x:Name="HeaderGrid" DockPanel.Dock="Top" Margin="10,8,10,6">
@@ -264,12 +291,12 @@
                                 <TextBlock Grid.Column="7" Style="{StaticResource HeaderCell}" Text="{l:Tr '상태'}"/>
                                 <TextBlock Grid.Column="8" Style="{StaticResource HeaderCell}" Text="{l:Tr '메모'}"/>
                             </Grid>
-                            <Rectangle DockPanel.Dock="Top" Height="1" Fill="{StaticResource Line}"/>
+                            <Rectangle DockPanel.Dock="Top" Height="1" Fill="{StaticResource StrokeSubtle}"/>
                             <Grid>
                                 <ListBox x:Name="RowList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}"
                                          HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                                         SelectionMode="Single" Padding="0,2,0,2" ScrollViewer.ScrollChanged="OnRowListScrollChanged">
+                                         SelectionMode="Single" Padding="0,4,0,4" ScrollViewer.ScrollChanged="OnRowListScrollChanged">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Foreground" Value="{StaticResource Text}"/>
@@ -278,15 +305,16 @@
                                             <Setter Property="Template">
                                                 <Setter.Value>
                                                     <ControlTemplate TargetType="ListBoxItem">
-                                                        <Border x:Name="bd" Background="Transparent" Padding="10,5,10,5">
+                                                        <!-- 좌우 Margin 4 + Padding 6 = 머리글 여백 10 (열 맞춤 — OnRowListScrollChanged 는 오른쪽 10 기준) -->
+                                                        <Border x:Name="bd" Background="Transparent" Margin="4,0" Padding="6,5" CornerRadius="{StaticResource RadiusMd}">
                                                             <ContentPresenter/>
                                                         </Border>
                                                         <ControlTemplate.Triggers>
                                                             <Trigger Property="IsMouseOver" Value="True">
-                                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource CardBg}"/>
+                                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
                                                             </Trigger>
                                                             <Trigger Property="IsSelected" Value="True">
-                                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource CardHoverBg}"/>
+                                                                <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillSelected}"/>
                                                             </Trigger>
                                                         </ControlTemplate.Triggers>
                                                     </ControlTemplate>
@@ -316,26 +344,34 @@
                                                 <TextBlock Grid.Column="4" Style="{StaticResource Cell}" Text="{Binding ProtocolText, Mode=OneTime}"/>
                                                 <TextBlock Grid.Column="5" Style="{StaticResource Cell}" Text="{Binding GroupText, Mode=OneTime}"/>
                                                 <TextBlock Grid.Column="6" Style="{StaticResource Cell}" Text="{Binding UserText, Mode=OneTime}"/>
-                                                <TextBlock x:Name="st" Grid.Column="7" Style="{StaticResource Cell}" Text="{Binding StatusText, Mode=OneTime}"
-                                                           Foreground="{StaticResource Accent}"/>
+                                                <!-- 상태 알약: 새 호스트 = 강조 · 이미 있음 = 정보 · 중복 = 경고 · 오류 = 위험 (옅은 채움 + 같은 색 글자) -->
+                                                <Border x:Name="pill" Grid.Column="7" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                        Background="{StaticResource AccentSubtle}" CornerRadius="8" Padding="7,1,7,2">
+                                                    <TextBlock x:Name="st" Text="{Binding StatusText, Mode=OneTime}" FontSize="11" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource AccentText}" TextTrimming="CharacterEllipsis"/>
+                                                </Border>
                                                 <TextBlock Grid.Column="8" Style="{StaticResource Cell}" Text="{Binding DetailText, Mode=OneTime}"
                                                            Foreground="{StaticResource SubText}"/>
                                             </Grid>
                                             <DataTemplate.Triggers>
                                                 <DataTrigger Binding="{Binding Status, Mode=OneTime}" Value="Existing">
-                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource RdpBrush}"/>
+                                                    <Setter TargetName="pill" Property="Background" Value="{StaticResource InfoSubtle}"/>
+                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource Info}"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding Status, Mode=OneTime}" Value="Duplicate">
-                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource SubText}"/>
+                                                    <Setter TargetName="pill" Property="Background" Value="{StaticResource WarningSubtle}"/>
+                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource Warning}"/>
                                                 </DataTrigger>
                                                 <DataTrigger Binding="{Binding Status, Mode=OneTime}" Value="Invalid">
-                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource Danger}"/>
+                                                    <Setter TargetName="pill" Property="Background" Value="{StaticResource DangerSubtle}"/>
+                                                    <Setter TargetName="st" Property="Foreground" Value="{StaticResource DangerHover}"/>
                                                 </DataTrigger>
                                             </DataTemplate.Triggers>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
-                                <TextBlock x:Name="EmptyText" Style="{StaticResource Hint}" FontSize="13" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                <TextBlock x:Name="EmptyText" Style="{StaticResource Hint}" FontSize="13" Foreground="{StaticResource TextTertiary}"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center"
                                            TextAlignment="Center" Margin="24" Text="{l:Tr '위에서 가져올 곳을 고르고 불러오면 여기에 미리 보여 줍니다.'}"/>
                             </Grid>
                         </DockPanel>
@@ -343,10 +379,10 @@
                 </DockPanel>
 
                 <!-- 옵션 -->
-                <ScrollViewer Grid.Column="1" Margin="14,0,0,0" VerticalScrollBarVisibility="Auto">
+                <ScrollViewer Grid.Column="1" Margin="16,0,0,0" VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,6" Text="{l:Tr '그룹'}"/>
-                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                        <Border Style="{StaticResource SegmentTrack}">
                             <UniformGrid Columns="2">
                                 <RadioButton x:Name="GroupPrefixMode" Style="{StaticResource Segment}" GroupName="grp" IsChecked="True" FontSize="12"
                                              Checked="OnOptionChanged" Content="{l:Tr '앞에 붙이기'}"/>
@@ -376,7 +412,7 @@
                                    Text="{l:Tr '고르면 가져온 사용자명 대신 그 계정으로 로그인합니다. 비우면 기본 계정을 따릅니다.'}"/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr '이미 있는 호스트'}"/>
-                        <Border Background="{StaticResource InputBg}" CornerRadius="8" Padding="3" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                        <Border Style="{StaticResource SegmentTrack}">
                             <UniformGrid Columns="2">
                                 <RadioButton x:Name="ExistingSkip" Style="{StaticResource Segment}" GroupName="exist" IsChecked="True" FontSize="12"
                                              Checked="OnExistingModeChanged" Content="{l:Tr '건너뛰기'}"/>
@@ -390,5 +426,23 @@
                 </ScrollViewer>
             </Grid>
         </DockPanel>
+
+        <!-- 버튼 띠: 왼쪽 요약, 오른쪽 취소 · 등록 -->
+        <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                CornerRadius="0,0,11,11" Padding="24,14,24,14">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="SummaryText" Style="{StaticResource Hint}" FontSize="12.5" Foreground="{StaticResource DialogText}"
+                           VerticalAlignment="Center" Margin="0,0,16,0"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="96"/>
+                    <Button x:Name="ImportButton" Content="{l:Tr '등록'}" Style="{StaticResource PrimaryButton}" MinWidth="104" Click="OnImport" IsEnabled="False"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+        </Grid>
     </Border>
 </Window>
