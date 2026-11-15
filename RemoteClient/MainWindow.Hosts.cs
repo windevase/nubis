@@ -69,7 +69,7 @@ public partial class MainWindow
                 IsCollapsed = !searching && _collapsedLocal.Contains("L:" + g.Key),
             }));
 
-        // 클라우드 프로필 그룹: AWS → Tencent → GCP → Azure, 기본은 접힌 상태 (서버가 많으므로)
+        // 클라우드 프로필 그룹: AWS → Tencent → GCP → Azure → OCI, 기본은 접힌 상태 (서버가 많으므로)
         foreach (var p in _profiles.OrderBy(p => p.Provider).ThenBy(p => p.GroupName, StringComparer.CurrentCultureIgnoreCase))
         {
             var hosts = filtered.Where(h => h.CloudProfileId == p.Id)
