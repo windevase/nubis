@@ -40,6 +40,8 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.EC2" Version="4.0.132.2" />
+    <!-- EKS 클러스터 목록 (Kubernetes 페이지 · 클라우드에서 찾기). AWSSDK.Core 는 EC2 와 같은 4.0.102.19 -->
+    <PackageReference Include="AWSSDK.EKS" Version="4.0.108.3" />
     <PackageReference Include="AWSSDK.SSO" Version="4.0.100.26" />
     <PackageReference Include="AWSSDK.SSOOIDC" Version="4.0.100.25" />
     <PackageReference Include="Azure.Identity" Version="1.21.0" />

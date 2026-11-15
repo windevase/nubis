@@ -34,6 +34,9 @@ public static class K8sSync
             if (!seen.Add(cc.Id)) continue;   // 조회 결과에 같은 클러스터가 두 번 와도 한 번만
             if (!byId.TryGetValue(cc.Id, out var c))
             {
+                // 같은 API 서버를 kubeconfig 로 이미 직접 가져왔으면 새로 만들지 않는다 (같은 클러스터 카드가 둘 생기지 않게)
+                if (cc.Endpoint.Length > 0 && clusters.Any(x => !x.IsCloud && string.Equals(x.Endpoint.TrimEnd('/'), cc.Endpoint.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
+                    continue;
                 c = new K8sCluster
                 {
                     Source = K8sSource.Cloud,
