@@ -110,6 +110,8 @@
     <SolidColorBrush x:Key="SuccessSubtle" Color="#2446C08A"/>
     <SolidColorBrush x:Key="Warning" Color="{StaticResource WarningColor}"/>
     <SolidColorBrush x:Key="WarningSubtle" Color="#24F5B740"/>
+    <!-- 슬라이드 패널 뒤를 어둡게 덮는 막 (편집 패널 등) -->
+    <SolidColorBrush x:Key="Scrim" Color="#8C000000"/>
     <SolidColorBrush x:Key="DangerHover" Color="{StaticResource DangerHoverColor}"/>
     <SolidColorBrush x:Key="DangerSubtle" Color="#24EC5257"/>
     <SolidColorBrush x:Key="Info" Color="{StaticResource InfoColor}"/>

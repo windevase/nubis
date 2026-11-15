@@ -42,6 +42,8 @@
         <Style x:Key="PaletteRow" TargetType="ListBoxItem" BasedOn="{StaticResource ListItem}">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Padding" Value="10,7"/>
+            <!-- 화면 읽기 프로그램: 형식 이름(PaletteItem) 대신 제목을 읽게 -->
+            <Setter Property="AutomationProperties.Name" Value="{Binding Title}"/>
         </Style>
 
         <DataTemplate x:Key="PaletteRowTemplate">
@@ -93,7 +95,8 @@
                 <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{StaticResource TextTertiary}"
                            VerticalAlignment="Center" Margin="0,0,12,0"/>
                 <TextBox x:Name="QueryBox" Grid.Column="1" Style="{StaticResource PaletteInput}"
-                         Tag="{l:Tr '호스트 · 탭 · 동작 검색'}" TextChanged="OnQueryChanged"/>
+                         Tag="{l:Tr '호스트 · 탭 · 동작 검색'}" AutomationProperties.Name="{l:Tr '호스트 · 탭 · 동작 검색'}"
+                         TextChanged="OnQueryChanged"/>
             </Grid>
             <Border Grid.Row="1" Height="1" Background="{StaticResource Stroke}"/>
 

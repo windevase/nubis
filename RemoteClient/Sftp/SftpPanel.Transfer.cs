@@ -295,7 +295,7 @@ public partial class SftpPanel
             else if (SettingsStore.Current.SftpOpenFolderAfterDownload)
                 Process.Start(new ProcessStartInfo("explorer.exe", $"\"{localDir}\"") { UseShellExecute = true });
         }
-        catch (Exception ex) { ShowStatus(ex.Message); }
+        catch (Exception ex) { ShowStatus(ex.Message, kind: ToastKind.Error); }
     }
 
     /// <summary>

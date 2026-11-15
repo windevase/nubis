@@ -70,6 +70,9 @@ public partial class SftpPanel
         else { _sortKey = key; _sortDesc = key != SftpSortKey.Name; }
         ApplyView(keepSelection: true);
         e.Handled = true;
+        // 머리글이 버튼이 되면서 마우스로 누르면 포커스를 가져간다 — 목록으로 돌려 Delete · F2 · Enter · Ctrl+H 가 계속 먹게
+        // (Tab · Space 로 누른 경우는 머리글에 포커스를 둔다)
+        if (InputManager.Current.MostRecentInputDevice is MouseDevice) FileList.Focus();
     }
 
     /// <summary>머리글: 정렬 중인 열만 글자를 한 단계 밝게 + 방향 화살표(글리프). 나머지는 3차 글자색, 화살표 숨김</summary>

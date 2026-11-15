@@ -38,7 +38,13 @@ public partial class LoginWindow : Window
                         L.F("허용된 계정으로 로그인하면 Nubis 가 열립니다. 비밀번호는 브라우저({0})에서만 입력하며, Nubis 는 받지 않습니다.", name);
         LoginButton.Content = L.F("{0}로 로그인", cfg.Provider == LoginProviderKind.Microsoft ? "Microsoft" : name);
         CancelButton.Content = test ? L.T("취소") : L.T("종료");
-        Closed += (_, _) => CancelLogin();
+        // 아이콘만 있는 복사 버튼 — 화면 낭독기가 읽을 이름 (툴팁과 같은 문구)
+        System.Windows.Automation.AutomationProperties.SetName(CopyCodeButton, L.T("코드 복사"));
+        Closed += (_, _) =>
+        {
+            CancelLogin();
+            _copiedTimer?.Stop();   // 닫힌 창을 1.5초 뒤 타이머가 다시 건드리지 않게
+        };
     }
 
     /// <summary>들어온 계정의 프로필 이름 (로그인·오프라인 허용으로 들어왔을 때)</summary>

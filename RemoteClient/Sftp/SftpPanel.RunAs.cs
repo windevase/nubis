@@ -96,7 +96,7 @@ public partial class SftpPanel
             UpdateRunAsBadge();
             // 전송·편집 열기 중이면(BeginTransfer 가 연결보다 먼저) 전송 결과 문구에 붙여 보인다 (keepIfBusy → EndTransfer)
             var notice = L.F("SFTP 를 {0} 권한으로 열지 못해 {1} 로 엽니다 — {2}", user, auth.User, ex.Message);
-            ShowStatus(notice, keepIfBusy: true);
+            ShowStatus(notice, keepIfBusy: true, kind: ToastKind.Warning);
             return null;
         }
     }

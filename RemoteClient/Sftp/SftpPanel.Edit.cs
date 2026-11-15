@@ -186,7 +186,7 @@ public partial class SftpPanel
                     L.T("편집 충돌"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             {
                 s.Hash = hash;   // 같은 내용으로 다시 묻지 않음
-                ShowStatus(L.F("올리지 않음: {0} (서버 파일이 바뀌어 있음)", name), keepIfBusy: true);
+                ShowStatus(L.F("올리지 않음: {0} (서버 파일이 바뀌어 있음)", name), keepIfBusy: true, kind: ToastKind.Warning);
                 return;
             }
             // 2) 임시 이름으로 올린 뒤 바꿔치기 (UploadOneAsync) — 중간에 끊겨도 원래 파일(/etc 설정 등)은 그대로.
@@ -304,7 +304,7 @@ public partial class SftpPanel
         catch (System.ComponentModel.Win32Exception)
         {
             try { Process.Start(new ProcessStartInfo("notepad.exe", $"\"{local}\"") { UseShellExecute = true }); }
-            catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message)); }
+            catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message), kind: ToastKind.Error); }
         }
     }
 
@@ -325,9 +325,9 @@ public partial class SftpPanel
         {
             // 연결된 프로그램이 없음 → 메모장
             try { Process.Start(new ProcessStartInfo("notepad.exe", $"\"{local}\"") { UseShellExecute = true }); }
-            catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message)); }
+            catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message), kind: ToastKind.Error); }
         }
-        catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message)); }
+        catch (Exception ex) { ShowStatus(L.F("편집기를 열지 못했습니다: {0}", ex.Message), kind: ToastKind.Error); }
     }
 
     /// <summary>

@@ -230,6 +230,8 @@
             </Style>
 
             <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource BaseButton}">
+                <!-- 아이콘만 있는 버튼: 따로 이름을 주지 않으면 툴팁 문구를 화면 낭독기 이름으로 쓴다 (글리프 코드가 읽히지 않게) -->
+                <Setter Property="AutomationProperties.Name" Value="{Binding ToolTip, RelativeSource={RelativeSource Self}}"/>
                 <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
                 <Setter Property="FontSize" Value="12"/>
                 <Setter Property="Padding" Value="0"/>

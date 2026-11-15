@@ -180,6 +180,8 @@ public partial class MainWindow : Window
         void Fit() { if (_captionSpacer != null && WindowBackdrop.CaptionButtonsWidth(this) is { } w) _captionSpacer.Width = Math.Ceiling(w) + 4; }
         Loaded += (_, _) => Fit();
         DpiChanged += (_, _) => Dispatcher.BeginInvoke(Fit, DispatcherPriority.Loaded);
+        // 최대화/복원 때 캡션 버튼 영역이 달라질 수 있다 (최대화 시 테두리 · 버튼 높이)
+        StateChanged += (_, _) => { if (WindowState != WindowState.Minimized) Dispatcher.BeginInvoke(Fit, DispatcherPriority.Loaded); };
     }
 
     private void OnMinimize(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

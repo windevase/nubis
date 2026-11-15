@@ -179,6 +179,9 @@ public partial class MainWindow
         var current = CurrentSettingsSection(tops, SettingsPage.VerticalOffset, SettingsPage.ScrollableHeight,
             SettingsPage.ViewportHeight, _settingsJumpPicked);
         if (current != _settingsJumpPicked) _settingsJumpPicked = -1;   // 고른 섹션이 화면 밖으로 나가면 평소 기준으로
+        // 스크롤 중에는 이 함수가 프레임마다 불린다 — 강조할 칩이 그대로면 버튼 속성을 다시 쓰지 않는다
+        if (current == _settingsJumpShown) return;
+        _settingsJumpShown = current;
         // 지금 섹션 칩 = 옅은 강조 채움 + 강조 글자 (Segment 선택 모양과 같은 계열). 나머지는 스타일 값으로 되돌린다
         var fill = (Brush)FindResource("AccentSubtle");
         var text = (Brush)FindResource("AccentText");
@@ -201,6 +204,9 @@ public partial class MainWindow
 
     /// <summary>바로가기로 마지막에 고른 섹션 번호 — 페이지 끝 근처 섹션은 맨 위까지 올라오지 못하므로 화면에 보이는 동안 그 버튼을 강조</summary>
     private int _settingsJumpPicked = -1;
+
+    /// <summary>지금 강조해 둔 바로가기 버튼 번호 (-2 = 아직 칠하지 않음)</summary>
+    private int _settingsJumpShown = -2;
 
     /// <summary>
     /// 지금 보고 있는 섹션 번호 (UI 와 무관, 테스트용). tops = 각 섹션 제목의 세로 위치(못 구하면 NaN).

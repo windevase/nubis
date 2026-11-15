@@ -231,7 +231,8 @@ public static class SshExec
             target.Address = addr;
             TunneledSftpClient c;
             // 계정 정보(키 읽기 등)에서 실패해도 점프 터널을 남기지 않는다
-            try { c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel); }
+            // OperationTimeout 은 연결(서브시스템 열기·초기화) 전에 — 기본값 무제한이면 응답 없는 서버에서 스레드가 영원히 멈춘다
+            try { c = new TunneledSftpClient(SshAuth.Build(target, h.Username, h.Password, timeoutSec, tunnel: tunnel), tunnel) { OperationTimeout = SharedSftpClient.RequestTimeout }; }
             catch { tunnel?.Dispose(); throw; }
             string? hostKeyError = null;
             var reachedAuth = false;

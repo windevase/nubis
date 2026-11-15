@@ -23,6 +23,9 @@ public sealed class SharedSftpClient : SftpClient
 
     private SharedSftpClient(ConnectionInfo info) : base(info) { }
 
+    /// <summary>SFTP 요청 하나의 응답 대기 상한 (목록 한 묶음 · 파일 한 조각)</summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
+
     /// <summary>서버 명령(sudo sftp-server 등)으로 SFTP 를 열지 못함. ServerError 는 명령이 표준 오류로 남긴 글</summary>
     public sealed class ServerCommandException(string message, string? serverError, Exception inner) : Exception(message, inner)
     {
@@ -41,7 +44,12 @@ public sealed class SharedSftpClient : SftpClient
         var session = SessionProperty!.GetValue(shell);
         if (session == null) return null;
         // ConnectionInfo 는 터미널 것을 그대로 쓴다 (공개 생성자는 소유하지 않으므로 닫을 때 해제하지 않음)
-        var client = new SharedSftpClient(shell.ConnectionInfo) { SftpServerCommand = serverCommand, SftpServerPreamble = preamble };
+        // OperationTimeout: SSH.NET 기본값은 무제한이라, 목록 조회 중에 탭이 닫혀 터미널 세션이 끊기면 요청이 응답을 영원히 기다리며
+        // 백그라운드 스레드와 탭 화면 전체를 붙잡았다 (2026-11-15 테스트베드 dotnet-dump gcroot 로 확인). 요청 하나 기준이라 큰 전송엔 영향 없음
+        var client = new SharedSftpClient(shell.ConnectionInfo)
+        {
+            SftpServerCommand = serverCommand, SftpServerPreamble = preamble, OperationTimeout = RequestTimeout,
+        };
         SessionProperty.SetValue(client, session);
         try
         {

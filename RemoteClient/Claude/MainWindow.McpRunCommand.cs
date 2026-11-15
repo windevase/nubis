@@ -135,8 +135,10 @@ public partial class MainWindow
             // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 실행 중인 명령에는 SSH 는 SIGTERM · WinRM 은 셸 삭제로 중단을 시도)
             var all = Task.WhenAll(sshTask, winTask);
             // WaitAsync 는 끝나면 취소 등록을 바로 풀어 준다 (예전 Task.Delay(Infinite, token) 은 실행이 끝난 뒤에도 등록이 남았다)
+            // 여기서는 끝나기(또는 취소)만 기다린다 — 실행 오류는 아래 await all 에서 올린다 (예전 WhenAny 와 같은 동작:
+            // 오류와 취소가 겹쳐도 취소 안내가 나가게)
             try { await all.WaitAsync(cts.Token); }
-            catch (OperationCanceledException) { }
+            catch { }
             if (!cts.IsCancellationRequested)
             {
                 try { await all; }

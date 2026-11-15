@@ -471,7 +471,10 @@ public sealed class RdpSessionView : UserControl, ISessionView
     public void FocusSession()
     {
         // 닫은 탭(SelectTab 이 예약한 늦은 포커스 등)은 풀로 돌아가 다른 탭이 쓰는 컨트롤에 포커스를 주지 않는다
-        if (!_closed && _wfh.Visibility == Visibility.Visible) _rdp.Focus();
+        if (_closed) return;
+        if (_wfh.Visibility == Visibility.Visible) _rdp.Focus();
+        // 끊김·실패 안내 화면이면 "다시 연결" 버튼에 포커스 — 탭을 고른 뒤 마우스 없이 Enter/Space 로 다시 연결할 수 있게
+        else if (_overlay.Visibility == Visibility.Visible && _reconnectButton is { Visibility: Visibility.Visible } btn) btn.Focus();
     }
 
     public void CloseSession()

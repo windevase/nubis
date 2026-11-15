@@ -465,8 +465,8 @@ public partial class SftpPanel : UserControl
         TransferText.Text = result;
         TransferText.ToolTip = result;
         TransferProgress.Value = 1;
-        // 실패한 전송은 진행 막대를 숨긴다 (가득 찬 막대가 "완료"로 보이지 않게)
-        TransferProgress.Visibility = kind is ToastKind.Error or ToastKind.Warning ? Visibility.Collapsed : Visibility.Visible;
+        // 가득 찬 진행 막대는 성공한 전송에만 — 실패 · 취소 · 안내(편집 중 등)에서 "완료"로 보이지 않게
+        TransferProgress.Visibility = kind == ToastKind.Success ? Visibility.Visible : Visibility.Collapsed;
         if (!_closed && (kind is ToastKind.Error or ToastKind.Warning || (kind == ToastKind.Success && elapsed >= ToastAfter)))
             Toast.Show(result, kind, kind == ToastKind.Error ? 6000 : 4000);
         await Task.Delay(6000);
