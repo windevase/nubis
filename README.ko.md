@@ -25,14 +25,24 @@ Linux 와 Windows 서버가 섞여 있고 여러 클라우드에 흩어져 있�
 **🖥️ 모든 접속을 한 창에서**
 SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속되고, `Ctrl+K` 를 누르고 이름·IP·열린 탭·동작 이름 일부를 입력해 방향키로 고른 뒤 Enter 로 실행합니다. 즐겨찾기와 최근 접속 호스트가 맨 위에 있습니다. 탭은 순서 바꾸기·이름 바꾸기·다시 연결·한꺼번에 닫기가 되고, 방금 닫은 탭은 `Ctrl+Shift+R` 로 다시 엽니다. 복사·붙여넣기는 Windows Terminal 방식(`Ctrl+C`/`Ctrl+V`)이나 PuTTY · mRemoteNG 방식(선택하면 복사, 우클릭으로 붙여넣기) 중 익숙한 쪽으로 고를 수 있습니다. ssh-agent 와 `~/.ssh` 기본 키, `known_hosts`, OTP·Push 2단계 인증(답 기억하기), 점프 서버(ProxyJump)까지 OpenSSH 처럼 동작하고, RDP 는 RD 게이트웨이를 포함해 mstsc 기본 설정을 따릅니다.
 
+<img src="docs/media/palette-connect.gif" alt="Ctrl+K 로 호스트를 찾아 SSH 접속, 같은 연결로 SFTP 패널이 열림" width="100%">
+
 **☁️ 클라우드 서버가 이미 목록에**
 이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI · OCI `~/.oci/config` 프로필 — `oci session authenticate` 브라우저 로그인 또는 API 키)로 AWS · Tencent Cloud · Google Cloud · Azure · Oracle Cloud(OCI) 의 서버를 프로필별로 가져옵니다. 필요할 때·앱을 켤 때·몇 분마다 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다. 그룹을 우클릭하면 그 그룹 서버 전체를 공인/사설 IP 로 바꾸거나 Vault 계정 하나를 한 번에 지정하고, 카드를 `Ctrl`/`Shift`+클릭으로 골라 계정·사용자명·포트·그룹·접속 IP·즐겨찾기를 한꺼번에 편집할 수도 있습니다.
+
+<img src="docs/media/cloud.gif" alt="프로필 그룹으로 정리된 클라우드 서버와 AWS · Tencent · GCP · Azure · OCI Cloud 페이지" width="100%">
 
 **🏢 온프레미스 서버도 한 번에**
 `IMPORT` 로 이미 가진 서버 목록을 그대로 가져옵니다 — 엑셀·CSV 붙여넣기(한글·영문 머리글 자동 인식), `~/.ssh/config`(`Include`·`ProxyJump` 포함), mRemoteNG `confCons.xml`(폴더가 그룹으로), Ansible 인벤토리(INI·YAML), 그리고 Microsoft Entra Domain Services 를 포함한 Active Directory(LDAPS 우선, 현재 Windows 로그인 또는 입력한 계정). 미리보기에서 등록할 서버를 고르고 SSH · RDP 용 Vault 계정을 정하면 되고, 이미 있는 호스트는 알아서 걸러져 두 번 등록되지 않습니다. 비밀번호는 어떤 출처에서도 가져오지 않습니다.
 
+<img src="docs/media/import.gif" alt="엑셀 표를 붙여 넣고 미리 본 뒤 서버 추가" width="100%">
+
 **✦ 터미널 바로 옆의 Claude**
 내장 Claude 패널은 지금 보고 있는 탭을 압니다. "이 에러 뭐야?", "Production 그룹 디스크 확인해줘", "이 서버 추가하고 운영 계정 연결해줘" 처럼 말하면 됩니다. 서버를 바꾸는 작업은 모두 승인을 거치고 감사 로그에 남으며, Claude 는 저장된 비밀번호와 키를 읽을 수 없습니다. 호스트·그룹·탭·SFTP 파일·클라우드 프로필·Vault 기본 계정·설정처럼 손으로 하던 일도 Claude 에게 맡길 수 있습니다 — 서버·계정·데이터를 바꾸는 일은 여전히 승인을 기다리고(즐겨찾기 같은 화면 정리는 기록만 남김), 비밀번호는 직접 입력합니다. OTP·Push 인증을 요구하는 서버는 이미 로그인한 탭의 연결로 명령을 실행해 다시 인증하지 않습니다. "우리 서버 다 가져와줘" 라고 하면 Claude 가 이 PC 의 환경(클라우드 CLI 프로필, `~/.ssh/config`, mRemoteNG, 도메인)을 살펴 클라우드 프로필을 추가하고, 로그인이 필요하면 로그인 창을 띄우고, 온프레미스 목록을 가져옵니다 — 먼저 미리보기를 보여 주고, 등록 전에 한 번 승인을 받습니다.
+
+<img src="docs/media/ai-terminal.gif" alt="Claude 에게 접속과 터미널 명령 실행을 요청 — 승인하면 결과를 요약" width="100%">
+
+<img src="docs/media/ai-hosts.gif" alt="Claude 에게 호스트 추가와 즐겨찾기 지정을 요청" width="49%"> <img src="docs/media/ai-settings.gif" alt="Claude 에게 터미널 글꼴을 키워 달라고 요청" width="49%">
 
 **📁 따라다니는 SFTP**
 SSH 를 열면 파일 패널이 같은 연결 위에 함께 열리고(OTP 서버도 다시 인증하지 않음), 터미널의 현재 폴더와 사용자까지 따라갑니다 — 터미널에서 `sudo su -` 하면 패널도 root 권한으로 바뀝니다. 탐색기와 끌어다 놓기로 주고받고, VS Code 로 연 파일은 저장할 때마다 서버에 바로 올라갑니다.

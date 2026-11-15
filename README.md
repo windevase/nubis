@@ -25,14 +25,24 @@ If your work looks like that too — a mix of Linux and Windows servers, spread 
 **🖥️ One window for every connection**
 SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K` and type part of a name, an IP, an open tab or an action, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top. Tabs can be reordered, renamed, reconnected and closed in bulk, and `Ctrl+Shift+R` reopens the one you just closed. Copy and paste the way you're used to — Windows Terminal style `Ctrl+C`/`Ctrl+V`, or PuTTY / mRemoteNG style (select to copy, right-click to paste). It behaves like OpenSSH where it matters — ssh-agent and `~/.ssh` default keys, `known_hosts`, OTP / push MFA prompts (with remembered answers), jump hosts (ProxyJump) — and RDP follows your mstsc defaults, RD Gateway included.
 
+<img src="docs/media/palette-connect.gif" alt="Ctrl+K to find a host, connect over SSH, SFTP panel opens on the same connection" width="100%">
+
 **☁️ Your cloud servers, already in the list**
 Import servers from AWS, Tencent Cloud, Google Cloud, Azure and Oracle Cloud (OCI), profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI · OCI `~/.oci/config` profiles, signed in through the browser with `oci session authenticate` or with an API key). They stay in sync (on demand, at startup or every few minutes) — names and IPs update, your own changes stay. Right-click a group to switch all of its servers to public or private IPs, or to assign one Vault account to every server in it — or `Ctrl`/`Shift`+click any cards and bulk-edit their account, username, port, group, IP choice or favorite at once.
+
+<img src="docs/media/cloud.gif" alt="Cloud servers grouped by profile in the host list, and the Cloud page with AWS, Tencent, GCP, Azure and OCI" width="100%">
 
 **🏢 On-prem servers in one go**
 `IMPORT` reads the server lists you already have — paste rows from Excel or CSV (Korean or English headers are recognized), `~/.ssh/config` (with `Include` and `ProxyJump`), mRemoteNG `confCons.xml` (folders become groups), Ansible inventories (INI or YAML) and Active Directory, including Microsoft Entra Domain Services (LDAPS first, your current Windows sign-in or an account you enter). Preview everything, pick what to add, choose a Vault account for SSH and for RDP, and existing hosts are detected so nothing is added twice. Passwords are never imported.
 
+<img src="docs/media/import.gif" alt="Paste a table from Excel, preview it and add the servers" width="100%">
+
 **✦ Claude, right next to the terminal**
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys. Claude can also do what you do by hand: hosts, groups, tabs, SFTP files, cloud profiles, Vault defaults and settings. Anything that touches a server, an account or your data still waits for your approval (view-only tweaks like favorites are just logged), and passwords stay with you. On servers that ask for OTP or push approval, Claude runs commands over the tab you already signed in to — no second prompt. Ask "bring in all our servers" and Claude looks at what this PC has (cloud CLI profiles, `~/.ssh/config`, mRemoteNG, the domain), adds cloud profiles, starts a cloud sign-in when one is needed, and imports on-prem lists — showing a preview first and asking once before anything is added.
+
+<img src="docs/media/ai-terminal.gif" alt="Ask Claude to connect and run commands on the SSH terminal; approve, and it summarizes the result" width="100%">
+
+<img src="docs/media/ai-hosts.gif" alt="Ask Claude to add a host and mark another as a favorite" width="49%"> <img src="docs/media/ai-settings.gif" alt="Ask Claude to make the terminal font bigger" width="49%">
 
 **📁 SFTP that follows you**
 The file panel opens with every SSH session on the same connection (no second sign-in, even with OTP) and follows the terminal's current folder — and its user too: `sudo su -` in the terminal and the panel browses as root. Drag files in and out of Explorer. Open a file in VS Code, and every save goes straight back to the server.
