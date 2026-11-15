@@ -17,7 +17,7 @@ namespace Nubis;
 // OCI (Oracle Cloud): ~/.oci/config 프로필 (API 키 또는 oci session authenticate 세션 토큰),
 // OciSigner 로 서명한 REST 호출. 리전(구독) × 컴파트먼트 단위로 인스턴스를 조회한다.
 // =====================================================================
-public sealed class OciProvider : ICloudProvider
+public sealed partial class OciProvider : ICloudProvider
 {
     private const string ApiVersion = "20160918";
     /// <summary>세션 토큰이 이 시간 안에 만료되면 미리 갱신한다</summary>
@@ -55,58 +55,12 @@ public sealed class OciProvider : ICloudProvider
 
     public async Task<CloudFetchResult> FetchAsync(CloudProfile p, CancellationToken ct)
     {
-        var prof = OciConfig.Get(p.Name)
-            ?? throw new InvalidOperationException(L.F("OCI 프로필 '{0}' 을 찾을 수 없습니다 ({1}).", p.Name, OciConfig.ConfigPath));
-        if (!IsValidRegion(prof.Region))
-            throw new InvalidOperationException(L.F("OCI 프로필 '{0}' 의 region 설정이 올바르지 않습니다.", p.Name));
-        if (string.IsNullOrWhiteSpace(prof.Tenancy))
-            throw new InvalidOperationException(L.F("OCI 프로필 '{0}' 에 tenancy 설정이 없습니다.", p.Name));
-
-        using var signer = await CreateSignerAsync(prof, ct);
-        using var gate = new SemaphoreSlim(16);
-        var ctx = new Ctx(signer, gate, RealmDomain(prof.Tenancy));
-        var identity = $"https://identity.{prof.Region}.{ctx.Domain}/{ApiVersion}";
-        var tenancy = Uri.EscapeDataString(prof.Tenancy);
-
-        // 1. 구독 리전 (첫 호출 — 인증 실패는 여기서 로그인 안내로 바꾼다)
-        List<string> regions;
-        try
-        {
-            var (root, _) = await GetAsync(ctx, $"{identity}/tenancies/{tenancy}/regionSubscriptions", ct);
-            regions = ParseRegions(root);
-        }
-        catch (OciApiException ex) when (ex.IsAuth)
-        {
-            throw LoginNeeded(prof, ex.Message);
-        }
-        var errors = new List<string>();
-        foreach (var bad in regions.Where(r => !IsValidRegion(r))) errors.Add($"{bad}: invalid region name");
-        regions = regions.Where(IsValidRegion).Distinct().ToList();
-        // 리전이 0개면 "조회 성공 + 서버 없음" 으로 보여 이 프로필 호스트가 전부 지워지므로 실패로 처리
-        if (regions.Count == 0)
-            throw new InvalidOperationException(L.T("사용 가능한 리전 목록이 비어 있습니다 (regionSubscriptions) — 이번 동기화는 건너뜁니다."));
-
-        // 2. 컴파트먼트 (루트 = 테넌시 포함). 하위 목록을 못 읽으면 루트만 조회하고 부분 결과로 둔다 (삭제 안 함)
-        var compartments = new List<(string id, string name)> { (prof.Tenancy, "root") };
-        try
-        {
-            var all = await ListAllAsync(ctx,
-                $"{identity}/compartments?compartmentId={tenancy}&compartmentIdInSubtree=true&accessLevel=ACCESSIBLE&lifecycleState=ACTIVE", ct);
-            compartments.AddRange(ParseCompartments(all).Where(c => c.id != prof.Tenancy));
-        }
-        catch (OciApiException ex) when (ex.IsAuth)
-        {
-            throw LoginNeeded(prof, ex.Message);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            errors.Add($"compartments: {CloudProviders.FirstLine(ex.Message)}");
-        }
+        using var s = await OpenAsync(p, ct);
+        var errors = s.Errors;
 
         // 3. 리전 × 컴파트먼트 인스턴스
-        var scopes = regions.SelectMany(r => compartments.Select(c => new Scope(r, c.id, c.name))).ToList();
-        var (items, scopeErrors) = await CloudProviders.ParallelCollect(scopes, 8,
-            s => FetchScopeAsync(ctx, s, ct), s => $"{s.Region} · {s.CompartmentName}", ct);
+        var (items, scopeErrors) = await CloudProviders.ParallelCollect(s.Scopes, 8,
+            x => FetchScopeAsync(s.Ctx, x, ct), x => $"{x.Region} · {x.CompartmentName}", ct);
         ct.ThrowIfCancellationRequested();
         errors.AddRange(scopeErrors);
 
@@ -118,8 +72,8 @@ public sealed class OciProvider : ICloudProvider
 
     private sealed record Scope(string Region, string CompartmentId, string CompartmentName);
 
-    /// <summary>한 번의 동기화에서 공유하는 상태 (서명기 · 동시 요청 제한 · 이미지 OS 캐시)</summary>
-    private sealed class Ctx
+    /// <summary>한 번의 동기화에서 공유하는 상태 (서명기 · 동시 요청 제한 · 이미지 OS 캐시). Dispose 는 서명기·제한을 함께 정리</summary>
+    private sealed class Ctx : IDisposable
     {
         public Ctx(OciSigner signer, SemaphoreSlim gate, string domain) { Signer = signer; Gate = gate; Domain = domain; }
         public OciSigner Signer { get; }
@@ -127,6 +81,7 @@ public sealed class OciProvider : ICloudProvider
         public SemaphoreSlim Gate { get; }
         public string Domain { get; }
         public ConcurrentDictionary<string, Lazy<Task<string>>> Images { get; } = new();
+        public void Dispose() { Signer.Dispose(); Gate.Dispose(); }
     }
 
     private static async Task<IEnumerable<CloudInstance>> FetchScopeAsync(Ctx ctx, Scope s, CancellationToken ct)
@@ -222,8 +177,20 @@ public sealed class OciProvider : ICloudProvider
         }
     }
 
-    /// <summary>서명한 GET. 429/503 은 두 번까지 다시 시도. 실패는 OciApiException ("code: message")</summary>
+    /// <summary>서명한 GET (JSON). 실패는 OciApiException ("code: message")</summary>
     private static async Task<(JsonElement root, string? nextPage)> GetAsync(Ctx ctx, string url, CancellationToken ct)
+    {
+        var (body, next) = await SendAsync(ctx, HttpMethod.Get, url, null, ct);
+        if (string.IsNullOrWhiteSpace(body)) return (default, next);
+        using var doc = JsonDocument.Parse(body);
+        return (doc.RootElement.Clone(), next);
+    }
+
+    /// <summary>
+    /// 서명한 요청 (응답 본문은 문자열 그대로). POST 는 조회성 동작에만 쓴다 (OKE kubeconfig/content 처럼 접속 정보를 "읽는" API).
+    /// 429/503 은 두 번까지 다시 시도. 실패는 OciApiException
+    /// </summary>
+    private static async Task<(string body, string? nextPage)> SendAsync(Ctx ctx, HttpMethod method, string url, byte[]? body, CancellationToken ct)
     {
         for (var attempt = 1; ; attempt++)
         {
@@ -231,19 +198,15 @@ public sealed class OciProvider : ICloudProvider
             await ctx.Gate.WaitAsync(ct);
             try
             {
-                using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-                lock (ctx.SignLock) ctx.Signer.Sign(req, null);
+                using var req = new HttpRequestMessage(method, url);
+                // kubeconfig/content 는 YAML 을 돌려주므로 Accept(JSON)는 GET 에만 붙인다
+                if (method == HttpMethod.Get) req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+                lock (ctx.SignLock) ctx.Signer.Sign(req, body);
                 using var resp = await CloudProviders.Http.SendAsync(req, ct);
-                var body = await resp.Content.ReadAsStringAsync(ct);
-                if (resp.IsSuccessStatusCode)
-                {
-                    if (string.IsNullOrWhiteSpace(body)) return (default, NextPage(resp));
-                    using var doc = JsonDocument.Parse(body);
-                    return (doc.RootElement.Clone(), NextPage(resp));
-                }
+                var text = await resp.Content.ReadAsStringAsync(ct);
+                if (resp.IsSuccessStatusCode) return (text, NextPage(resp));
                 var status = (int)resp.StatusCode;
-                if (status is not (429 or 503) || attempt >= 3) throw OciApiException.From(status, body);
+                if (status is not (429 or 503) || attempt >= 3) throw OciApiException.From(status, text);
                 delay = resp.Headers.RetryAfter?.Delta is { } d && d > TimeSpan.Zero && d < TimeSpan.FromSeconds(30)
                     ? d : TimeSpan.FromSeconds(attempt * 2);
             }

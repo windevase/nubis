@@ -1,0 +1,9 @@
+{
+  "OCI 프로필 이름 '{0}' 에 쓸 수 없는 문자가 있어 클러스터 kubeconfig 를 만들 수 없습니다.": "The OCI profile name '{0}' contains characters that cannot be used, so a cluster kubeconfig cannot be created.",
+  "kubeconfig 에 API 서버 주소(server)가 없습니다.": "The kubeconfig has no API server address (server).",
+  "kubeconfig 에 context 가 없습니다.": "The kubeconfig has no contexts.",
+  "조회 중 클러스터 목록이 바뀌었습니다 (받은 {0}개 / 전체 {1}개) — 다시 동기화하세요.": "The cluster list changed during the query (received {0} / total {1}) — please sync again.",
+  "모든 리전에서 클러스터 조회 권한이 없습니다 (tke:DescribeClusters) — {0}": "No permission to list clusters in any region (tke:DescribeClusters) — {0}",
+  "{0}: 권한 없음 (CAM 정책으로 거부 — 이 리전 클러스터는 유지) — {1}": "{0}: access denied (blocked by a CAM policy — clusters in this region are kept) — {1}",
+  "DescribeClusterKubeconfig 응답에 kubeconfig 가 없습니다.": "The DescribeClusterKubeconfig response has no kubeconfig."
+}
