@@ -42,7 +42,8 @@ public partial class BulkEditDialog : Window
         if (locals.Count == 1) GroupBox.Text = locals[0];
 
         // 해당 없는 항목은 끈다
-        GroupCheck.IsEnabled = GroupBox.IsEnabled = cloud < hosts.Count;
+        // 그룹 고르기 버튼도 함께 — 모두 클라우드 호스트일 때 메뉴로 고르면 꺼진 체크가 켜진 채 남던 문제
+        GroupCheck.IsEnabled = GroupBox.IsEnabled = GroupPickButton.IsEnabled = cloud < hosts.Count;
         IpCheck.IsEnabled = withPublic > 0;
         if (withPublic > 0 && hosts.Where(h => h.HasPublicIp).All(h => h.UsePublicIp)) IpPublic.IsChecked = true;
         if (hosts.All(h => h.Favorite)) FavOff.IsChecked = true;
@@ -67,9 +68,7 @@ public partial class BulkEditDialog : Window
     private BulkEdit? _result;
 
     private void UpdateVaultButton() =>
-        VaultPickButton.Content = VaultStore.Get(_vaultId) is { } v
-            ? (string.IsNullOrWhiteSpace(v.Username) ? v.Name : $"{v.Name}  ({v.Username})")
-            : L.T("계정 선택...");
+        VaultPickButton.Content = VaultPickerDialog.ButtonContent(_vaultId, L.T("계정 선택..."));
 
     private void OnPickVault(object sender, RoutedEventArgs e)
     {

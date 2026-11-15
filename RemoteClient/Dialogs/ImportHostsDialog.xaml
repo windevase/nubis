@@ -104,7 +104,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox x:Name="PasteBox" Style="{StaticResource MultiLineBox}" Height="112"
+                    <TextBox x:Name="PasteBox" Style="{StaticResource MultiLineBox}" Height="112" AutomationProperties.Name="{l:Tr '엑셀·CSV 붙여넣기'}"
                              Tag="{l:Tr '엑셀에서 표를 복사해 여기에 붙여 넣으세요 (Ctrl+V). 첫 줄이 머리글(이름 · 주소 · 포트 · 종류 · 그룹 · 사용자)이면 그 순서를 따릅니다.'}"/>
                     <StackPanel Grid.Column="1" Margin="10,0,0,0">
                         <Button Content="{l:Tr '미리보기'}" Style="{StaticResource PrimaryButton}" MinWidth="96" Click="OnPreviewTable"/>
@@ -123,7 +123,7 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="FilePathBox" Tag="{l:Tr '파일 경로'}" KeyDown="OnFilePathKeyDown"/>
+                    <TextBox x:Name="FilePathBox" AutomationProperties.Name="{l:Tr '파일 경로'}" Tag="{l:Tr '파일 경로'}" KeyDown="OnFilePathKeyDown"/>
                     <Button Grid.Column="1" Content="{l:Tr '찾아보기'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0" MinWidth="88" Click="OnBrowseFile"/>
                     <Button Grid.Column="2" Content="{l:Tr '불러오기'}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinWidth="96" Click="OnLoadFile"/>
                     <TextBlock x:Name="FileHint" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource Hint}" Margin="2,8,0,0"/>
@@ -140,10 +140,11 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="AnsiblePathBox" Tag="{l:Tr '인벤토리 파일 경로 (INI · YAML)'}" KeyDown="OnAnsiblePathKeyDown"/>
+                    <TextBox x:Name="AnsiblePathBox" AutomationProperties.Name="{l:Tr '인벤토리 파일 경로 (INI · YAML)'}" Tag="{l:Tr '인벤토리 파일 경로 (INI · YAML)'}" KeyDown="OnAnsiblePathKeyDown"/>
                     <Button Grid.Column="1" Content="{l:Tr '찾아보기'}" Style="{StaticResource GhostButton}" Margin="8,0,0,0" MinWidth="88" Click="OnBrowseAnsible"/>
                     <Button Grid.Column="2" Content="{l:Tr '불러오기'}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinWidth="96" Click="OnLoadAnsible"/>
                     <TextBox x:Name="AnsibleTextBox" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource MultiLineBox}" Height="72" Margin="0,8,0,0"
+                             AutomationProperties.Name="{l:Tr 'Ansible 인벤토리'}"
                              Tag="{l:Tr '또는 인벤토리 내용을 여기에 붙여 넣으세요 (붙여 넣은 내용이 있으면 파일보다 우선)'}"/>
                 </Grid>
 
@@ -160,9 +161,9 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
-                    <TextBox x:Name="AdDomainBox" Tag="{l:Tr '도메인 (예: corp.example.com)'}" Margin="0,0,8,0"/>
-                    <TextBox x:Name="AdServerBox" Grid.Column="1" Tag="{l:Tr '도메인 컨트롤러 (선택, 비우면 자동)'}" Margin="0,0,8,0"/>
-                    <TextBox x:Name="AdBaseBox" Grid.Column="2" Tag="{l:Tr '검색 위치 OU (선택)'}" Margin="0,0,8,0"/>
+                    <TextBox x:Name="AdDomainBox" AutomationProperties.Name="{l:Tr '도메인 (예: corp.example.com)'}" Tag="{l:Tr '도메인 (예: corp.example.com)'}" Margin="0,0,8,0"/>
+                    <TextBox x:Name="AdServerBox" Grid.Column="1" AutomationProperties.Name="{l:Tr '도메인 컨트롤러 (선택, 비우면 자동)'}" Tag="{l:Tr '도메인 컨트롤러 (선택, 비우면 자동)'}" Margin="0,0,8,0"/>
+                    <TextBox x:Name="AdBaseBox" Grid.Column="2" AutomationProperties.Name="{l:Tr '검색 위치 OU (선택)'}" Tag="{l:Tr '검색 위치 OU (선택)'}" Margin="0,0,8,0"/>
                     <Button x:Name="AdFetchButton" Grid.Column="3" Content="{l:Tr '가져오기'}" Style="{StaticResource PrimaryButton}" MinWidth="96" Click="OnFetchAd"/>
 
                     <CheckBox x:Name="AdCurrentUser" Grid.Row="1" Margin="2,10,8,0" IsChecked="True" Content="{l:Tr '현재 Windows 로그인 사용'}"
@@ -173,7 +174,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox x:Name="AdUserBox" Tag="{l:Tr '사용자 (user@domain)'}" Margin="0,0,8,0"/>
+                        <TextBox x:Name="AdUserBox" AutomationProperties.Name="{l:Tr '사용자 (user@domain)'}" Tag="{l:Tr '사용자 (user@domain)'}" Margin="0,0,8,0"/>
                         <PasswordBox x:Name="AdPasswordBox" Grid.Column="1" Margin="0,0,8,0"/>
                         <Button Grid.Column="2" Content="{l:Tr 'Vault 에서'}" Style="{StaticResource GhostButton}" MinWidth="96" Click="OnAdPickVault"
                                 ToolTip="{l:Tr 'Vault 계정의 사용자명·비밀번호를 채웁니다 (저장하지 않음)'}"/>
@@ -183,7 +184,7 @@
                         <CheckBox x:Name="AdServersOnly" IsChecked="True" Margin="0,0,18,0" Content="{l:Tr '서버만 (Windows Server · Linux)'}"/>
                         <CheckBox x:Name="AdSkipDisabled" IsChecked="True" Margin="0,0,18,0" Content="{l:Tr '비활성 컴퓨터 제외'}"/>
                         <CheckBox x:Name="AdRecentCheck" IsChecked="True" Margin="0,0,6,0" Content="{l:Tr '최근 로그인'}"/>
-                        <TextBox x:Name="AdDaysBox" Width="56" Height="28" Text="90" Margin="0,0,6,0" HorizontalContentAlignment="Center"
+                        <TextBox x:Name="AdDaysBox" Width="56" Height="28" Text="90" AutomationProperties.LabeledBy="{Binding ElementName=AdRecentCheck}" Margin="0,0,6,0" HorizontalContentAlignment="Center"
                                  IsEnabled="{Binding IsChecked, ElementName=AdRecentCheck}"/>
                         <TextBlock Text="{l:Tr '일 이내'}" VerticalAlignment="Center" Margin="0,0,18,0"/>
                         <CheckBox x:Name="AdResolveIp" Content="{l:Tr 'IP 로 변환 (DNS 조회)'}"/>
@@ -203,12 +204,17 @@
 
                 <!-- 미리보기 -->
                 <DockPanel>
+                    <!-- 도구 줄: 첫 줄 = 선택 버튼 · 검색, 둘째 줄 = 필터. 한 줄에 다 넣으면 최소 너비(780)에서는 한국어도,
+                         기본 너비(960)에서는 영어도 오른쪽 필터가 잘렸다 -->
                     <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto"/>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{l:Tr '모두 선택'}" Style="{StaticResource GhostButton}" Padding="12,0" Height="30" Click="OnSelectAll"
                                     ToolTip="{l:Tr '지금 보이는 줄(필터 · 검색 결과)만 선택합니다'}"/>
@@ -216,13 +222,13 @@
                         </StackPanel>
                         <!-- 검색: 이름 · 주소 · 그룹 · 사용자 · 메모 (그룹 이름으로 찾고 '모두 선택' = 그룹별 선택) -->
                         <!-- 검색 (돋보기 아이콘은 입력란 안 왼쪽 — 글자·placeholder 는 Padding 만큼 오른쪽에서 시작) -->
-                        <Grid Grid.Column="1" Margin="10,0,10,0" MinWidth="120">
-                            <TextBox x:Name="SearchBox" Height="30" Padding="30,0,10,0"
+                        <Grid Grid.Column="1" Margin="10,0,0,0" MinWidth="120">
+                            <TextBox x:Name="SearchBox" Height="30" Padding="30,0,10,0" AutomationProperties.Name="{l:Tr '검색 (이름 · 주소 · 그룹)'}"
                                      Tag="{l:Tr '검색 (이름 · 주소 · 그룹)'}" TextChanged="OnSearchChanged" KeyDown="OnSearchKeyDown"/>
                             <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource TextTertiary}"
                                        HorizontalAlignment="Left" VerticalAlignment="Center" Margin="11,0,0,0" IsHitTestVisible="False"/>
                         </Grid>
-                        <Border Grid.Column="2" HorizontalAlignment="Right" Style="{StaticResource SegmentTrack}" Padding="2">
+                        <Border Grid.Row="1" Grid.ColumnSpan="2" HorizontalAlignment="Left" Margin="0,8,0,0" Style="{StaticResource SegmentTrack}" Padding="2">
                             <StackPanel Orientation="Horizontal">
                                 <RadioButton x:Name="FilterAll" Style="{StaticResource Segment}" GroupName="filter" IsChecked="True" MinWidth="64"
                                              Checked="OnFilterChanged" Content="{l:Tr '전체'}" FontSize="12"/>
@@ -240,20 +246,32 @@
                     <Border x:Name="WarningsBox" DockPanel.Dock="Bottom" Margin="0,10,0,0" Background="{StaticResource WarningSubtle}"
                             CornerRadius="{StaticResource RadiusLg}" Padding="12,8,12,10" Visibility="Collapsed">
                         <DockPanel>
-                            <Grid DockPanel.Dock="Top" Background="Transparent" Cursor="Hand" MouseLeftButtonUp="OnToggleWarnings"
-                                  ToolTip="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource Warning}"
-                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <TextBlock x:Name="WarningsTitle" Grid.Column="1" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Warning}"
-                                           VerticalAlignment="Center"/>
-                                <TextBlock x:Name="WarningsChevron" Grid.Column="2" Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="10"
-                                           Foreground="{StaticResource Warning}" VerticalAlignment="Center"/>
-                            </Grid>
+                            <!-- 머리글은 버튼 — 마우스뿐 아니라 Tab 으로 가서 Enter · Space 로도 펼치고 접는다 -->
+                            <Button x:Name="WarningsHeader" DockPanel.Dock="Top" Cursor="Hand" Click="OnToggleWarnings"
+                                    FocusVisualStyle="{StaticResource FocusRing}" ToolTip="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}"
+                                    AutomationProperties.Name="{Binding Text, ElementName=WarningsTitle}"
+                                    AutomationProperties.HelpText="{l:Tr '눌러서 경고 목록을 펼치거나 접습니다'}">
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border Background="Transparent">
+                                            <ContentPresenter/>
+                                        </Border>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="12" Foreground="{StaticResource Warning}"
+                                               VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <TextBlock x:Name="WarningsTitle" Grid.Column="1" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Warning}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="WarningsChevron" Grid.Column="2" Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="10"
+                                               Foreground="{StaticResource Warning}" VerticalAlignment="Center"/>
+                                </Grid>
+                            </Button>
                             <ScrollViewer x:Name="WarningsScroll" MaxHeight="74" VerticalScrollBarVisibility="Auto" Margin="20,6,0,0">
                                 <ItemsControl x:Name="WarningsList">
                                     <ItemsControl.ItemTemplate>
@@ -279,7 +297,7 @@
                                     <ColumnDefinition Width="44"/>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="0.8*"/>
-                                    <ColumnDefinition Width="66"/>
+                                    <ColumnDefinition Width="86"/>
                                     <ColumnDefinition Width="1.4*"/>
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="1" Style="{StaticResource HeaderCell}" Text="{l:Tr '이름'}"/>
@@ -296,11 +314,13 @@
                                 <ListBox x:Name="RowList" Background="Transparent" BorderThickness="0" Foreground="{StaticResource Text}"
                                          HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                                         SelectionMode="Single" Padding="0,4,0,4" ScrollViewer.ScrollChanged="OnRowListScrollChanged">
+                                         SelectionMode="Single" Padding="0,4,0,4" ScrollViewer.ScrollChanged="OnRowListScrollChanged" PreviewKeyDown="OnRowListKeyDown">
                                     <ListBox.ItemContainerStyle>
                                         <Style TargetType="ListBoxItem">
                                             <Setter Property="Foreground" Value="{StaticResource Text}"/>
-                                            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                            <!-- 키보드(↑↓ · Space 체크)로 다닐 때 어느 행인지 보이게 (마우스에는 나오지 않음) -->
+                                            <Setter Property="FocusVisualStyle" Value="{StaticResource FocusRing}"/>
+                                            <Setter Property="AutomationProperties.Name" Value="{Binding NameText, Mode=OneTime}"/>
                                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                                             <Setter Property="Template">
                                                 <Setter.Value>
@@ -333,10 +353,10 @@
                                                     <ColumnDefinition Width="44"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="0.8*"/>
-                                                    <ColumnDefinition Width="66"/>
+                                                    <ColumnDefinition Width="86"/>
                                                     <ColumnDefinition Width="1.4*"/>
                                                 </Grid.ColumnDefinitions>
-                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="{Binding NameText, Mode=OneTime}"
                                                           IsEnabled="{Binding IsSelectable, Mode=OneTime}" VerticalAlignment="Center"/>
                                                 <TextBlock Grid.Column="1" Style="{StaticResource Cell}" Text="{Binding NameText, Mode=OneTime}" FontWeight="SemiBold"/>
                                                 <TextBlock Grid.Column="2" Style="{StaticResource Cell}" Text="{Binding AddressText, Mode=OneTime}"/>
@@ -381,7 +401,7 @@
                 <!-- 옵션 -->
                 <ScrollViewer Grid.Column="1" Margin="16,0,0,0" VerticalScrollBarVisibility="Auto">
                     <StackPanel>
-                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,6" Text="{l:Tr '그룹'}"/>
+                        <TextBlock x:Name="GroupLabel" Style="{StaticResource FieldLabel}" Margin="0,0,0,6" Text="{l:Tr '그룹'}"/>
                         <Border Style="{StaticResource SegmentTrack}">
                             <UniformGrid Columns="2">
                                 <RadioButton x:Name="GroupPrefixMode" Style="{StaticResource Segment}" GroupName="grp" IsChecked="True" FontSize="12"
@@ -390,13 +410,13 @@
                                              Checked="OnOptionChanged" Content="{l:Tr '모두 이 그룹으로'}"/>
                             </UniformGrid>
                         </Border>
-                        <TextBox x:Name="GroupBox" Margin="0,8,0,0" TextChanged="OnGroupTextChanged"/>
+                        <TextBox x:Name="GroupBox" Margin="0,8,0,0" AutomationProperties.LabeledBy="{Binding ElementName=GroupLabel}" TextChanged="OnGroupTextChanged"/>
                         <TextBlock x:Name="GroupHint" Style="{StaticResource Hint}" Margin="2,6,0,0"/>
 
                         <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr 'SSH Vault 계정'}"/>
                         <Grid>
                             <Button x:Name="SshVaultButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                    Padding="12,0,36,0" Click="OnPickSshVault"/>
+                                    Height="32" Padding="12,0,36,0" Click="OnPickSshVault"/>
                             <Button x:Name="SshVaultClear" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="10" HorizontalAlignment="Right"
                                     Margin="0,0,4,0" Click="OnClearSshVault" ToolTip="{l:Tr '지정 해제'}" AutomationProperties.Name="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
                         </Grid>
@@ -404,7 +424,7 @@
                         <TextBlock Style="{StaticResource FieldLabel}" Text="{l:Tr 'RDP Vault 계정'}"/>
                         <Grid>
                             <Button x:Name="RdpVaultButton" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                    Padding="12,0,36,0" Click="OnPickRdpVault"/>
+                                    Height="32" Padding="12,0,36,0" Click="OnPickRdpVault"/>
                             <Button x:Name="RdpVaultClear" Style="{StaticResource IconButton}" Content="&#xE711;" FontSize="10" HorizontalAlignment="Right"
                                     Margin="0,0,4,0" Click="OnClearRdpVault" ToolTip="{l:Tr '지정 해제'}" AutomationProperties.Name="{l:Tr '지정 해제'}" Visibility="Collapsed"/>
                         </Grid>

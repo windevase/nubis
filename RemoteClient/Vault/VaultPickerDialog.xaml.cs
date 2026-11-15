@@ -34,6 +34,18 @@ public partial class VaultPickerDialog : Window
         EmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// 계정 고르기 버튼 내용: "이름  (사용자명)" (사용자명이 없으면 이름만) 한 줄. 좁은 칸·긴 이름이면 … 로 줄이고 전체는 툴팁으로.
+    /// 계정이 없으면 empty 문구
+    /// </summary>
+    public static System.Windows.Controls.TextBlock ButtonContent(Guid? id, string empty)
+    {
+        var text = VaultStore.Get(id) is { } v
+            ? (string.IsNullOrWhiteSpace(v.Username) ? v.Name : $"{v.Name}  ({v.Username})")
+            : empty;
+        return new System.Windows.Controls.TextBlock { Text = text, TextTrimming = TextTrimming.CharacterEllipsis, ToolTip = text };
+    }
+
     /// <summary>allowClear 로 연 창에서 "지정 해제" 를 누르면 Pick 이 돌려주는 값 (실제 계정 Id 는 Guid.Empty 가 아니다)</summary>
     public static readonly Guid Cleared = Guid.Empty;
 

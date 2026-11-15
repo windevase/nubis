@@ -40,6 +40,7 @@ public partial class LoginWindow : Window
         CancelButton.Content = test ? L.T("취소") : L.T("종료");
         // 아이콘만 있는 복사 버튼 — 화면 낭독기가 읽을 이름 (툴팁과 같은 문구)
         System.Windows.Automation.AutomationProperties.SetName(CopyCodeButton, L.T("코드 복사"));
+        Loaded += (_, _) => LoginButton.Focus();   // Tab 시작점 · Enter = 로그인
         Closed += (_, _) =>
         {
             CancelLogin();
@@ -107,6 +108,8 @@ public partial class LoginWindow : Window
             CodePanel.Visibility = Visibility.Visible;
             LoginButton.Visibility = Visibility.Collapsed;
             CancelButton.Content = L.T("취소");
+            // 로그인 버튼이 꺼지고 사라지면 키보드 포커스가 갈 곳이 없다 — 코드 복사 버튼으로 (취소 버튼에 있으면 그대로)
+            if (!CancelButton.IsKeyboardFocused) CopyCodeButton.Focus();
             try { Clipboard.SetText(_code.UserCode); } catch { }
             OpenBrowser();
 
@@ -170,6 +173,8 @@ public partial class LoginWindow : Window
         CodePanel.Visibility = Visibility.Collapsed;
         LoginButton.Visibility = Visibility.Visible;
         LoginButton.IsEnabled = true;
+        // 코드 칸(복사 버튼 등)에 있던 포커스가 접히며 사라지지 않게 로그인 버튼으로 (취소 버튼에 있으면 그대로)
+        if (!CancelButton.IsKeyboardFocused) LoginButton.Focus();
         CancelButton.Content = _test ? L.T("취소") : L.T("종료");
         ShowError(error);
     }
@@ -186,6 +191,17 @@ public partial class LoginWindow : Window
     {
         if (CodePanel.Visibility == Visibility.Visible) { _cts?.Cancel(); return; }   // 진행 중이면 취소만
         DialogResult = false;
+    }
+
+    /// <summary>
+    /// Esc = 취소/종료 버튼과 같다 (진행 중이면 로그인만 취소, 아니면 창 닫기).
+    /// 버튼의 IsCancel 은 쓰지 않는다 — 진행 중에 누르면 취소만 해야 하는데 IsCancel 은 창을 바로 닫는다
+    /// </summary>
+    private void OnWindowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || Keyboard.Modifiers != ModifierKeys.None) return;
+        e.Handled = true;
+        OnCancel(CancelButton, e);
     }
 
     private void OnCopyCode(object sender, RoutedEventArgs e)

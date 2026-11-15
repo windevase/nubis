@@ -132,8 +132,9 @@ public partial class CommandPalette : Window
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         var mods = Keyboard.Modifiers;
         // 한글 조합 중 Enter/Esc 는 Key.ImeProcessed 로 온다 — 조합을 확정한 뒤(TextChanged → 결과 갱신) 실행되게 한 박자 늦춘다.
-        // IME 가 확정 뒤 같은 키를 한 번 더 보내도 Run · CloseOnce 는 한 번만 동작한다
-        if (e.Key == Key.ImeProcessed && e.ImeProcessedKey is Key.Enter or Key.Escape)
+        // IME 가 확정 뒤 같은 키를 한 번 더 보내도 Run · CloseOnce 는 한 번만 동작한다.
+        // 한글 입력기만 — 일본어 · 중국어 IME 의 Enter 는 변환 확정, Esc 는 변환 취소라 실행 · 닫기로 받으면 안 된다
+        if (e.Key == Key.ImeProcessed && e.ImeProcessedKey is (Key.Enter or Key.Escape) && IsKoreanInput())
         {
             var imeKey = e.ImeProcessedKey;
             Dispatcher.BeginInvoke(() =>
@@ -159,6 +160,9 @@ public partial class CommandPalette : Window
         }
         base.OnPreviewKeyDown(e);
     }
+
+    private static bool IsKoreanInput() =>
+        InputLanguageManager.Current?.CurrentInputLanguage?.TwoLetterISOLanguageName == "ko";
 
     private static PaletteModifier ModifierFor(ModifierKeys mods) =>
         mods.HasFlag(ModifierKeys.Control) ? PaletteModifier.Edit

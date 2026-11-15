@@ -4,7 +4,8 @@
         xmlns:l="clr-namespace:Nubis"
         Title="{l:Tr 'Nubis 로그인'}" Width="480" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
         AllowsTransparency="True" Background="Transparent" WindowStartupLocation="CenterScreen"
-        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+        FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13"
+        PreviewKeyDown="OnWindowKeyDown">
     <!-- 가운데 정렬 카드: 로고 · 앱 이름 · 안내 · (진행 중) 큰 고정폭 기기 코드 + 복사 · 버튼 띠 -->
     <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
             CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
@@ -34,7 +35,7 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="36"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox x:Name="CodeBox" Grid.Column="1" IsReadOnly="True" BorderThickness="0" Background="Transparent" Height="Auto"
+                            <TextBox x:Name="CodeBox" Grid.Column="1" IsReadOnly="True" AutomationProperties.Name="{l:Tr '기기 코드'}" BorderThickness="0" Background="Transparent" Height="Auto"
                                      FontFamily="{StaticResource MonoFont}" FontSize="30" FontWeight="SemiBold" HorizontalContentAlignment="Center"
                                      Foreground="{StaticResource TextPrimary}"/>
                             <Button x:Name="CopyCodeButton" Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE8C8;" FontSize="14"
