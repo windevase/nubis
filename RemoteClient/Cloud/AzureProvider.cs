@@ -21,6 +21,8 @@ using Amazon.Runtime.CredentialManagement;
 using Azure.Core;
 using Azure.Identity;
 using Google.Apis.Auth.OAuth2;
+using YamlDotNet.Core;
+using YamlDotNet.RepresentationModel;
 
 namespace Nubis;
 
@@ -244,4 +246,134 @@ public sealed class AzureProvider : ICloudProvider
         }
         return new CloudFetchResult(result, new List<string>());
     }
+
+    // ----- 쿠버네티스 (AKS) -----
+
+    private const string AksApi = "2024-09-01";
+    /// <summary>AKS AAD 서버 앱 ID (모든 AAD 통합 클러스터 공통) — kubelogin --server-id</summary>
+    internal const string AksAadServerId = "6dae42f8-4368-4678-94ff-3960e28e3630";
+    /// <summary>listClusterUserCredential 동시 호출 수</summary>
+    private const int AksParallelism = 4;
+
+    /// <summary>AKS 목록 한 항목에서 꺼낸 값</summary>
+    internal sealed record AksInfo(string Id, string Name, string Location, string Fqdn, string Version, string State, bool Aad);
+
+    /// <summary>
+    /// 구독의 AKS 클러스터. 목록에는 CA 인증서가 없어 클러스터마다 listClusterUserCredential(자격 증명을 읽는 POST, 리소스는 바뀌지 않음)로
+    /// kubeconfig 를 받는다. 그 호출이 실패한 클러스터는 건너뛰고 Errors 에 "이름: 사유" 로 남긴다 (삭제 판단 금지)
+    /// </summary>
+    public async Task<ClusterFetchResult> FetchClustersAsync(CloudProfile p, CancellationToken ct)
+    {
+        string token;
+        try { token = await TokenAsync(p.TenantId, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            throw TokenError(p, ex);
+        }
+
+        var sub = $"{Arm}/subscriptions/{Uri.EscapeDataString(p.Name)}";
+        List<JsonElement> raw;
+        try { raw = await ListAsync($"{sub}/providers/Microsoft.ContainerService/managedClusters?api-version={AksApi}", token, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ContainerService 리소스 공급자를 등록하지 않은 구독 = 클러스터가 없는 구독 (오류 아님)
+            if (IsProviderNotRegistered(ex.Message)) return ClusterFetchResult.Empty;
+            ForgetTokenOn401(p.TenantId, ex);
+            throw;
+        }
+
+        var infos = raw.Select(ParseAks).Where(a => a.Id.Length > 0 && a.Name.Length > 0).ToList();
+        var (items, errors) = await CloudProviders.ParallelCollect(infos, AksParallelism, async a =>
+        {
+            var cred = await CloudProviders.SendJsonAsync(HttpMethod.Post,
+                $"{Arm}{a.Id}/listClusterUserCredential?api-version={AksApi}", token, null, ct);
+            var yaml = CredentialKubeconfig(cred) ?? throw new InvalidOperationException("listClusterUserCredential returned no kubeconfig");
+            return (IEnumerable<CloudCluster>)new[] { BuildAksCluster(a, yaml) };
+        }, a => a.Name, ct);
+        return new ClusterFetchResult(items.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList(), errors);
+    }
+
+    /// <summary>managedClusters 목록 한 항목 → 값 (화면 무관)</summary>
+    internal static AksInfo ParseAks(JsonElement c)
+    {
+        var props = c.Obj("properties");
+        var fqdn = props.Str("fqdn");
+        if (fqdn.Length == 0) fqdn = props.Str("privateFQDN");
+        var version = props.Str("currentKubernetesVersion");
+        if (version.Length == 0) version = props.Str("kubernetesVersion");
+        var power = props.Obj("powerState").Str("code");
+        var state = power.Equals("Stopped", StringComparison.OrdinalIgnoreCase)
+            ? "stopped"
+            : CloudCluster.NormalizeState(props.Str("provisioningState"));
+        var aad = props.Obj("aadProfile").ValueKind == JsonValueKind.Object;
+        return new AksInfo(c.Str("id"), c.Str("name"), c.Str("location"), fqdn, version, state, aad);
+    }
+
+    /// <summary>listClusterUserCredential 응답의 첫 kubeconfig (base64) 를 YAML 로. 없으면 null</summary>
+    internal static string? CredentialKubeconfig(JsonElement resp)
+    {
+        var value = resp.Arr("kubeconfigs").Select(k => k.Str("value")).FirstOrDefault(v => v.Length > 0);
+        if (value == null) return null;
+        try { return Encoding.UTF8.GetString(Convert.FromBase64String(value)); }
+        catch (FormatException) { throw new InvalidOperationException("listClusterUserCredential returned an invalid kubeconfig"); }
+    }
+
+    /// <summary>
+    /// 목록 값 + 받은 kubeconfig → CloudCluster. AAD 클러스터는 server·CA 만 꺼내 kubelogin(azurecli) exec 로 다시 만들고 (비밀값 없음),
+    /// 로컬 계정 클러스터는 받은 kubeconfig 의 첫 context 만 남긴다 (클라이언트 인증서 포함 — 앱이 암호화해 저장)
+    /// </summary>
+    internal static CloudCluster BuildAksCluster(AksInfo a, string kubeconfig)
+    {
+        var endpoint = a.Fqdn.Length > 0 ? "https://" + a.Fqdn : "";
+        string yaml, context;
+        K8sAuthKind auth;
+        if (a.Aad)
+        {
+            var (server, ca) = ClusterOfKubeconfig(kubeconfig);
+            if (string.IsNullOrEmpty(server)) server = endpoint;
+            if (string.IsNullOrEmpty(server)) throw new InvalidOperationException("kubeconfig has no server");
+            context = a.Name;
+            yaml = Kubeconfig.BuildExec(context, server, ca, "kubelogin",
+                new[] { "get-token", "--login", "azurecli", "--server-id", AksAadServerId });
+            auth = K8sAuthKind.Azure;
+        }
+        else
+        {
+            // context 이름은 kubeconfig 에 든 그대로 (AKS 는 보통 클러스터 이름) — kubectl --context 와 맞아야 한다
+            var contexts = Kubeconfig.ReadContexts(kubeconfig);
+            if (contexts.Count == 0) throw new InvalidOperationException("kubeconfig has no context");
+            context = contexts[0].Name;
+            yaml = contexts.Count == 1 ? kubeconfig : Kubeconfig.Extract(kubeconfig, context, null);
+            auth = Kubeconfig.DetectAuth(yaml);
+        }
+        return new CloudCluster("aks:" + a.Id.ToLowerInvariant(), a.Name, a.Location, endpoint, a.Version, a.State,
+            auth, yaml, context);
+    }
+
+    /// <summary>kubeconfig 의 첫 context(없으면 첫 cluster)가 가리키는 cluster 의 server · certificate-authority-data</summary>
+    internal static (string? Server, string? CaData) ClusterOfKubeconfig(string yaml)
+    {
+        var stream = new YamlStream();
+        try { stream.Load(new StringReader(yaml)); }
+        catch (YamlException ex) { throw new InvalidOperationException("invalid kubeconfig: " + ex.Message); }
+        if (stream.Documents.Count == 0 || stream.Documents[0].RootNode is not YamlMappingNode root) return (null, null);
+
+        static YamlNode? Get(YamlMappingNode m, string key) => m.Children.TryGetValue(new YamlScalarNode(key), out var n) ? n : null;
+        static string? Str(YamlMappingNode m, string key) => Get(m, key) is YamlScalarNode s ? s.Value : null;
+        static IEnumerable<YamlMappingNode> Items(YamlMappingNode m, string key) =>
+            Get(m, key) is YamlSequenceNode seq ? seq.Children.OfType<YamlMappingNode>() : Enumerable.Empty<YamlMappingNode>();
+
+        var clusters = Items(root, "clusters").ToList();
+        var ctx = Items(root, "contexts").Select(c => Get(c, "context") as YamlMappingNode).FirstOrDefault(c => c != null);
+        var clusterName = ctx != null ? Str(ctx, "cluster") : null;
+        var item = clusters.FirstOrDefault(c => clusterName != null && Str(c, "name") == clusterName) ?? clusters.FirstOrDefault();
+        if (item == null || Get(item, "cluster") is not YamlMappingNode cm) return (null, null);
+        return (Str(cm, "server"), Str(cm, "certificate-authority-data"));
+    }
+
+    /// <summary>구독에 리소스 공급자가 등록되지 않았다는 ARM 오류인지 (MissingSubscriptionRegistration)</summary>
+    internal static bool IsProviderNotRegistered(string? message) =>
+        message != null &&
+        (message.Contains("MissingSubscriptionRegistration", StringComparison.OrdinalIgnoreCase) ||
+         message.Contains("not registered to use namespace", StringComparison.OrdinalIgnoreCase));
 }
