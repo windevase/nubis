@@ -75,6 +75,8 @@ public sealed class HostEntry : INotifyPropertyChanged
     public string? CloudName { get; set; }
     public string? Purpose { get; set; }
     public string? Os { get; set; }
+    /// <summary>SSH 접속 때 서버 배너로 판별한 OS ("windows" / "unix", SshServerOs). 주소를 바꾸면 지운다 (다른 서버일 수 있음)</summary>
+    public string? SshBannerOs { get; set; }
 
     // ----- 주소 (사설 / 공인) -----
     /// <summary>사설 IP (클라우드 동기화). Address 는 기본 접속 주소로 보통 사설 IP 와 같다</summary>

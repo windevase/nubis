@@ -65,6 +65,21 @@ public class OpenSshKnownHostsTests
     public void 폐기된_키는_거부한다() =>
         Assert.Equal(OpenSshKnownHosts.Verdict.Revoked, OpenSshKnownHosts.Check([$"@revoked * ssh-rsa {KeyB64}", $"10.0.0.5 ssh-rsa {KeyB64}"], "10.0.0.5", 22, Key));
 
+    [Fact]
+    public void 폐기_줄이_같은_키의_일반_줄_뒤에_있어도_거부한다() =>
+        Assert.Equal(OpenSshKnownHosts.Verdict.Revoked,
+            OpenSshKnownHosts.Check([$"10.0.0.5 ssh-rsa {KeyB64}", $"@revoked 10.0.0.5 ssh-rsa {KeyB64}"], "10.0.0.5", 22, Key));
+
+    [Fact]
+    public void 다른_키_줄이_앞에_있어도_같은_키가_있으면_신뢰한다() =>
+        Assert.Equal(OpenSshKnownHosts.Verdict.Match,
+            OpenSshKnownHosts.Check([$"10.0.0.5 ssh-rsa {OtherB64}", $"10.0.0.5 ssh-rsa {KeyB64}"], "10.0.0.5", 22, Key));
+
+    [Fact]
+    public void 다른_키가_폐기됐으면_같은_키는_신뢰한다() =>
+        Assert.Equal(OpenSshKnownHosts.Verdict.Match,
+            OpenSshKnownHosts.Check([$"10.0.0.5 ssh-rsa {KeyB64}", $"@revoked 10.0.0.5 ssh-rsa {OtherB64}"], "10.0.0.5", 22, Key));
+
     [Theory]
     [InlineData("*.example.com", "web.example.com", true)]
     [InlineData("10.0.0.?", "10.0.0.7", true)]

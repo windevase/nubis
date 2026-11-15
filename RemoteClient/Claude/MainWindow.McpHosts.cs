@@ -165,6 +165,7 @@ public partial class MainWindow
         // 승인 창을 기다리는 동안(다른 승인 창 대기 포함) 호스트가 지워졌으면 반영하지 않는다
         if (!_hosts.Contains(h)) throw new McpToolException("승인을 기다리는 동안 호스트가 목록에서 지워져 바꾸지 않았습니다.");
         // 확인한 값만 원본에 반영 (비밀번호·키 파일·클라우드 정보는 건드리지 않음)
+        if (h.Address != copy.Address) h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
         h.Protocol = copy.Protocol; h.Address = copy.Address; h.Port = copy.Port; h.Label = copy.Label; h.Group = copy.Group;
         h.Username = copy.Username; h.PublicIp = copy.PublicIp; h.UsePublicIp = copy.UsePublicIp; h.VaultId = copy.VaultId;
         if (h.PrivateIp != null && !h.IsCloud) h.PrivateIp = h.Address;

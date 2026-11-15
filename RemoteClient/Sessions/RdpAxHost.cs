@@ -32,6 +32,29 @@ public sealed class RdpAxHost : AxHost
     /// <summary>IMsRdpClient (IDispatch) — Server, AdvancedSettings9, Connect() 등</summary>
     public dynamic Ocx => GetOcx() ?? throw new InvalidOperationException(L.T("RDP 컨트롤이 아직 생성되지 않았습니다."));
 
+    /// <summary>
+    /// IMsRdpExtendedSettings.Property 설정 (DesktopScaleFactor 등). 이 인터페이스는 IDispatch 로 노출되지 않아
+    /// dynamic 으로는 부를 수 없으므로 QueryInterface 로 얻는다. 지원하지 않거나 값이 거부되면 false.
+    /// </summary>
+    public bool TrySetExtendedProperty(string name, object value)
+    {
+        try
+        {
+            if (GetOcx() is not IMsRdpExtendedSettings ext) return false;
+            ext.set_Property(name, ref value);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    [ComImport, Guid("302D8188-0052-4807-806A-362B628F9AC5"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IMsRdpExtendedSettings
+    {
+        // vtable 순서: propput Property → propget Property (mstsax.idl)
+        void set_Property([MarshalAs(UnmanagedType.BStr)] string bstrPropertyName, [In] ref object pValue);
+        object get_Property([MarshalAs(UnmanagedType.BStr)] string bstrPropertyName);
+    }
+
     protected override void CreateSink()
     {
         try { _cookie = new ConnectionPointCookie(GetOcx()!, _sink, typeof(IMsTscAxEvents)); }
@@ -105,6 +128,8 @@ public sealed class RdpAxHost : AxHost
         ax.ClearHandlers();
         try { if ((bool)ax.Ocx.FullScreen) ax.Ocx.FullScreen = false; } catch { }
         try { if ((int)ax.Ocx.Connected != 0) ax.Ocx.Disconnect(); } catch { }
+        // 풀에 보관하는 동안 이전 탭의 비밀번호가 컨트롤에 남지 않게 지운다 (다음 연결은 Connect 에서 항상 다시 설정)
+        try { ax.Ocx.AdvancedSettings9.ClearTextPassword = ""; } catch { }
         if (ax.IsDisposed || Pool.Count >= MaxPooled) { ax.Shutdown(); return; }
         Pool.Push(ax);   // 부모에서 떼어도 WinForms 주차 창이 핸들을 유지한다
     }

@@ -46,7 +46,8 @@ public static class OpenSshKnownHosts
     {
         var token = port == 22 ? host : $"[{host}]:{port}";
         var type = BlobType(keyBlob);
-        var sawOther = false;
+        // 순서와 상관없이 전체를 본다 — 같은 키의 일반 줄이 @revoked 줄보다 앞에 있어도 폐기가 우선 (Revoked > Match > Mismatch > Unknown)
+        bool sawOther = false, sawMatch = false;
         foreach (var raw in lines)
         {
             var line = raw.Trim();
@@ -62,10 +63,10 @@ public static class OpenSshKnownHosts
             if (BlobType(blob) != type) continue;   // 다른 형식의 키 (ed25519 와 rsa 등) — 판단하지 않음
             var same = blob.AsSpan().SequenceEqual(keyBlob);
             if (marker == "@revoked") { if (same) return Verdict.Revoked; continue; }
-            if (same) return Verdict.Match;
-            sawOther = true;
+            if (same) sawMatch = true;
+            else sawOther = true;
         }
-        return sawOther ? Verdict.Mismatch : Verdict.Unknown;
+        return sawMatch ? Verdict.Match : sawOther ? Verdict.Mismatch : Verdict.Unknown;
     }
 
     /// <summary>호스트 목록(쉼표 구분)이 token 과 맞는가. 부정(!) 패턴이 맞으면 그 줄은 해당하지 않는다</summary>

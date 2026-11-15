@@ -109,6 +109,31 @@ public class LoginTests
     }
 
     [Fact]
+    public void Microsoft_로그인_기록은_테넌트까지_같아야_인정한다()
+    {
+        var now = new DateTime(2026, 11, 10, 12, 0, 0, DateTimeKind.Utc);
+        var cfg = new LoginConfig { Provider = LoginProviderKind.Microsoft, ClientId = "app", Tenant = "contoso.onmicrosoft.com", AllowedAccounts = { "me@contoso.com" } };
+        var who = new LoginIdentity(LoginProviderKind.Microsoft, "me@contoso.com", "me", "oid-1");
+        var st = LoginState.Create(who, cfg, orgMember: false, now.AddHours(-1));
+        Assert.Equal("contoso.onmicrosoft.com", st.Tenant);
+        Assert.True(st.Within(cfg, TimeSpan.FromHours(8), now));
+        Assert.True(st.Within(new LoginConfig { Provider = LoginProviderKind.Microsoft, ClientId = "app", Tenant = " CONTOSO.onmicrosoft.com " }, TimeSpan.FromHours(8), now)); // 대소문자·공백 무시
+        Assert.False(st.Within(new LoginConfig { Provider = LoginProviderKind.Microsoft, ClientId = "app", Tenant = "organizations" }, TimeSpan.FromHours(8), now)); // 테넌트 바꿈
+        Assert.False(st.CanEnterWithout(new LoginConfig { Provider = LoginProviderKind.Microsoft, ClientId = "app", Tenant = "common", AllowedAccounts = { "me@contoso.com" } }, TimeSpan.FromHours(8), now));
+
+        // 테넌트 기록이 없는 예전 기록: Microsoft 면 다시 로그인 (안전한 쪽)
+        var old = new LoginState { Provider = LoginProviderKind.Microsoft, ClientId = "app", Account = "me@contoso.com", AccountId = "oid-1", LastSuccessUtc = now.AddHours(-1) };
+        Assert.False(old.Within(cfg, TimeSpan.FromHours(8), now));
+        Assert.False(old.Within(new LoginConfig { Provider = LoginProviderKind.Microsoft, ClientId = "app" }, TimeSpan.FromHours(8), now)); // 기본값 organizations 와도 불일치
+
+        // 다른 제공자는 테넌트를 기록·비교하지 않는다 (예전 기록 그대로 인정)
+        var gh = new LoginConfig { Provider = LoginProviderKind.GitHub, ClientId = "Iv1", Tenant = "contoso.onmicrosoft.com" };
+        var ghState = LoginState.Create(new LoginIdentity(LoginProviderKind.GitHub, "octocat", "o", "1"), gh, orgMember: false, now.AddHours(-1));
+        Assert.Equal("", ghState.Tenant);
+        Assert.True(ghState.Within(new LoginConfig { Provider = LoginProviderKind.GitHub, ClientId = "Iv1", Tenant = "other" }, TimeSpan.FromHours(8), now));
+    }
+
+    [Fact]
     public void 로그인_기록은_암호화해_저장한다()
     {
         var cfg = new LoginConfig { Provider = LoginProviderKind.GitHub, ClientId = "Iv1.test" };

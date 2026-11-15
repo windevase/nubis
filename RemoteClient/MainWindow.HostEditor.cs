@@ -22,6 +22,19 @@ public partial class MainWindow
     /// <param name="template">새 호스트를 이 값으로 채워 연다 (복제). 저장할 때만 목록에 추가된다</param>
     private void OpenEditor(HostEntry? h, HostEntry? template = null)
     {
+        // 이미 열린 편집 패널에 저장하지 않은 변경이 있으면 조용히 버리지 않는다 (탭 메뉴 "호스트 편집" 등)
+        if (_editorOpen && EditorSnapshot() != _editorSnapshot)
+        {
+            // 같은 호스트를 편집 중이면 지금 패널을 그대로 둔다
+            if (h != null && ReferenceEquals(h, _editing)) { NavHosts.IsChecked = true; return; }
+            if (Dialog.Show(this, L.T("저장하지 않은 변경 내용이 있습니다. 버리고 닫을까요?"), L.T("호스트 편집"),
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            {
+                NavHosts.IsChecked = true;
+                return;
+            }
+        }
+
         _editing = h;
         _template = h == null ? template : null;
         EditorTitle.Text = h == null ? (template != null ? L.T("호스트 복제") : L.T("새 호스트")) : L.T("호스트 편집");
@@ -54,6 +67,8 @@ public partial class MainWindow
         _editorSnapshot = EditorSnapshot();
 
         NavHosts.IsChecked = true;
+        _editorOpen = true;
+        EditorLayer.IsHitTestVisible = true;
         EditorLayer.Visibility = Visibility.Visible;
         EditorSlide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(390, 0, TimeSpan.FromMilliseconds(180))
         {
@@ -63,6 +78,10 @@ public partial class MainWindow
     }
 
     private HostEntry? _template;
+    // 편집 패널이 열려 있는지 — 닫기 애니메이션(140ms) 동안은 EditorLayer 가 아직 Visible 이지만 false.
+    // 그 사이 저장 두 번 클릭·Ctrl+S 반복이 다시 저장하면 비운 비밀번호 칸이 "바뀜" 으로 잡혀 저장된 비밀번호를 지우거나
+    // 새 호스트를 두 번 추가했다
+    private bool _editorOpen;
     private string _editorSnapshot = "";
     // 편집 패널을 열 때의 칸별 값 — 저장할 때 사용자가 바꾼 칸만 호스트에 반영한다
     // (열어 둔 사이 클라우드 동기화·Claude update_host 가 바꾼 값을 그대로 덮어쓰지 않게)
@@ -90,7 +109,7 @@ public partial class MainWindow
     /// <summary>저장하지 않은 변경이 있으면 물어보고 닫는다 (Esc · 바깥 클릭 · X)</summary>
     private void TryCloseEditor()
     {
-        if (EditorLayer.Visibility != Visibility.Visible) return;
+        if (!_editorOpen) return;
         if (EditorSnapshot() != _editorSnapshot &&
             Dialog.Show(this, L.T("저장하지 않은 변경 내용이 있습니다. 버리고 닫을까요?"), L.T("호스트 편집"),
                 MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -99,13 +118,20 @@ public partial class MainWindow
 
     private void CloseEditor()
     {
+        // 닫는 즉시 "닫힘" 으로 — 애니메이션 동안 저장·닫기·삭제가 다시 실행되지 않게, 클릭도 받지 않게
+        _editorOpen = false;
+        EditorLayer.IsHitTestVisible = false;
         var anim = new DoubleAnimation(0, 390, TimeSpan.FromMilliseconds(140))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
         };
-        anim.Completed += (_, _) => EditorLayer.Visibility = Visibility.Collapsed;
+        // 애니메이션 도중 다시 열었으면 숨기지 않는다
+        anim.Completed += (_, _) => { if (!_editorOpen) EditorLayer.Visibility = Visibility.Collapsed; };
         EditorSlide.BeginAnimation(TranslateTransform.XProperty, anim);
         EdPassword.Clear();
+        // 평문 비밀번호가 담긴 비교용 값도 비운다 (다시 열 때 OpenEditor 가 새로 만든다)
+        _editorValues = Array.Empty<string>();
+        _editorSnapshot = "";
     }
 
     private void OnProtoChanged(object sender, RoutedEventArgs e)
@@ -288,6 +314,7 @@ public partial class MainWindow
 
     private HostEntry? SaveEditor()
     {
+        if (!_editorOpen) return null;   // 닫는 중 (저장 두 번 클릭 · Ctrl+S 반복)
         var address = EdAddress.Text.Trim();
         if (address.Length == 0) { EditorError.Text = L.T("주소를 입력하세요."); EdAddress.Focus(); return null; }
         if (address.Contains(' ') || address.Contains('@'))
@@ -326,6 +353,7 @@ public partial class MainWindow
         {
             h.Address = address;
             if (h.PrivateIp != null) h.PrivateIp = address;
+            h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
         }
         if (changed[FPublicIp] || changed[FUsePublic])
         {
@@ -364,12 +392,13 @@ public partial class MainWindow
 
     private void OnEditorSaveConnect(object sender, RoutedEventArgs e)
     {
+        if (!_editorOpen) return;
         if (SaveEditor() is { } h) Connect(h);
     }
 
     private void OnEditorDelete(object sender, RoutedEventArgs e)
     {
-        if (_editing == null) return;
+        if (!_editorOpen || _editing == null) return;
         var before = _hosts.Count;
         DeleteHost(_editing);
         if (_hosts.Count < before) CloseEditor();

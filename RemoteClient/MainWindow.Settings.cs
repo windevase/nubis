@@ -244,7 +244,7 @@ public partial class MainWindow
         if (draft.Validate() is { } problem) { LoginStatusText.Text = "⚠ " + problem; return; }
 
         // 실제로 로그인해 허용되는지 확인한 뒤에만 저장 (잘못된 설정으로 앱에 못 들어오는 일 방지)
-        var who = LoginWindow.Test(this, draft);
+        var who = LoginWindow.Test(this, draft, out var orgMember);
         if (who == null) { LoginStatusText.Text = L.T("테스트 로그인에 성공하지 못해 저장하지 않았습니다."); return; }
         // 소유자 = 로그인을 설정한 계정. 소유자가 로그인 방식을 바꾸면 다음 실행 때 프로필을 새 이름으로 옮긴다
         var firstSetup = draft.OwnerKey.Length == 0;
@@ -266,6 +266,9 @@ public partial class MainWindow
             draft.OwnerKey = who.ProfileKey;
         }
         SettingsStore.UpdateGlobal(s => s.Login = draft);
+        // 로그인 기록은 설정을 실제로 저장할 때만 남긴다 (테스트 로그인 자체는 기록하지 않음).
+        // 저장한 설정·소유자가 된 계정 기준으로 새로 써서, 예전 설정(다른 앱·테넌트·계정)으로 남은 기록이 쓰이지 않게 한다
+        try { LoginState.Save(who, draft, orgMember); } catch { LoginState.Clear(); }
         LoginSecretBox.Clear();
         AuditLog.Write("login-settings", new[] { "시작 화면 로그인" }, $"{LoginConfig.ProviderLabel(draft.Provider)} · 허용 {string.Join(", ", draft.AllowedAccounts)}" +
                        (draft.GitHubOrg.Length > 0 ? $" · Org {draft.GitHubOrg}" : ""), "테스트 로그인 성공·저장");

@@ -266,7 +266,8 @@ public partial class MainWindow
             "리눅스와 Windows 는 명령 문법이 다르므로 섞지 말고 OS 별로 나눠 호출할 것 (list_hosts 의 프로토콜 ssh/rdp 로 구분). " +
             "targets 항목은 호스트 이름·IP·id 또는 'group:그룹이름'(그룹 전체). 중지된 서버는 제외된다. " +
             "실행 전에 앱이 사용자 승인 창을 띄우며, 거부되면 실행하지 않는다. " +
-            "OS 가 Windows 로 보이는 SSH 호스트(Windows OpenSSH — 기본 셸이 cmd/PowerShell)는 읽기 전용 명령이어도 항상 승인을 받는다. 비대화형이므로 sudo 비밀번호 입력·확인 프롬프트 등 대화형 명령은 쓰지 말 것.",
+            "OS 가 Windows 로 보이거나 아직 모르는 SSH 호스트(Windows OpenSSH 일 수 있음 — 한 번 접속하면 서버 배너로 판별해 기억)는 읽기 전용 명령이어도 승인을 받는다. " +
+            "SSH 호스트의 탭이 앱에 열려 연결돼 있으면 새로 접속하지 않고 그 탭의 로그인된 연결로 실행한다 — OTP·Push 를 요구하는 서버는 먼저 open_session 으로 탭을 열어 사용자가 인증을 마치게 한 뒤 run_command 를 쓸 것. 비대화형이므로 sudo 비밀번호 입력·확인 프롬프트 등 대화형 명령은 쓰지 말 것.",
             Schema(new
             {
                 targets = new { type = "array", items = new { type = "string" }, description = "대상 호스트 목록" },

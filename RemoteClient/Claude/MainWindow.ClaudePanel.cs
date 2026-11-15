@@ -73,6 +73,8 @@ public partial class MainWindow
 
     private void OnRestartClaude(object sender, RoutedEventArgs e)
     {
+        // 이전 claude 가 보낸 요청(열려 있는 승인 창 포함)은 응답을 받을 쪽이 없으므로 모두 취소 — 승인 창은 거부로 닫힌다
+        _mcp?.CancelAll();
         if (_claudeView != null)
         {
             _claudeView.CloseSession();
@@ -93,7 +95,7 @@ public partial class MainWindow
         var guardPath = Path.Combine(ClaudeWorkDir, ClaudeGuard.FileName);
         _lastActiveContext = null;
         UpdateActiveContext();
-        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath, AppPaths.RootDir), new UTF8Encoding(false));
+        File.WriteAllText(guardPath, ClaudeGuard.BuildSettingsJson(AppPaths.DataDir, ActiveContextPath, AppPaths.RootDir, ClaudeGuard.LegacyDataDir), new UTF8Encoding(false));
 
         _claudeView = new LocalTerminalView(() =>
         {
@@ -110,6 +112,13 @@ public partial class MainWindow
                 ? $"\"{exe}\" {args}"
                 : $"cmd.exe /d /s /c \"\"{exe}\" {args}\"";
         }, ClaudeWorkDir, L.T("Claude Code 가 종료되었습니다."), killTreeOnClose: true);
+        // claude 프로세스가 끝나면(종료·충돌) 그 claude 의 처리 중 요청을 모두 취소한다 — 열린 승인 창이 나중에 승인되어
+        // 아무도 결과를 받지 않는 원격 명령이 실행되는 것을 막는다. Enter 로 다시 시작하는 새 claude 의 요청은 그 뒤에 온다
+        var view = _claudeView;
+        view.StatusChanged += s =>
+        {
+            if (s == SessionStatus.Disconnected && _claudeView == view) _mcp?.CancelAll();
+        };
         ClaudeHost.Content = _claudeView;
     }
 
@@ -171,6 +180,7 @@ public partial class MainWindow
 
     private void ShutdownClaude()
     {
+        try { _mcp?.CancelAll(); } catch { }
         try { _claudeView?.CloseSession(); } catch { }
         try { _mcp?.Dispose(); } catch { }
     }

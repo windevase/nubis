@@ -16,6 +16,7 @@ public partial class MainWindow
         ShowRecentBox.IsChecked = s.ShowRecent;
         ConfirmCloseBox.IsChecked = s.ConfirmCloseTab;
         SmartCopyBox.IsChecked = s.SmartCopyPaste;
+        CopyOnSelectBox.IsChecked = s.CopyOnSelect;
         PasteConfirmBox.IsChecked = s.ConfirmMultilinePaste;
         SshAutoReconnectBox.IsChecked = s.SshAutoReconnect;
         SftpOpenFolderBox.IsChecked = s.SftpOpenFolderAfterDownload;
@@ -36,6 +37,7 @@ public partial class MainWindow
             s.ShowRecent = ShowRecentBox.IsChecked == true;
             s.ConfirmCloseTab = ConfirmCloseBox.IsChecked == true;
             s.SmartCopyPaste = SmartCopyBox.IsChecked == true;
+            s.CopyOnSelect = CopyOnSelectBox.IsChecked == true;
             s.ConfirmMultilinePaste = PasteConfirmBox.IsChecked == true;
             s.SshAutoReconnect = SshAutoReconnectBox.IsChecked == true;
             s.SftpOpenFolderAfterDownload = SftpOpenFolderBox.IsChecked == true;

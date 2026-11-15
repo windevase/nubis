@@ -378,16 +378,15 @@ public static class SshAuth
         var id = HostKeyId(h);
         var fp = Fingerprint(e);
         var known = KnownHostStore.Get(id);
+        // OpenSSH known_hosts 참고: 폐기(@revoked)된 키는 Nubis 에 저장된 키와 같아도 항상 거부
+        var openSsh = OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey);
+        if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
+            return $"OpenSSH known_hosts 에 폐기(@revoked)된 호스트키입니다 ({fp}).";
         if (known == null)
         {
-            // OpenSSH known_hosts 참고: 같은 키면 신뢰, 다른 키·폐기된 키면 거부 (비대화형이라 묻지 않는다)
-            switch (OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey))
-            {
-                case OpenSshKnownHosts.Verdict.Mismatch:
-                    return $"호스트키가 OpenSSH known_hosts 에 저장된 값과 다릅니다 ({fp}). 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
-                case OpenSshKnownHosts.Verdict.Revoked:
-                    return $"OpenSSH known_hosts 에 폐기(@revoked)된 호스트키입니다 ({fp}).";
-            }
+            // 처음 보는 서버: 같은 키면 신뢰, 다른 키면 거부 (비대화형이라 묻지 않는다)
+            if (openSsh == OpenSshKnownHosts.Verdict.Mismatch)
+                return $"호스트키가 OpenSSH known_hosts 에 저장된 값과 다릅니다 ({fp}). 앱에서 직접 접속해 키를 확인·신뢰한 뒤 다시 시도하세요.";
             KnownHostStore.Set(id, fp);
             return null;
         }
@@ -508,7 +507,7 @@ public static class KbdAuth
         var q = request.Trim();
         if (passwordUsed && IsPasswordPrompt(q))
             return $"서버가 비밀번호를 다시 요구했습니다 (\"{q}\") — 저장된 비밀번호가 틀렸을 수 있습니다. 계정 잠금을 막기 위해 다시 보내지 않았습니다.";
-        return $"서버가 추가 인증 입력을 요구합니다 (\"{q}\") — OTP 등은 비대화형 연결(run_command·SFTP 도구)에서 답할 수 없습니다. 앱에서 직접 접속하세요.";
+        return $"서버가 추가 인증 입력을 요구합니다 (\"{q}\") — OTP 등은 비대화형 연결(run_command·SFTP 도구)에서 답할 수 없습니다. 앱에서 이 서버의 SSH 탭을 열어(open_session) 인증을 마치면, run_command 는 그 탭의 연결로 다시 인증 없이 실행합니다.";
     }
 
     /// <summary>

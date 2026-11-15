@@ -26,6 +26,13 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     public XtermView Terminal => _term;
     public SessionStatus Status => _status;
 
+    /// <summary>
+    /// 이 탭의 로그인된 SSH 연결 (연결됨 상태일 때만) — MCP run_command 가 그 위에 명령 채널만 열어 다시 인증하지 않고 실행한다
+    /// (OTP 서버에서도 Push 없이). 연결은 터미널의 것이라 쓰는 쪽에서 닫으면 안 된다. User 는 이 탭이 로그인한 계정
+    /// </summary>
+    public (SshClient Client, string User)? SharedConnection =>
+        _status == SessionStatus.Connected && !_closed && _client is { IsConnected: true } c && _authUser != null ? (c, _authUser) : null;
+
     private readonly Action<string, string>? _saveCredentials;
     private bool _started;
 
@@ -311,6 +318,15 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _term.Info(L.T("저장된 계정이 바뀌어 새 값으로 연결합니다."));
         }
 
+        // 이 탭에서 점프 서버 비밀번호를 바꿨는데 저장값이 아직 옛 비밀번호면(저장 안 함 · 빠른 접속 · Vault 저장 확인 대기)
+        // 이번 연결도 새 비밀번호로 — 점프 서버에 옛 비밀번호를 거듭 보내 계정이 잠기지 않게
+        if (_jumpPasswordChange is { } jpc)
+        {
+            if (_host.Jump is { IsMissingJump: false } j && j.Id == jpc.Id && j.Username == jpc.User && j.Password == jpc.Old)
+                j.Password = jpc.New;
+            else _jumpPasswordChange = null;   // 저장값이 바뀜(새 값이 저장됐거나 사용자가 고침) 또는 점프 서버가 바뀜 — 저장값을 따른다
+        }
+
         // 다시 연결할 때는 직전에 로그인에 성공한 계정을 그대로 (접속 때 입력만 하고 저장하지 않은 경우에도 다시 묻지 않게)
         var user = _authUser ?? _host.Username;
         var password = _authUser != null ? _authPassword ?? "" : _host.Password;
@@ -368,6 +384,10 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                         banner => _term.Info(banner.TrimEnd().Replace("\r\n", "\n").Replace("\n", "\r\n"), "36"));
                     // 점프 서버 호스트키도 대상 서버와 같은 정책으로 (설정 "처음 보는 서버 확인"·바뀐 키 경고)
                     tunnel = JumpTunnel.Open(jump, _host.Address, _host.Port, jumpPrompter, VerifyJumpHostKey);
+                    // 점프 서버가 비밀번호 변경을 요구해 바꿈 — 터널이 열렸으니 인증(변경)에 성공했다. 대상 서버 연결 결과를 기다리지 않고 바로 저장한다
+                    // (대상 서버에서 실패해도 점프 서버 비밀번호는 이미 바뀌었다 — 다음 연결이 옛 비밀번호를 보내 계정이 잠기지 않게)
+                    if (jumpPrompter.NewPassword is { } jumpNewPassword)
+                        Dispatcher.Invoke(() => OnJumpPasswordChanged(jump, jumpNewPassword));
                 }
                 SshClient? client = null;
                 ShellStream? shell = null;
@@ -405,11 +425,20 @@ public sealed partial class SshSessionView : UserControl, ISessionView
                     throw new OperationCanceledException();
                 }
                 _client = client;
+                SshServerOs.Report(_host, client);
                 _shell = shell;
                 _tunnel = tunnel;
             });
             authenticated = true;
             _skipRemembered = false;
+
+            // 셸은 터미널 화면이 준비되기 전의 기본 크기(120x30)로 만들어졌을 수 있다 — 그사이 Ready·Resized 로 온 크기 변경은
+            // _shell 이 아직 없어 버려졌으므로, 지금 화면 크기와 다르면 서버에 다시 알린다
+            Dispatcher.Invoke(() =>
+            {
+                if (_shell is { } sh && (_term.Cols != cols || _term.Rows != rows))
+                    try { sh.ChangeWindowSize(_term.Cols, _term.Rows, 0, 0); } catch { }
+            });
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
             if (_status == SessionStatus.Disconnected) return;
@@ -567,6 +596,23 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     /// <summary>직전 시도가 기억한 답으로 실패함 — 다음 시도는 기억한 답을 쓰지 않는다</summary>
     private bool _skipRemembered;
 
+    /// <summary>이 탭에서 점프 서버 비밀번호를 바꿈 (점프 서버 Id · 사용자명 · 옛 · 새 비밀번호). 저장값이 옛 값이면 다음 연결에 새 값을 쓴다</summary>
+    private (Guid Id, string User, string Old, string New)? _jumpPasswordChange;
+
+    /// <summary>
+    /// 점프 서버가 요구해 비밀번호를 바꿈 (UI 스레드). 저장된 비밀번호로 로그인하던 경우만 새 값으로 저장한다 —
+    /// 대상 서버와 같은 기준 (점프 서버 호스트 또는 그 Vault 계정, SessionSource.SaveJumpCredentials).
+    /// </summary>
+    private void OnJumpPasswordChanged(HostEntry jump, string newPassword)
+    {
+        _term.Info(L.T("점프 서버 비밀번호를 변경했습니다."), "32");
+        var old = jump.Password;
+        if (string.IsNullOrEmpty(old) || old == newPassword) return;
+        _jumpPasswordChange = (jump.Id, jump.Username, old, newPassword);
+        jump.Password = newPassword;   // 접속용 사본 — 이 탭의 다음 연결(Reload 없는 빠른 접속 포함)도 새 값으로
+        _source?.SaveJumpCredentials?.Invoke(jump.Username, newPassword);
+    }
+
     private bool _askCredentials, _hostKeyAccepted, _hostKeyRejected, _retriedAfterHostKey, _triedPublic, _publicRetryPending;
     /// <summary>탭을 열 때의 접속 주소 (공인 IP 로 넘어갔다가도 다음 연결은 이 주소부터)</summary>
     private readonly string _originalAddress;
@@ -619,20 +665,24 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         var key = SshAuth.HostKeyId(h);
         var fp = SshAuth.Fingerprint(e);
         var known = KnownHostStore.Get(key);
+
+        // OpenSSH 의 known_hosts 를 참고 — 폐기(@revoked)된 키는 Nubis 에 저장된 키와 같아도 항상 거부한다
+        var openSsh = OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey);
+        if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
+        {
+            _term.Info(L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}", fp), "31");
+            return HostKeyDecision.Rejected;
+        }
         if (known == fp) return HostKeyDecision.Trusted;
 
-        // Nubis 가 처음 보는 서버: OpenSSH 의 known_hosts 를 참고 — ssh 로 이미 신뢰한 키면 묻지 않고, 다른 키면 바뀐 키처럼 경고
-        var openSsh = known == null ? OpenSshKnownHosts.Check(h.Address, h.Port, e.HostKey) : OpenSshKnownHosts.Verdict.Unknown;
+        // 일치·불일치는 Nubis 가 처음 보는 서버일 때만 참고 — ssh 로 이미 신뢰한 키면 묻지 않고, 다른 키면 바뀐 키처럼 경고.
+        // Nubis 가 아는 서버는 저장된 값(또는 거부 기록) 기준으로 판단한다
+        if (known != null) openSsh = OpenSshKnownHosts.Verdict.Unknown;
         if (openSsh == OpenSshKnownHosts.Verdict.Match)
         {
             KnownHostStore.Set(key, fp);
             _term.Info(L.F("OpenSSH known_hosts 에서 신뢰한 호스트키: {0} {1}", key, fp));
             return HostKeyDecision.Trusted;
-        }
-        if (openSsh == OpenSshKnownHosts.Verdict.Revoked)
-        {
-            _term.Info(L.F("OpenSSH known_hosts 에 폐기(@revoked)된 호스트키라 연결하지 않습니다: {0}", fp), "31");
-            return HostKeyDecision.Rejected;
         }
 
         // 처음 보는 서버: 설정이 꺼져 있으면(기본) 확인 없이 저장하고 접속 (ssh 의 StrictHostKeyChecking=accept-new)

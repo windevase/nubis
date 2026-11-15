@@ -44,18 +44,26 @@ public static class CloudSync
     /// <summary>
     /// 조회 결과를 호스트 목록에 반영한다. 이름·주소·상태 등 클라우드 정보는 갱신하고,
     /// 사용자가 바꾼 프로토콜·포트·계정은 유지한다. 클라우드에서 사라진 인스턴스는 제거한다.
+    /// 조회 결과의 중복 InstanceId 는 첫 번째만 반영하고, 같은 인스턴스를 가리키는 기존 호스트가 여럿이면 첫 번째만 남긴다(삭제 허용 시).
     /// </summary>
     public static (int added, int updated, int removed) Apply(CloudProfile p, List<CloudInstance> instances, List<HostEntry> hosts,
         bool removeMissing = true)
     {
-        var existing = hosts.Where(h => h.CloudProfileId == p.Id && h.CloudInstanceId != null)
-            .GroupBy(h => h.CloudInstanceId!).ToDictionary(g => g.Key, g => g.First());
+        var groups = hosts.Where(h => h.CloudProfileId == p.Id && h.CloudInstanceId != null)
+            .GroupBy(h => h.CloudInstanceId!).ToList();
+        // 같은 프로필·인스턴스로 호스트가 여럿이면 첫 번째만 갱신하고, 나머지는 중복으로 보고 제거 대상 (삭제가 허용될 때만)
+        var existing = groups.ToDictionary(g => g.Key, g => g.First());
+        var duplicates = new HashSet<HostEntry>(groups.SelectMany(g => g.Skip(1)), ReferenceEqualityComparer.Instance);
         var seen = new HashSet<string>();
+        // 조회 결과에 같은 InstanceId 가 두 번 오면(페이지 경계 밀림 등) 첫 번째만 반영
+        var processed = new HashSet<string>();
         int added = 0, updated = 0;
 
         foreach (var inst in instances)
         {
+            if (inst.InstanceId.Length == 0) continue;
             if (p.HiddenInstances.Contains(inst.InstanceId)) continue;
+            if (!processed.Add(inst.InstanceId)) continue;
             // "중지된 서버 제외" 여도 이미 있는 호스트는 지우지 않는다 (호스트별 설정 유지, 목록에서만 숨김). 새로 추가하지는 않는다
             if (!p.IncludeStopped && !inst.IsRunning)
             {
@@ -68,7 +76,6 @@ public static class CloudSync
             }
             // 기본 접속 주소는 사설 IP (없으면 공인). 공인 IP 는 따로 저장해 호스트별로 골라 쓴다
             var address = inst.PrivateIp.Length > 0 ? inst.PrivateIp : inst.PublicIp;
-            if (inst.InstanceId.Length == 0) continue;
             if (address.Length == 0)
             {
                 // 주소가 잠깐 없는 서버(할당 해제·IP 교체 중 등): 이미 있는 호스트는 지우지 않고 상태만 갱신 (계정·포트·기억한 답 유지)
@@ -92,6 +99,7 @@ public static class CloudSync
                 };
                 h.UsePublicIp = p.UsePublicIp && inst.PublicIp.Length > 0;   // 새 호스트는 프로필 기본값을 따름
                 hosts.Add(h);
+                existing[inst.InstanceId] = h;
                 added++;
             }
             else
@@ -105,6 +113,7 @@ public static class CloudSync
             if (string.IsNullOrWhiteSpace(h.Label) || h.CloudName == null || h.Label == h.CloudName) h.Label = inst.Name;
             h.CloudName = inst.Name;
             // 새 호스트: 프로필 기본 Vault 는 접속 때 적용되므로 여기서 따로 넣지 않는다
+            if (h.Address != address) h.SshBannerOs = null;   // 주소가 바뀌면 다음 접속 때 다시 판별
             h.Address = address;
             h.PrivateIp = inst.PrivateIp.Length > 0 ? inst.PrivateIp : null;
             // EIP 를 떼면 공인 IP 는 사라지지만 사용자가 고른 "공인 IP 로 접속" 은 유지 — 다시 붙이면 그대로 공인으로 (공인 IP 가 없는 동안은 EffectiveAddress 가 사설로)
@@ -117,7 +126,8 @@ public static class CloudSync
 
         // 일부 리전/영역 조회가 실패한 경우(removeMissing=false)엔 "안 보인 서버" 를 지우지 않는다 — 일시 장애로 호스트·저장 계정이 사라지는 것 방지
         var removed = removeMissing
-            ? hosts.RemoveAll(h => h.CloudProfileId == p.Id && (h.CloudInstanceId == null || !seen.Contains(h.CloudInstanceId)))
+            ? hosts.RemoveAll(h => h.CloudProfileId == p.Id &&
+                (h.CloudInstanceId == null || !seen.Contains(h.CloudInstanceId) || duplicates.Contains(h)))
             : 0;
         p.LastSync = DateTime.Now;
         return (added, updated, removed);

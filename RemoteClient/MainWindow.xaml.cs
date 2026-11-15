@@ -33,6 +33,14 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _hosts = HostStore.Load();
+        // SSH 접속 때 배너로 판별한 서버 OS 를 저장된 호스트에 기억 (읽기 전용 자동 승인 판단에 씀)
+        SshServerOs.Detected += (id, kind) => Dispatcher.BeginInvoke(() =>
+        {
+            var h = _hosts.FirstOrDefault(x => x.Id == id);
+            if (h == null || h.SshBannerOs == kind) return;
+            h.SshBannerOs = kind;
+            SaveHosts();
+        });
         _profiles = CloudStore.Load();
         HostEntry.ProfileResolver = id => id == null ? null : _profiles.FirstOrDefault(p => p.Id == id);
         _sections = CloudProviders.All.Select(pr => new CloudSection

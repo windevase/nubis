@@ -153,5 +153,7 @@
   "포트는 1~65535 사이 숫자로 입력하세요.": "Enter a port number between 1 and 65535.",
   "바꿀 항목을 하나 이상 체크하세요.": "Check at least one item to change.",
   "클라우드 {0}": "Cloud {0}",
-  "{0}. 체크한 항목만 바뀌고 나머지는 호스트마다 그대로입니다.": "{0}. Only checked items change; everything else stays as it is on each host."
+  "{0}. 체크한 항목만 바뀌고 나머지는 호스트마다 그대로입니다.": "{0}. Only checked items change; everything else stays as it is on each host.",
+  "선택하면 바로 복사 · 우클릭은 붙여넣기": "Copy on select · right-click pastes",
+  "  마우스로 끌어 선택하면 바로 클립보드에 복사하고, 우클릭은 항상 붙여넣기. PuTTY · mRemoteNG 와 같음": "  Selecting text with the mouse copies it right away, and right-click always pastes. Same as PuTTY · mRemoteNG"
 }

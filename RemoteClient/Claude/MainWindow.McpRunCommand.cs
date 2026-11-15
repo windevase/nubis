@@ -13,6 +13,18 @@ namespace Nubis;
 
 public partial class MainWindow
 {
+    /// <summary>대상 호스트별로 연결된 SSH 탭의 로그인된 연결 (UI 스레드에서 호출). 같은 호스트 탭이 여럿이면 앞의 것</summary>
+    private Dictionary<Guid, (Renci.SshNet.SshClient Client, string User)> OpenSshConnections(IEnumerable<HostEntry> hosts)
+    {
+        var ids = hosts.Select(h => h.Id).ToHashSet();
+        var map = new Dictionary<Guid, (Renci.SshNet.SshClient, string)>();
+        foreach (var tab in _tabs)
+            if (tab.Host is { } th && ids.Contains(th.Id) && !map.ContainsKey(th.Id)
+                && tab.View is SshSessionView v && v.SharedConnection is { } c)
+                map[th.Id] = c;
+        return map;
+    }
+
     // =================== 여러 서버 명령 실행 (run_command) ===================
     private async Task<string> RunCommandAsync(JsonElement a)
     {
@@ -55,10 +67,10 @@ public partial class MainWindow
         var mixed = linux.Count > 0 && windows.Count > 0
             ? L.T("\n⚠ 리눅스와 Windows 서버가 섞여 있습니다. 같은 명령이 양쪽에서 동작하는지 확인하세요.") : "";
         // 설정에서 켠 경우, 대상 셸 모두에서 읽기 전용으로 판별되는 명령은 승인 창 없이 실행.
-        // 단 OS 가 Windows 로 보이는 SSH 대상(Windows OpenSSH 서버 — 기본 셸이 cmd/PowerShell)은 sh 기준 판정이 맞지 않아 항상 승인
-        // (echo 'x & net user a P1 /add & ' 는 sh 에선 문자열이지만 cmd 에선 net user 가 실행된다)
+        // 단 OS 가 Windows 로 보이거나 OS 를 모르는(직접 추가한 호스트 등) SSH 대상은 Windows OpenSSH 서버(기본 셸 cmd/PowerShell)일 수 있어
+        // sh 기준 판정이 맞지 않으므로 항상 승인 (echo 'x & net user a P1 /add & ' 는 sh 에선 문자열이지만 cmd 에선 net user 가 실행된다)
         var autoApproved = SettingsStore.Current.AutoApproveReadOnly
-            && !linux.Any(h => McpHelpers.IsWindowsOs(h.Os))
+            && !linux.Any(h => McpHelpers.ShellNotKnownSh(h.Os, h.SshBannerOs))
             && (linux.Count == 0 || ReadOnlyCommands.IsReadOnly(command, CommandShell.Sh))
             && (windows.Count == 0 || ReadOnlyCommands.IsReadOnly(command, useCmd ? CommandShell.Cmd : CommandShell.PowerShell));
         if (!autoApproved)
@@ -82,7 +94,9 @@ public partial class MainWindow
         List<ExecResult> results;
         try
         {
-            var sshTask = SshExec.RunAsync(linux, command, timeout, cts.Token);
+            // 이 호스트의 SSH 탭이 열려 있으면 그 로그인된 연결로 실행 (OTP 서버도 다시 인증하지 않음)
+            var shared = await OnUi(() => OpenSshConnections(linux));
+            var sshTask = SshExec.RunAsync(linux, command, timeout, cts.Token, shared);
             var winTask = WinRm.RunAsync(windows, command, !useCmd, timeout, cts.Token);
             // 취소하면 기다리지 않고 바로 돌아온다 (아직 시작 안 한 서버는 실행하지 않고, 이미 시작한 서버는 끝까지 돌 수 있음)
             var all = Task.WhenAll(sshTask, winTask);
@@ -116,6 +130,7 @@ public partial class MainWindow
         {
             sb.AppendLine();
             sb.AppendLine($"## {r.Host.DisplayName} ({r.Host.PrimaryAddress}{(r.Host.HasPublicIp ? $" / 공인 {r.Host.PublicIp}" : "")}) — {(r.ExitCode is { } c ? $"exit {c}" : "실패")}, {r.ElapsedMs / 1000.0:0.0}s");
+            if (r.Note is { Length: > 0 } note) sb.AppendLine($"[{note}]");
             if (r.Output.Length > 0) sb.AppendLine(SshExec.ClipOutput(r.Output.TrimEnd(), perHost));
             if (r.Error.Length > 0) sb.AppendLine("[stderr/오류] " + SshExec.ClipOutput(r.Error.TrimEnd(), Math.Min(perHost, 4_000)));
         }

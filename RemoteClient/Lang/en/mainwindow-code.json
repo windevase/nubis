@@ -127,5 +127,7 @@
   "경로를 바꿨습니다. 프로필 추가·동기화와 로그인 버튼에 바로 적용됩니다.": "Path changed. Applies right away to profile add / sync and the Sign in button.",
   "먼저 프로필을 추가하세요. (같은 SSO 포털을 쓰는 프로필은 한 번 로그인으로 모두 사용 가능)": "Add a profile first. (Profiles sharing the same SSO portal all work after one sign-in.)",
   "새 창에서 '{0}' 를 실행했습니다. 로그인을 마친 뒤 동기화하세요.": "Ran '{0}' in a new window. Sync after you finish signing in.",
-  "실행 실패: {0}": "Failed to run: {0}"
+  "실행 실패: {0}": "Failed to run: {0}",
+  "사용 가능한 리전 목록이 비어 있습니다 (DescribeRegions) — 이번 동기화는 건너뜁니다.": "The available region list is empty (DescribeRegions) — skipping this sync.",
+  "조회 중 인스턴스 목록이 바뀌었습니다 (받은 {0}개 / 전체 {1}개) — 다시 동기화하세요.": "The instance list changed during the query (received {0} / total {1}) — please sync again."
 }

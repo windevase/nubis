@@ -49,6 +49,9 @@ public sealed class McpServer : IDisposable
     private readonly string _instructions;
     // 처리 중인 요청 id(JSON 원문) → 취소 토큰. notifications/cancelled 가 오면 취소한다
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _inflight = new();
+    // 등록 전에 도착한 취소 알림의 요청 id → 받은 시각(UTC). 요청이 등록될 때 확인하고, EarlyCancelTtl 이 지나면 버린다
+    private readonly ConcurrentDictionary<string, DateTime> _earlyCancels = new();
+    private static readonly TimeSpan EarlyCancelTtl = TimeSpan.FromSeconds(30);
 
     public int Port { get; }
     public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
@@ -103,7 +106,7 @@ public sealed class McpServer : IDisposable
         var res = ctx.Response;
         try
         {
-            if (ctx.Request.Headers["Authorization"] != $"Bearer {Token}")
+            if (!TokenMatches(ctx.Request.Headers["Authorization"]))
             {
                 res.StatusCode = 401;
                 return;
@@ -125,10 +128,8 @@ public sealed class McpServer : IDisposable
             {
                 // notification (notifications/initialized 등). 취소 알림이면 해당 요청을 취소한다
                 if (method == "notifications/cancelled" && p.ValueKind == JsonValueKind.Object &&
-                    p.TryGetProperty("requestId", out var rid) && _inflight.TryGetValue(rid.GetRawText(), out var target))
-                {
-                    try { target.Cancel(); } catch (ObjectDisposedException) { }
-                }
+                    p.TryGetProperty("requestId", out var rid))
+                    CancelRequest(rid.GetRawText());
                 res.StatusCode = 202;
                 return;
             }
@@ -137,6 +138,12 @@ public sealed class McpServer : IDisposable
             var key = id.GetRawText();
             using var cts = new CancellationTokenSource();
             _inflight[key] = cts;
+            // 등록보다 먼저 도착한 취소 알림이 있으면 바로 취소한다 (등록 → 확인 순서라 CancelRequest 와 엇갈려도 놓치지 않음)
+            PruneEarlyCancels();
+            if (_earlyCancels.TryRemove(key, out _))
+            {
+                try { cts.Cancel(); } catch (ObjectDisposedException) { }
+            }
             try
             {
                 var result = await Dispatch(method, p, cts.Token);
@@ -163,6 +170,49 @@ public sealed class McpServer : IDisposable
         finally
         {
             try { res.Close(); } catch { }
+        }
+    }
+
+    /// <summary>Authorization 헤더가 "Bearer {Token}" 과 같은지 — 비교 시간으로 토큰을 알아내지 못하게 고정 시간 비교</summary>
+    private bool TokenMatches(string? header)
+    {
+        if (header == null) return false;
+        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(header), Encoding.UTF8.GetBytes($"Bearer {Token}"));
+    }
+
+    /// <summary>
+    /// 요청 id 의 취소. 아직 등록되지 않은 요청(취소 알림이 요청보다 먼저 처리된 경우)을 위해 먼저 기록해 두고,
+    /// 등록돼 있으면 바로 취소한다. 기록 → 확인 순서라 등록(등록 → 확인)과 엇갈려도 둘 중 한쪽은 반드시 상대를 본다.
+    /// </summary>
+    private void CancelRequest(string key)
+    {
+        PruneEarlyCancels();
+        _earlyCancels[key] = DateTime.UtcNow;
+        if (_inflight.TryGetValue(key, out var target))
+        {
+            _earlyCancels.TryRemove(key, out _);
+            try { target.Cancel(); } catch (ObjectDisposedException) { }
+        }
+    }
+
+    /// <summary>오래된(EarlyCancelTtl 초과) 선취소 기록을 지운다 — 끝난 요청에 대한 늦은 취소 알림이 쌓이지 않게</summary>
+    private void PruneEarlyCancels()
+    {
+        var limit = DateTime.UtcNow - EarlyCancelTtl;
+        foreach (var kv in _earlyCancels)
+            if (kv.Value < limit) _earlyCancels.TryRemove(kv);
+    }
+
+    /// <summary>
+    /// 처리 중인 모든 요청을 취소한다 (Claude 재시작·종료 때). 열려 있는 승인 창은 거부로 닫혀,
+    /// 응답을 받을 Claude 가 없는데 승인되어 원격 명령이 실행되는 일을 막는다.
+    /// </summary>
+    public void CancelAll()
+    {
+        _earlyCancels.Clear();   // 이전 claude 의 요청 id 가 새 claude 의 같은 id 를 취소하지 않게
+        foreach (var cts in _inflight.Values)
+        {
+            try { cts.Cancel(); } catch (ObjectDisposedException) { }
         }
     }
 

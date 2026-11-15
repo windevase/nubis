@@ -400,6 +400,185 @@ public class ReadOnlyBypassTests
     [InlineData("$a = 5 % 2")]                          // 나머지 연산자도 승인 창으로 (안전 쪽)
     public void 파워셸_foreach_문과_제어문은_거부(string cmd) => Assert.False(Ps(cmd));
 
+    // ---------------------------------------------------------------- sh: 변수 확장 ($_ 는 직전 명령의 마지막 인자)
+
+    [Theory]
+    [InlineData("echo -exec; find / -maxdepth 0 $_ sh -c 'id' ';'")]   // find / -exec sh -c 'id' ';'
+    [InlineData("echo -delete; find /data $_")]                       // find /data -delete
+    [InlineData("echo 'link set eth0 down'; ip $_")]                  // ip link set eth0 down (한 토큰이라도 단어 분리로 나뉨)
+    [InlineData("echo -delete; find /data \"$_\"")]
+    [InlineData("find /data $1")]
+    [InlineData("cd /tmp/-delete; cd /; find $OLDPWD")]
+    [InlineData("ls $x")]
+    [InlineData("echo \"$IFS\"")]
+    [InlineData("echo \"$HOMEX\"")]
+    [InlineData("ls $HOME")]                                          // 따옴표 밖은 HOME 도 거부
+    [InlineData("echo $\"x\"")]
+    public void sh_변수_확장은_거부(string cmd) => Assert.False(Sh(cmd));
+
+    [Theory]
+    [InlineData("echo \"$HOME\"")]
+    [InlineData("echo \"$USER\"")]
+    [InlineData("ls -la \"$HOME\"")]
+    [InlineData("grep \"foo$\" /var/log/syslog")]                    // 끝의 $ 는 글자 그대로
+    [InlineData("grep 'foo$' /var/log/syslog")]
+    [InlineData("awk '{print $1}' /var/log/nginx/access.log")]
+    public void sh_안전한_달러_사용은_허용(string cmd) => Assert.True(Sh(cmd));
+
+    // ---------------------------------------------------------------- sh: 캐시 파일 쓰기 옵션 (blkid · apt-cache)
+
+    [Theory]
+    [InlineData("sudo blkid -c /etc/fstab")]
+    [InlineData("blkid -c/etc/fstab")]
+    [InlineData("blkid -w /tmp/x")]
+    [InlineData("blkid --cache-file=/etc/fstab")]
+    [InlineData("blkid --cache /etc/fstab")]
+    [InlineData("apt-cache -p /tmp/x show bash")]
+    [InlineData("apt-cache -s /tmp/x show bash")]
+    [InlineData("apt-cache --pkg-cache=/tmp/x show bash")]
+    [InlineData("apt-cache --src-cache /tmp/x show bash")]
+    [InlineData("apt-cache show bash -p /tmp/x")]
+    [InlineData("apt-cache -qp /tmp/x show bash")]
+    [InlineData("apt -qo APT::Update::Pre-Invoke::=sh list")]
+    public void sh_캐시_파일_쓰기_옵션은_거부(string cmd) => Assert.False(Sh(cmd));
+
+    [Theory]
+    [InlineData("blkid")]
+    [InlineData("sudo blkid -o list")]
+    [InlineData("apt-cache policy nginx")]
+    [InlineData("apt-cache -q show bash")]
+    public void sh_blkid_apt_cache_조회는_허용(string cmd) => Assert.True(Sh(cmd));
+
+    // ---------------------------------------------------------------- PowerShell: 기본 명령에 식·변수·배열 인자
+
+    [Theory]
+    [InlineData("net user ('hacker','P@ssw0rd1','/add')")]
+    [InlineData("$a='bob','pw','/add'; net user $a")]
+    [InlineData("$a='bob','pw','/add'; net user @a")]
+    [InlineData("net user bob,pw")]
+    [InlineData("net user \"$a\"")]
+    [InlineData("net user (Get-Content x)")]
+    [InlineData("Get-Process | % { net user x }")]
+    [InlineData("schtasks /query ('/fo','LIST')")]
+    public void 파워셸_기본_명령의_식_인자는_거부(string cmd) => Assert.False(Ps(cmd));
+
+    // ---------------------------------------------------------------- UNC 경로 · 원격 컴퓨터 지정 (NTLM 인증 유출)
+
+    [Theory]
+    [InlineData("Get-ChildItem \\\\1.2.3.4\\s")]
+    [InlineData("Get-ChildItem '\\\\1.2.3.4\\s'")]
+    [InlineData("Get-ChildItem \"\\\\1.2.3.4\\s\"")]
+    [InlineData("Get-ChildItem //1.2.3.4/s")]
+    [InlineData("Get-ChildItem /\\1.2.3.4\\s")]
+    [InlineData("Test-Path \\\\x\\y")]
+    [InlineData("dir \\\\x\\s")]
+    [InlineData("gc \\\\x\\s\\a.txt")]
+    [InlineData("reg query \\\\x\\HKLM")]
+    [InlineData("sc.exe \\\\x query")]
+    [InlineData("Get-ChildItem ('\\'+'\\1.2.3.4\\s')")]
+    [InlineData("Get-ChildItem ('{0}{0}1.2.3.4\\s' -f '\\')")]
+    [InlineData("Get-ChildItem ('\\' * 2)")]
+    [InlineData("Get-ChildItem (('\\','\\','h\\s') -join '')")]
+    [InlineData("Get-ChildItem '\\'\"\\1.2.3.4\\s\"")]
+    [InlineData("Get-ChildItem \\'\\1.2.3.4\\s'")]
+    [InlineData("$s='\\'; Get-ChildItem $s$s'1.2.3.4\\s'")]
+    [InlineData("$s='\\'; Get-ChildItem $s\\1.2.3.4\\s")]
+    [InlineData("$s='\\'; Get-ChildItem \"$s$s\"")]
+    [InlineData("$s='\\'; Get-ChildItem ($s)\\1.2.3.4\\s")]
+    [InlineData("Get-Item ([char]92)")]
+    [InlineData("[wmi]'x'")]
+    [InlineData("$p = $pwd.Path[2]; Get-ChildItem $p")]
+    [InlineData("Get-WmiObject Win32_OperatingSystem -ComputerName 1.2.3.4")]
+    [InlineData("Get-Service -cn 1.2.3.4")]
+    [InlineData("Get-Service -Comp 1.2.3.4")]
+    [InlineData("Get-CimInstance Win32_OperatingSystem -CimSession $s")]
+    [InlineData("tasklist /s 1.2.3.4")]
+    public void 파워셸_UNC_경로와_원격_지정은_거부(string cmd) => Assert.False(Ps(cmd));
+
+    [Theory]
+    [InlineData("dir \\\\x\\s")]
+    [InlineData("type \\\\x\\s\\a.txt")]
+    [InlineData("dir //x/s")]
+    [InlineData("reg query \\\\x\\HKLM")]
+    [InlineData("sc \\\\x query")]
+    [InlineData("findstr foo \\\\x\\s\\a.txt")]
+    [InlineData("tasklist /s x")]
+    [InlineData("systeminfo /s x")]
+    [InlineData("schtasks /query /s x")]
+    [InlineData("getmac /s x")]
+    [InlineData("wmic /node:x os get caption")]
+    [InlineData("query user /server:x")]
+    [InlineData("quser /server:x")]
+    public void cmd_UNC_경로와_원격_지정은_거부(string cmd) => Assert.False(Cmd(cmd));
+
+    [Theory]
+    [InlineData("Get-Content C:\\x.log -Tail 20")]
+    [InlineData("Get-Process | Sort-Object CPU -Descending | Select-Object -First 5")]
+    [InlineData("Get-ChildItem C:\\logs | ForEach-Object { $_.Name }")]
+    [InlineData("netstat -ano | findstr 3389")]
+    [InlineData("tasklist /fi \"imagename eq w3wp.exe\"")]
+    public void 파워셸_UNC_검사_뒤에도_정상_조회는_허용(string cmd) => Assert.True(Ps(cmd));
+
+    [Theory]
+    [InlineData("findstr /s foo C:\\logs\\*.txt")]   // findstr 의 /s 는 하위 폴더 (원격 서버 아님)
+    [InlineData("tasklist /fi \"imagename eq w3wp.exe\"")]
+    [InlineData("reg query HKLM\\Software\\Microsoft")]
+    public void cmd_UNC_검사_뒤에도_정상_조회는_허용(string cmd) => Assert.True(Cmd(cmd));
+
+    // ---------------------------------------------------------------- SSH 대상 셸 판단 (OS 를 모르면 자동 승인 안 함)
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("", true)]
+    [InlineData("   ", true)]
+    [InlineData("Windows Server 2022", true)]
+    [InlineData("windows", true)]
+    [InlineData("Linux/UNIX", false)]
+    [InlineData("Ubuntu Server 22.04 LTS 64bit", false)]
+    public void SSH_대상_셸을_모르거나_Windows_면_sh_로_보지_않는다(string? os, bool expected) =>
+        Assert.Equal(expected, McpHelpers.ShellNotKnownSh(os));
+
+    [Theory]
+    [InlineData("clear")]
+    [InlineData("clear; ls -l /tmp")]
+    [InlineData("clear && df -h")]
+    public void clear_는_읽기_전용이다(string c) => Assert.True(Sh(c));
+
+    [Theory]
+    [InlineData("clear; rm -rf /tmp/x")]
+    [InlineData("clear > /etc/motd")]
+    [InlineData("clear $_")]
+    public void clear_뒤에_쓰기가_붙으면_읽기_전용이_아니다(string c) => Assert.False(Sh(c));
+
+    [Theory]
+    [InlineData("SSH-2.0-OpenSSH_for_Windows_9.5", "windows")]
+    [InlineData("SSH-2.0-OpenSSH_8.7", "unix")]
+    [InlineData("SSH-2.0-dropbear_2022.83", "unix")]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void SSH_배너로_서버_OS_를_판별한다(string? banner, string? expected) =>
+        Assert.Equal(expected, SshServerOs.Classify(banner));
+
+    [Theory]
+    // 클라우드 Os 도 배너도 모르면 승인
+    [InlineData(null, null, true)]
+    // 배너로 sh 서버(unix) 확인 → 자동 승인 가능
+    [InlineData(null, "unix", false)]
+    [InlineData("", "unix", false)]
+    // 배너가 Windows 면 승인
+    [InlineData(null, "windows", true)]
+    // 클라우드 Os 와 배너 중 하나라도 Windows 면 승인 (보수적으로)
+    [InlineData("Ubuntu 22.04", "windows", true)]
+    [InlineData("Windows Server 2022", "unix", true)]
+    // 클라우드 Os 가 리눅스면 배너 없이도 sh
+    [InlineData("Ubuntu 22.04", null, false)]
+    public void 클라우드_OS_와_SSH_배너를_함께_보고_셸을_판단한다(string? os, string? banner, bool expected) =>
+        Assert.Equal(expected, McpHelpers.ShellNotKnownSh(os, banner));
+
+    [Fact]
+    public void OS_를_모르는_SSH_탭은_읽기_전용이라도_자동_승인하지_않는다() =>
+        Assert.False(McpHelpers.CanAutoApproveTerminalInput(true, "ls -la", true, true, Sh, windowsHost: McpHelpers.ShellNotKnownSh(null)));
+
     // ---------------------------------------------------------------- sh: 따옴표 밖 괄호
 
     [Theory]

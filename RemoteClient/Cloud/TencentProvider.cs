@@ -63,15 +63,25 @@ public sealed class TencentProvider : ICloudProvider
         var regions = regionsResp.Arr("RegionSet")
             .Where(r => r.Str("RegionState") == "AVAILABLE")
             .Select(r => r.Str("Region")).ToList();
+        // 리전이 0개면 "조회 성공 + 서버 없음" 으로 보여 이 프로필 호스트가 전부 지워지므로 실패로 처리
+        if (regions.Count == 0)
+            throw new InvalidOperationException(L.T("사용 가능한 리전 목록이 비어 있습니다 (DescribeRegions) — 이번 동기화는 건너뜁니다."));
 
         var (items, errors) = await CloudProviders.ParallelCollect(regions, 8, async region =>
         {
             var result = new List<CloudInstance>();
+            // Offset/Limit 페이지는 스냅숏이 아니다 — 페이지 사이에 생성·삭제가 있으면 항목이 밀려 빠지거나 중복된다.
+            // 받은 원본 개수·ID 중복·TotalCount 변화를 확인해 어긋나면 이 리전을 실패로 돌려 부분 결과(삭제 안 함)가 되게 한다
+            var ids = new HashSet<string>();
+            int rawCount = 0, firstTotal = -1, lastTotal = 0;
+            var inconsistent = false;
             for (var offset = 0; ; offset += 100)
             {
                 var resp = await CallAsync(id, key, token, "DescribeInstances", region, $"{{\"Offset\":{offset},\"Limit\":100}}", ct);
                 foreach (var inst in resp.Arr("InstanceSet"))
                 {
+                    rawCount++;
+                    if (!ids.Add(inst.Str("InstanceId"))) inconsistent = true;
                     if (IsGone(inst.Str("InstanceState"))) continue;
                     var tags = inst.Arr("Tags").GroupBy(t => t.Str("Key")).ToDictionary(g => g.Key, g => g.First().Str("Value"));
                     var (name, purpose) = CloudInstance.SplitName(inst.Str("InstanceName"));
@@ -84,8 +94,13 @@ public sealed class TencentProvider : ICloudProvider
                         os.Contains("windows", StringComparison.OrdinalIgnoreCase), os));
                 }
                 var total = resp.TryGetProperty("TotalCount", out var tc) ? tc.GetInt32() : 0;
+                if (firstTotal < 0) firstTotal = total;
+                else if (total != firstTotal) inconsistent = true;
+                lastTotal = total;
                 if (offset + 100 >= total) break;
             }
+            if (inconsistent || rawCount != lastTotal)
+                throw new InvalidOperationException(L.F("조회 중 인스턴스 목록이 바뀌었습니다 (받은 {0}개 / 전체 {1}개) — 다시 동기화하세요.", rawCount, lastTotal));
             return (IEnumerable<CloudInstance>)result;
         }, r => r);
 

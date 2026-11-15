@@ -36,20 +36,30 @@ public static class ClaudeGuard
         return "//" + char.ToLowerInvariant(full[0]) + full[2..].Replace('\\', '/');
     }
 
+    /// <summary>
+    /// 이름 변경 전 데이터 폴더 (%APPDATA%\RemoteClient). 이전(AppPaths.Migrate)에 실패하면 평문 계정 파일이 남아 있을 수 있어 같이 보호한다.
+    /// </summary>
+    public static string LegacyDataDir =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RemoteClient");
+
     /// <param name="dataDir">지금 쓰는 데이터 폴더 (로그인했으면 그 계정의 프로필 폴더)</param>
     /// <param name="rootDir">공통 폴더 (로그인 설정·로그인 기록, users\ 아래 다른 계정의 프로필). 생략하면 dataDir 와 같음</param>
-    public static List<string> DenyRules(string dataDir, string? rootDir = null)
+    /// <param name="legacyDir">이름 변경 전 데이터 폴더 (보통 <see cref="LegacyDataDir"/>). 생략하면 넣지 않음</param>
+    public static List<string> DenyRules(string dataDir, string? rootDir = null, string? legacyDir = null)
     {
         var rules = new List<string>();
         var root = ToRulePath(dataDir);
         var common = rootDir != null ? ToRulePath(rootDir) : null;
         if (common == root) common = null;
-        // 같은 보호 규칙을 지금 데이터 폴더 · 공통 폴더 · 모든 계정 프로필(users\**)에 건다
+        var legacy = legacyDir != null ? ToRulePath(legacyDir) : null;
+        if (legacy == root || legacy == common) legacy = null;
+        // 같은 보호 규칙을 지금 데이터 폴더 · 공통 폴더 · 모든 계정 프로필(users\**) · 옛 데이터 폴더에 건다
         // (공통 settings.json 에는 로그인 설정이 있어, 고쳐서 로그인을 끄거나 소유자를 바꾸는 우회도 막는다)
         var bases = new List<string>();
         if (root != null) bases.Add(root);
         if (common != null) bases.Add(common);
         if ((common ?? root) is { } top) bases.Add($"{top}/users/**");
+        if (legacy != null) bases.Add(legacy);
 
         foreach (var f in SecretFiles)
         {
@@ -66,6 +76,10 @@ public static class ClaudeGuard
             rules.Add($"Edit({b}/claude/mcp-config.json)");
             rules.Add($"Edit({b}/claude/{FileName})");
             rules.Add($"Edit({b}/claude/{ActiveContextFile})");
+            // claude 는 작업 폴더(<data>\claude\)의 프로젝트 설정(.claude\settings*.json · .mcp.json)도 읽는다.
+            // 한 번 편집을 승인받아 hook·allow 규칙을 써 넣으면 이 규칙들을 우회할 수 있으므로 고치지 못하게 한다
+            rules.Add($"Edit({b}/claude/.claude/**)");
+            rules.Add($"Edit({b}/claude/.mcp.json)");
             // 앱 설정은 update_settings(검증·승인)로만 — 파일을 직접 고쳐 자동 승인을 켜는 우회를 막는다
             rules.Add($"Edit({b}/settings.json*)");
         }
@@ -93,9 +107,9 @@ public static class ClaudeGuard
                $"\"[Console]::OutputEncoding=[Text.Encoding]::UTF8; if (Test-Path -LiteralPath '{p}') {{ Get-Content -Raw -Encoding UTF8 -LiteralPath '{p}' }}\"";
     }
 
-    public static string BuildSettingsJson(string dataDir, string? contextFile = null, string? rootDir = null)
+    public static string BuildSettingsJson(string dataDir, string? contextFile = null, string? rootDir = null, string? legacyDir = null)
     {
-        var deny = DenyRules(dataDir, rootDir);
+        var deny = DenyRules(dataDir, rootDir, legacyDir);
         object settings = contextFile == null
             ? new { permissions = new { deny } }
             : new
