@@ -283,13 +283,24 @@
 
                     <Grid Grid.Row="1" Margin="28,18,28,8">
                         <Grid x:Name="HostToolbar">
-                            <Button Style="{StaticResource GhostButton}" HorizontalAlignment="Left" Click="OnNewHost" Padding="14,8">
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
-                                               Foreground="{StaticResource Accent}"/>
-                                    <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </Button>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                                <Button Style="{StaticResource GhostButton}" Click="OnNewHost" Padding="14,8">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE710;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource Accent}"/>
+                                        <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory 에서 한꺼번에 등록 -->
+                                <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="14,8" Margin="8,0,0,0"
+                                        ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 서버를 한꺼번에 가져옵니다'}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
+                                                   Foreground="{StaticResource Accent}"/>
+                                        <TextBlock Text="IMPORT" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
                             <TextBlock x:Name="CountText" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource SubText}"
                                        ToolTip="{l:Tr 'Ctrl+클릭 · Shift+클릭으로 카드를 여러 개 골라 한 번에 편집할 수 있습니다 (Ctrl+A 전체 선택)'}"/>
                         </Grid>

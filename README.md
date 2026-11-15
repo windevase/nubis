@@ -28,6 +28,9 @@ SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type
 **☁️ Your cloud servers, already in the list**
 Import servers from AWS, Tencent Cloud, Google Cloud, Azure and Oracle Cloud (OCI), profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI · OCI `~/.oci/config` profiles, signed in through the browser with `oci session authenticate` or with an API key). They stay in sync (on demand, at startup or every few minutes) — names and IPs update, your own changes stay. Right-click a group to switch all of its servers to public or private IPs, or to assign one Vault account to every server in it — or `Ctrl`/`Shift`+click any cards and bulk-edit their account, username, port, group, IP choice or favorite at once.
 
+**🏢 On-prem servers in one go**
+`IMPORT` reads the server lists you already have — paste rows from Excel or CSV (Korean or English headers are recognized), `~/.ssh/config` (with `Include` and `ProxyJump`), mRemoteNG `confCons.xml` (folders become groups), Ansible inventories (INI or YAML) and Active Directory, including Microsoft Entra Domain Services (LDAPS first, your current Windows sign-in or an account you enter). Preview everything, pick what to add, choose a Vault account for SSH and for RDP, and existing hosts are detected so nothing is added twice. Passwords are never imported.
+
 **✦ Claude, right next to the terminal**
 The built-in Claude panel sees the tab you are looking at. Ask "what is this error?", "check disk usage on the Production group" or "add this server and link the ops account". Anything that changes a server waits for your approval and is written to an audit log, and Claude cannot read your saved passwords or keys. On servers that ask for OTP or push approval, Claude runs commands over the tab you already signed in to — no second prompt.
 

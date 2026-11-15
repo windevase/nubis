@@ -450,4 +450,14 @@ public partial class MainWindow
     }
 
     private void OnNewHost(object sender, RoutedEventArgs e) => OpenEditor(null);
+
+    /// <summary>호스트 가져오기 (엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory) — 미리보기에서 고른 것만 등록</summary>
+    private void OnImportHosts(object sender, RoutedEventArgs e)
+    {
+        if (ImportHostsDialog.Ask(this, _hosts) is not { } r) return;
+        var applied = r.ApplyTo(_hosts);
+        SaveHosts();
+        RefreshHosts();
+        ImportHostsDialog.ShowSummary(this, applied);
+    }
 }
