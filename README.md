@@ -23,7 +23,7 @@ If your work looks like that too — a mix of Linux and Windows servers, spread 
 ## What it does
 
 **🖥️ One window for every connection**
-SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K`, type part of a name or IP, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top, and tabs can be reordered, renamed, reconnected and closed in bulk. Copy and paste the way you're used to — Windows Terminal style `Ctrl+C`/`Ctrl+V`, or PuTTY / mRemoteNG style (select to copy, right-click to paste). It behaves like OpenSSH where it matters — ssh-agent and `~/.ssh` default keys, `known_hosts`, OTP / push MFA prompts (with remembered answers), jump hosts (ProxyJump) — and RDP follows your mstsc defaults, RD Gateway included.
+SSH terminals, RDP desktops and local PowerShell open side by side as tabs. Type `user@host` in the search box and you are connected — or press `Ctrl+K` and type part of a name, an IP, an open tab or an action, pick with the arrow keys and hit Enter. Favorites and recent hosts sit at the top. Tabs can be reordered, renamed, reconnected and closed in bulk, and `Ctrl+Shift+R` reopens the one you just closed. Copy and paste the way you're used to — Windows Terminal style `Ctrl+C`/`Ctrl+V`, or PuTTY / mRemoteNG style (select to copy, right-click to paste). It behaves like OpenSSH where it matters — ssh-agent and `~/.ssh` default keys, `known_hosts`, OTP / push MFA prompts (with remembered answers), jump hosts (ProxyJump) — and RDP follows your mstsc defaults, RD Gateway included.
 
 **☁️ Your cloud servers, already in the list**
 Import servers from AWS, Tencent Cloud, Google Cloud, Azure and Oracle Cloud (OCI), profile by profile, using the credential profiles already saved on your PC (AWS profiles · Tencent credentials · GCP ADC · Azure CLI · OCI `~/.oci/config` profiles, signed in through the browser with `oci session authenticate` or with an API key). They stay in sync (on demand, at startup or every few minutes) — names and IPs update, your own changes stay. Right-click a group to switch all of its servers to public or private IPs, or to assign one Vault account to every server in it — or `Ctrl`/`Shift`+click any cards and bulk-edit their account, username, port, group, IP choice or favorite at once.
@@ -43,12 +43,15 @@ Save shared usernames, passwords and SSH keys once. Set a default account for SS
 **🔒 Safe by default**
 All data is encrypted with Windows DPAPI on your PC, so it will not open on another PC or under another Windows account. No telemetry. An optional sign-in screen (GitHub · Google · Microsoft) keeps each account's data separate.
 
+**🪶 Light and native**
+A Windows 11 Fluent look with Mica (a plain dark window on Windows 10), short toast notifications for results, and keyboard use throughout — the host list, the command palette and the dialogs, with visible focus and screen-reader names. Kept light on purpose: nothing animates while you're idle, and closing a tab releases everything it held.
+
 **🌐 Korean and English**
 Choose the language on first launch and switch it any time in Settings. Claude answers in the same language.
 
 ## Get started
 
-1. [Download](https://github.com/windevase/nubis/releases/latest) the portable zip, extract it and run `Nubis.exe` — no installer and no .NET install needed (Windows 10 / 11, 64-bit).
+1. [Download](https://github.com/windevase/nubis/releases/latest) `Nubis-<version>-portable-win-x64.zip`, extract it and run `Nubis.exe` in the `Nubis` folder — keep the folder together (the app's DLLs sit next to the exe). No installer and no .NET install needed: Windows 10 / 11, 64-bit, with the Microsoft Edge WebView2 Runtime that Windows normally already has.
 2. Pick a language, then follow the **Get started** cards: add a server, import a cloud, or ask Claude to walk you through it.
 3. For the Claude panel, install the [Claude Code CLI](https://docs.claude.com/claude-code): `npm install -g @anthropic-ai/claude-code`.
 
@@ -56,7 +59,7 @@ Everything else — every feature, every setting and how it behaves — is in th
 
 ## Built with
 
-WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) · [xterm.js](https://xtermjs.org/) on WebView2 · the Windows built-in Remote Desktop engine (`mstscax`) · [Claude Code](https://docs.claude.com/claude-code) through a built-in MCP server.
+WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) (a small patched build, see `third_party/SSH.NET`) · [xterm.js](https://xtermjs.org/) on WebView2 · the Windows built-in Remote Desktop engine (`mstscax`) · AWS SDK for .NET, Azure.Identity and Google.Apis.Auth for cloud sign-in · YamlDotNet and System.DirectoryServices.Protocols for Ansible and Active Directory import · [Claude Code](https://docs.claude.com/claude-code) through a built-in MCP server.
 
 ```powershell
 .\build.ps1            # Debug build, then run
@@ -84,4 +87,4 @@ Nubis connects only to the places you configure: the servers you connect to, the
 
 [MIT License](LICENSE) — free to use, modify and distribute for personal or commercial purposes (keep the copyright notice and license text).
 
-Open-source components and theme sources are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+Open-source components and theme sources are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). Accessibility status and known gaps: [ACCESSIBILITY.md](ACCESSIBILITY.md).

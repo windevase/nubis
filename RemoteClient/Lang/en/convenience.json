@@ -93,7 +93,7 @@
   "  글자를 선택했을 때만 Ctrl+C 가 복사 (선택이 없으면 실행 중인 명령 중단). Windows Terminal 과 같음": "  Ctrl+C copies only when text is selected (otherwise it interrupts the running command). Same as Windows Terminal",
   "여러 줄 붙여넣기 전에 확인": "Confirm multi-line paste",
   "  줄마다 바로 실행되는 사고 방지 (우클릭 붙여넣기 포함)": "  Prevents each line from running immediately (including right-click paste)",
-  "터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 호스트 검색": "Terminal shortcuts: Ctrl+Shift+F find in output · Ctrl+Shift+W close tab · Ctrl+1~9 switch tab · Ctrl+Shift+K search hosts",
+  "터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 명령 팔레트": "Terminal shortcuts: Ctrl+Shift+F find in output · Ctrl+Shift+W close tab · Ctrl+1~9 switch tab · Ctrl+Shift+K command palette",
   "연결이 끊기면 자동으로 다시 연결": "Reconnect automatically when disconnected",
   "  네트워크 끊김·절전 후 2·4·8·16·32초 간격으로 5번까지 (인증 실패는 다시 시도하지 않음)": "  After network drops or sleep, up to 5 tries at 2·4·8·16·32 s (authentication failures are not retried)",
   "다운로드가 끝나면 탐색기에서 폴더 열기": "Open the folder in Explorer after downloading",

@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-Remote Client 는 아래 오픈소스 구성요소를 포함하거나 사용합니다.
+Nubis 는 아래 오픈소스 구성요소를 포함하거나 사용합니다.
 
 ## xterm.js 5.5.0 / @xterm/addon-fit 0.10.0 — MIT
 
@@ -36,6 +36,7 @@ https://github.com/sshnet/SSH.NET
 
 수정본(`2026.0.0.1-nubis`)을 사용함: SFTP 를 "sftp" 서브시스템 대신 지정한 명령(sudo sftp-server 등)으로 여는 옵션 추가.
 변경 내용은 `third_party/SSH.NET/nubis-sftp-exec.patch`, 빌드는 `tools/build-sshnet.ps1`.
+SSH.NET 의존성인 BouncyCastle.Cryptography 도 함께 배포됩니다 (아래 "그 밖의 의존성" 표).
 
 ```
 The MIT License (MIT)
@@ -98,8 +99,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 |---|---|---|
 | AWSSDK.Core / AWSSDK.EC2 / AWSSDK.SSO / AWSSDK.SSOOIDC | Apache-2.0 | https://github.com/aws/aws-sdk-net |
 | Azure.Identity, Azure.Core | MIT | https://github.com/Azure/azure-sdk-for-net |
-| Microsoft.Identity.Client (MSAL, Azure.Identity 의존성) | MIT | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
-| Google.Apis.Auth, Google.Apis.Core | Apache-2.0 | https://github.com/googleapis/google-api-dotnet-client |
+| System.ClientModel (Azure.Core 의존성) | MIT | https://github.com/Azure/azure-sdk-for-net |
+| Microsoft.Identity.Client, Microsoft.Identity.Client.Extensions.Msal (MSAL, Azure.Identity 의존성) | MIT | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
+| Microsoft.IdentityModel.Abstractions (MSAL 의존성) | MIT | https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet |
+| Google.Apis.Auth, Google.Apis, Google.Apis.Core | Apache-2.0 | https://github.com/googleapis/google-api-dotnet-client |
 | Newtonsoft.Json (Google.Apis 의존성) | MIT | https://github.com/JamesNK/Newtonsoft.Json |
 
 Apache-2.0 전문: https://www.apache.org/licenses/LICENSE-2.0
@@ -113,6 +116,14 @@ OCI(Oracle Cloud) API 도 SDK 없이 공개된 HTTP Signature(rsa-sha256) 규격
 |---|---|---|
 | YamlDotNet (Ansible YAML 인벤토리 읽기) | MIT | https://github.com/aaubry/YamlDotNet — Copyright (c) Antoine Aubry and contributors |
 | System.DirectoryServices.Protocols (Active Directory · Entra Domain Services LDAP 조회) | MIT | https://github.com/dotnet/runtime — Copyright (c) .NET Foundation and Contributors |
+
+## 그 밖의 의존성
+
+| 패키지 | 라이선스 | 출처 |
+|---|---|---|
+| BouncyCastle.Cryptography (SSH.NET 의존성) | MIT | https://www.bouncycastle.org — Copyright (c) Legion of the Bouncy Castle Inc. |
+| Microsoft.Extensions.* Abstractions · Options · Primitives, Microsoft.Bcl.AsyncInterfaces, System.Memory.Data, System.Management (SSH.NET · Azure · Google 라이브러리 의존성) | MIT | https://github.com/dotnet/runtime — Copyright (c) .NET Foundation and Contributors |
+| .NET 런타임 · WPF · Windows Forms (자체 포함 배포에 함께 들어감) | MIT | https://github.com/dotnet/runtime, https://github.com/dotnet/wpf, https://github.com/dotnet/winforms — Copyright (c) .NET Foundation and Contributors |
 
 ## 시스템 구성요소 (재배포하지 않음)
 

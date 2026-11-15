@@ -873,17 +873,13 @@
                     <ScrollViewer.Resources>
                         <!-- 프로필 표시 (서버 수 알약 · 동기화 시각 줄) — MainWindow.Cloud.cs -->
                         <local:CloudProfileViewConverter x:Key="CloudView"/>
-                        <!-- 프로필 추가: 평소 기본(Ghost) 버튼, 아직 프로필이 없는 공급자에서는 주 동작(강조 채움)으로 보여 다음 할 일을 알린다 -->
+                        <!-- 프로필 추가: 모든 공급자에서 같은 강조(채움) 버튼 — 프로필이 있든 없든 같은 모양 -->
                         <Style x:Key="CloudAddButton" TargetType="Button" BasedOn="{StaticResource GhostButton}">
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding Profiles.Count}" Value="0">
-                                    <Setter Property="Background" Value="{StaticResource Accent}"/>
-                                    <Setter Property="Foreground" Value="{StaticResource OnAccent}"/>
-                                    <Setter Property="BorderBrush" Value="Transparent"/>
-                                    <Setter Property="FontWeight" Value="SemiBold"/>
-                                    <Setter Property="l:Ui.HoverBrush" Value="{StaticResource AccentHover}"/>
-                                </DataTrigger>
-                            </Style.Triggers>
+                            <Setter Property="Background" Value="{StaticResource Accent}"/>
+                            <Setter Property="Foreground" Value="{StaticResource OnAccent}"/>
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                            <Setter Property="l:Ui.HoverBrush" Value="{StaticResource AccentHover}"/>
                         </Style>
                         <!-- 경로 줄 안의 작은 글자 버튼 -->
                         <Style x:Key="CloudPathButton" TargetType="Button" BasedOn="{StaticResource SubtleButton}">
@@ -1537,7 +1533,7 @@
                             </StackPanel>
                         </Border>
                         <TextBlock Style="{StaticResource SetNote}"
-                                   Text="{l:Tr '터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 호스트 검색'}"/>
+                                   Text="{l:Tr '터미널 단축키: Ctrl+Shift+F 화면 내용 찾기 · Ctrl+Shift+W 탭 닫기 · Ctrl+1~9 탭 이동 · Ctrl+Shift+K 명령 팔레트'}"/>
 
                         <!-- ===== 구문 강조 ===== -->
                         <TextBlock Text="{l:Tr '구문 강조'}" Style="{StaticResource SetHeader}"/>

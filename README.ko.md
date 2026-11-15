@@ -23,7 +23,7 @@ Linux 와 Windows 서버가 섞여 있고 여러 클라우드에 흩어져 있�
 ## 이런 걸 합니다
 
 **🖥️ 모든 접속을 한 창에서**
-SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속되고, `Ctrl+K` 로 이름·IP 일부를 입력해 방향키로 고르고 Enter 로 들어갑니다. 즐겨찾기와 최근 접속 호스트가 맨 위에 있고, 탭은 순서 바꾸기·이름 바꾸기·다시 연결·한꺼번에 닫기가 됩니다. 복사·붙여넣기는 Windows Terminal 방식(`Ctrl+C`/`Ctrl+V`)이나 PuTTY · mRemoteNG 방식(선택하면 복사, 우클릭으로 붙여넣기) 중 익숙한 쪽으로 고를 수 있습니다. ssh-agent 와 `~/.ssh` 기본 키, `known_hosts`, OTP·Push 2단계 인증(답 기억하기), 점프 서버(ProxyJump)까지 OpenSSH 처럼 동작하고, RDP 는 RD 게이트웨이를 포함해 mstsc 기본 설정을 따릅니다.
+SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속되고, `Ctrl+K` 를 누르고 이름·IP·열린 탭·동작 이름 일부를 입력해 방향키로 고른 뒤 Enter 로 실행합니다. 즐겨찾기와 최근 접속 호스트가 맨 위에 있습니다. 탭은 순서 바꾸기·이름 바꾸기·다시 연결·한꺼번에 닫기가 되고, 방금 닫은 탭은 `Ctrl+Shift+R` 로 다시 엽니다. 복사·붙여넣기는 Windows Terminal 방식(`Ctrl+C`/`Ctrl+V`)이나 PuTTY · mRemoteNG 방식(선택하면 복사, 우클릭으로 붙여넣기) 중 익숙한 쪽으로 고를 수 있습니다. ssh-agent 와 `~/.ssh` 기본 키, `known_hosts`, OTP·Push 2단계 인증(답 기억하기), 점프 서버(ProxyJump)까지 OpenSSH 처럼 동작하고, RDP 는 RD 게이트웨이를 포함해 mstsc 기본 설정을 따릅니다.
 
 **☁️ 클라우드 서버가 이미 목록에**
 이 PC 에 저장된 인증 프로필(AWS 프로필 · Tencent 자격 증명 · GCP ADC · Azure CLI · OCI `~/.oci/config` 프로필 — `oci session authenticate` 브라우저 로그인 또는 API 키)로 AWS · Tencent Cloud · Google Cloud · Azure · Oracle Cloud(OCI) 의 서버를 프로필별로 가져옵니다. 필요할 때·앱을 켤 때·몇 분마다 동기화되어 이름과 IP 는 갱신되고, 직접 바꾼 설정은 그대로 남습니다. 그룹을 우클릭하면 그 그룹 서버 전체를 공인/사설 IP 로 바꾸거나 Vault 계정 하나를 한 번에 지정하고, 카드를 `Ctrl`/`Shift`+클릭으로 골라 계정·사용자명·포트·그룹·접속 IP·즐겨찾기를 한꺼번에 편집할 수도 있습니다.
@@ -43,12 +43,15 @@ SSH 를 열면 파일 패널이 같은 연결 위에 함께 열리고(OTP 서버
 **🔒 기본이 안전하게**
 모든 데이터는 이 PC 에서 Windows DPAPI 로 암호화되어, 다른 PC 나 다른 Windows 계정에서는 열리지 않습니다. 사용 통계 수집은 없습니다. 선택 사항인 시작 화면 로그인(GitHub · Google · Microsoft)을 켜면 계정마다 데이터를 나눕니다.
 
+**🪶 가볍고 Windows 답게**
+Mica 를 입힌 Windows 11 Fluent 디자인(Windows 10 에서는 단색 어두운 창)이고, 작업 결과는 토스트로 잠깐 알려 줍니다. 호스트 목록·명령 팔레트·대화상자는 키보드로 다룰 수 있고, 포커스가 눈에 보이며 스크린 리더가 읽을 이름도 붙어 있습니다. 가볍게 유지하는 데도 신경 썼습니다 — 가만히 있을 때 움직이는 애니메이션이 없고, 탭을 닫으면 그 탭이 쓰던 자원을 모두 돌려놓습니다.
+
 **🌐 한국어 · 영어**
 처음 실행할 때 언어를 고르고, Settings 에서 언제든 바꿉니다. Claude 도 같은 언어로 답합니다.
 
 ## 시작하기
 
-1. [다운로드](https://github.com/windevase/nubis/releases/latest)에서 포터블 zip 을 받아 풀고 `Nubis.exe` 를 실행합니다 — 설치 프로그램도 .NET 설치도 필요 없습니다 (Windows 10 / 11, 64비트).
+1. [다운로드](https://github.com/windevase/nubis/releases/latest)에서 `Nubis-<버전>-portable-win-x64.zip` 을 받아 풀고 `Nubis` 폴더의 `Nubis.exe` 를 실행합니다 — 앱 DLL 이 exe 옆에 함께 있으니 폴더째로 두세요. 설치 프로그램도 .NET 설치도 필요 없습니다: Windows 10 / 11 64비트, 그리고 Windows 에 보통 이미 들어 있는 Microsoft Edge WebView2 런타임이면 됩니다.
 2. 언어를 고르고 **시작하기** 카드를 따라갑니다: 서버 추가, 클라우드 가져오기, 또는 Claude 에게 안내를 받으세요.
 3. Claude 패널을 쓰려면 [Claude Code CLI](https://docs.claude.com/claude-code) 를 설치합니다: `npm install -g @anthropic-ai/claude-code`
 
@@ -56,7 +59,7 @@ SSH 를 열면 파일 패널이 같은 연결 위에 함께 열리고(OTP 서버
 
 ## 만든 재료
 
-WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) · WebView2 위의 [xterm.js](https://xtermjs.org/) · Windows 내장 원격 데스크톱 엔진(`mstscax`) · 내장 MCP 서버로 연결한 [Claude Code](https://docs.claude.com/claude-code).
+WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) (조금 고친 빌드, `third_party/SSH.NET` 참고) · WebView2 위의 [xterm.js](https://xtermjs.org/) · Windows 내장 원격 데스크톱 엔진(`mstscax`) · AWS SDK for .NET·Azure.Identity·Google.Apis.Auth(클라우드 인증) · YamlDotNet·System.DirectoryServices.Protocols(Ansible·Active Directory 가져오기) · 내장 MCP 서버로 연결한 [Claude Code](https://docs.claude.com/claude-code).
 
 ```powershell
 .\build.ps1            # Debug 빌드 후 실행
@@ -84,4 +87,4 @@ Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 
 
 [MIT License](LICENSE) — 개인·상업 용도 관계없이 자유롭게 사용·수정·배포할 수 있다 (저작권 고지와 라이선스 문구 유지).
 
-포함·사용한 오픈소스 구성요소와 테마 출처는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) 참고.
+포함·사용한 오픈소스 구성요소와 테마 출처는 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), 접근성 현황과 알려진 한계는 [ACCESSIBILITY.md](ACCESSIBILITY.md) 참고.
