@@ -38,14 +38,19 @@ public static class ChildEnvironment
         return set;
     }
 
-    /// <summary>CreateProcess 용 유니코드 환경 블록 ("이름=값\0...\0\0", 이름순 정렬)</summary>
-    public static string Build()
+    /// <summary>
+    /// CreateProcess 용 유니코드 환경 블록 ("이름=값\0...\0\0", 이름순 정렬).
+    /// extra 는 더하거나 덮어쓸 변수 (쿠버네티스 탭의 KUBECONFIG 등)
+    /// </summary>
+    public static string Build(IReadOnlyDictionary<string, string>? extra = null)
     {
         var persistent = PersistentNames();
-        var vars = Environment.GetEnvironmentVariables().Cast<System.Collections.DictionaryEntry>()
-            .Select(e => ((string)e.Key, (string?)e.Value ?? ""))
-            .Where(v => !ShouldDrop(v.Item1, persistent))
-            .OrderBy(v => v.Item1, StringComparer.OrdinalIgnoreCase);
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
+            if (!ShouldDrop((string)e.Key, persistent)) map[(string)e.Key] = (string?)e.Value ?? "";
+        if (extra != null)
+            foreach (var (k, v) in extra) map[k] = v;
+        var vars = map.Select(kv => (kv.Key, kv.Value)).OrderBy(v => v.Key, StringComparer.OrdinalIgnoreCase);
         var sb = new StringBuilder();
         foreach (var (k, v) in vars) sb.Append(k).Append('=').Append(v).Append('\0');
         sb.Append('\0');
@@ -77,6 +82,9 @@ public sealed class PseudoConsoleProcess : IDisposable
     /// Start 전에 정한다.
     /// </summary>
     public bool KillTreeOnClose { get; init; }
+
+    /// <summary>자식 프로세스에 더하거나 덮어쓸 환경변수 (Start 전에 정한다)</summary>
+    public IReadOnlyDictionary<string, string>? ExtraEnvironment { get; init; }
 
     /// <summary>출력 (백그라운드 스레드에서 호출됨)</summary>
     public event Action<string>? Output;
@@ -113,7 +121,7 @@ public sealed class PseudoConsoleProcess : IDisposable
             if (!UpdateProcThreadAttribute(si.lpAttributeList, 0, (IntPtr)PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
                     _hpc, (IntPtr)IntPtr.Size, IntPtr.Zero, IntPtr.Zero)) throw new Win32Exception();
 
-            var env = Marshal.StringToHGlobalUni(ChildEnvironment.Build());
+            var env = Marshal.StringToHGlobalUni(ChildEnvironment.Build(ExtraEnvironment));
             try
             {
                 // 일시 정지 상태로 만들어 Job 에 넣은 뒤 재개한다 — 넣기 전에 손자 프로세스(node 등)가 먼저 생기지 않게

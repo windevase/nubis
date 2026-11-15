@@ -141,6 +141,21 @@ public static class ReadOnlyCommands
     /// --xxx 긴 옵션이 금지 이름의 접두어다. GNU getopt_long 은 모호하지 않은 접두어(--out → --output)를 받아들이므로
     /// 모호한 접두어까지 포함해 막는다.
     /// </summary>
+    /// <summary>
+    /// kubectl 인자가 Secret 리소스를 가리키는가 (secret · secrets · secret/이름 · pods,secrets 처럼 쉼표 목록 · secret.v1 등)
+    /// </summary>
+    internal static bool KubectlSecretRef(string x)
+    {
+        if (x.StartsWith("-", StringComparison.Ordinal)) return false;
+        foreach (var part in x.ToLowerInvariant().Split(','))
+        {
+            var kind = part.Split('/', 2)[0];
+            kind = kind.Split('.', 2)[0];
+            if (kind is "secret" or "secrets") return true;
+        }
+        return false;
+    }
+
     private static bool LongPrefix(string x, params string[] names)
     {
         if (!x.StartsWith("--", StringComparison.Ordinal) || x.Length < 3) return false;
@@ -352,9 +367,13 @@ public static class ReadOnlyCommands
                                LongPrefix(x, "server", "tls-server-name"))) return false;
                 if (!SubStart(a, out var i, new[] { "-A", "--all-namespaces" }, new[] { "-n", "--namespace", "--context", "--cluster", "--user" })) return false;
                 var sub = At(a, i);
+                // --raw 는 config view 에서 클라이언트 키·토큰을 가리지 않고 출력한다 — config 판정보다 먼저 막는다
+                // (예전에는 config 를 먼저 허용하고 돌려줘 'kubectl config view --raw' 가 자동 승인됐다)
+                if (a.Any(x => x == "dump" || x.StartsWith("--raw", StringComparison.Ordinal) || x.StartsWith("--output-directory", StringComparison.Ordinal))) return false;
+                // Secret 내용(base64 값)을 출력에 담는 조회는 자동 승인하지 않는다 (get secret -o yaml, describe 는 값을 가리지만 같이 막는다)
+                if (a.Skip(i + 1).Any(KubectlSecretRef)) return false;
                 if (sub == "config") return At(a, i + 1) is "view" or "get-contexts" or "current-context" && NoMutating(a, i + 2);
                 if (sub == "auth") return At(a, i + 1) == "can-i";   // can-i 는 권한 확인만 (뒤에 delete 등이 와도 실행 아님)
-                if (a.Any(x => x == "dump" || x.StartsWith("--raw", StringComparison.Ordinal) || x.StartsWith("--output-directory", StringComparison.Ordinal))) return false;
                 // --cache-dir 는 그 경로에 discovery 캐시 파일을 쓴다 (sudo 면 아무 폴더에나)
                 if (a.Any(x => x.StartsWith("--cache-dir", StringComparison.Ordinal))) return false;
                 return sub is "get" or "describe" or "logs" or "top" or "version" or "explain" or "api-resources" or "api-versions" or "cluster-info" or "events"
