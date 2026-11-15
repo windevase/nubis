@@ -137,7 +137,8 @@
         </Grid.RowDefinitions>
 
         <!-- ===================== 타이틀바 / 탭바 ===================== -->
-        <Grid Background="{StaticResource TitleBg}">
+        <!-- 배경 3곳(타이틀바 · 본문 행 · 사이드바)은 DynamicResource — Windows 11 에서 Mica 를 켜면 WindowBackdrop 이 반투명/투명으로 바꾼다 -->
+        <Grid Background="{DynamicResource TitleBarBackdrop}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
@@ -189,7 +190,7 @@
         </Grid>
 
         <!-- ===================== 본문 ===================== -->
-        <Grid Grid.Row="1" Background="{StaticResource Bg}">
+        <Grid Grid.Row="1" Background="{DynamicResource ContentBackdrop}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
@@ -242,8 +243,11 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
+                <!-- 페이지 영역 바탕 (본문 행이 Mica 로 투명해져도 페이지는 Layer2) -->
+                <Border Grid.Column="1" Background="{StaticResource Bg}"/>
+
                 <!-- 사이드바 -->
-                <Border Background="{StaticResource SidebarBg}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+                <Border Background="{DynamicResource SidebarBackdrop}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
                     <DockPanel>
                         <StackPanel DockPanel.Dock="Top">
                             <StackPanel Orientation="Horizontal" Margin="20,18,20,20">
@@ -1221,7 +1225,7 @@
             </Grid>
 
             <!-- 세션 뷰들 (탭 전환 시 Visibility 만 바꿔서 연결을 유지) -->
-            <Grid x:Name="SessionsHost" Visibility="Collapsed"/>
+            <Grid x:Name="SessionsHost" Visibility="Collapsed" Background="{StaticResource Bg}"/>
         </Grid>
     </Grid>
 </Window>
