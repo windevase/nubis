@@ -88,11 +88,13 @@ public static class CloudSync
         // 조회 결과에 같은 InstanceId 가 두 번 오면(페이지 경계 밀림 등) 첫 번째만 반영
         var processed = new HashSet<string>();
         int added = 0, updated = 0;
+        // 숨긴 인스턴스는 인스턴스마다 목록을 훑지 않게 집합으로 (숨긴 수 × 인스턴스 수 → 인스턴스 수)
+        var hidden = new HashSet<string>(p.HiddenInstances, StringComparer.Ordinal);
 
         foreach (var inst in instances)
         {
             if (inst.InstanceId.Length == 0) continue;
-            if (p.HiddenInstances.Contains(inst.InstanceId)) continue;
+            if (hidden.Contains(inst.InstanceId)) continue;
             if (!processed.Add(inst.InstanceId)) continue;
             // "중지된 서버 제외" 여도 이미 있는 호스트는 지우지 않는다 (호스트별 설정 유지, 목록에서만 숨김). 새로 추가하지는 않는다
             if (!p.IncludeStopped && !inst.IsRunning)

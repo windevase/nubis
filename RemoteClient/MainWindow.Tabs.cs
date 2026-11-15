@@ -198,6 +198,8 @@ public partial class MainWindow
     {
         tab.Session.StatusChanged += s =>
         {
+            // 같은 상태가 다시 오면(재연결 시도 등) 탭 줄·현재 탭 정보(파일 쓰기)를 다시 갱신하지 않는다
+            if (tab.Status == s) return;
             tab.Status = s;
             if (tab.IsSelected) UpdateActiveContext();
         };
@@ -298,6 +300,8 @@ public partial class MainWindow
         try { tab.Session.CloseSession(); } catch { }
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
+        // 끌기 준비 상태가 닫은 탭(과 그 뷰)을 다음 끌기까지 붙잡지 않게
+        if (ReferenceEquals(_tabDragging, tab)) _tabDragging = null;
 
         if (!wasSelected) { UpdateActiveContext(); return; }
         if (_tabs.Count == 0) SelectHome();
@@ -420,6 +424,8 @@ public partial class MainWindow
     {
         if (sender is not ContextMenu { PlacementTarget: FrameworkElement { DataContext: SessionTab tab } } menu) return;
         menu.Items.Clear();
+        menu.Closed -= OnTabMenuClosed;
+        menu.Closed += OnTabMenuClosed;
         void Add(string header, Action act, bool enabled = true)
         {
             var item = new MenuItem { Header = header, IsEnabled = enabled };
@@ -449,6 +455,22 @@ public partial class MainWindow
         Add(L.T("끊긴 탭 모두 닫기"), () => CloseTabs(disconnected), disconnected.Count > 0);
         menu.Items.Add(new Separator());
         Add(L.T("닫은 탭 다시 열기 (Ctrl+Shift+R)"), ReopenClosedTab, CanReopenClosedTab);
+    }
+
+    /// <summary>
+    /// 탭 메뉴(TabMenu)는 창 리소스 하나를 모든 탭이 함께 쓴다 → 닫힌 뒤에도 항목의 람다(마지막 탭·끊긴 탭 목록)와
+    /// PlacementTarget(탭 항목 → 탭 → 세션 뷰)이 남아, 메뉴로 닫은 탭이 다음에 메뉴를 열 때까지 해제되지 않는다.
+    /// 항목 클릭은 메뉴가 닫히고 그려진 뒤(Render 우선순위) 실행되므로, 그보다 낮은 ApplicationIdle 에서 비운다.
+    /// </summary>
+    private void OnTabMenuClosed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu menu) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (menu.IsOpen) return;   // 그 사이 다시 열렸으면 새 항목을 지우지 않는다
+            menu.Items.Clear();
+            menu.ClearValue(ContextMenu.PlacementTargetProperty);
+        }, DispatcherPriority.ApplicationIdle);
     }
 
     /// <summary>

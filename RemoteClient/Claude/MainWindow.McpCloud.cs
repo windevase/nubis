@@ -75,18 +75,24 @@ public partial class MainWindow
         cts.CancelAfter(DiscoverTimeout);
         // 파일을 읽는 프로바이더는 동기로 끝나므로 백그라운드에서 실행. 취소 토큰을 무시하는 SDK 호출도 있어 시간 제한을 따로 건다
         var work = Task.Run(() => provider.DiscoverAsync(cts.Token));
-        var limit = Task.Delay(DiscoverTimeout + TimeSpan.FromSeconds(2), outer);
-        var done = await Task.WhenAny(work, limit);
-        outer.ThrowIfCancellationRequested();
-        if (done != work)
+        // WaitAsync 는 먼저 끝나면 타이머·취소 등록을 바로 정리한다 (예전 Task.Delay 는 탐색이 끝난 뒤에도 제한 시간까지 타이머가 남았다)
+        try { return await work.WaitAsync(DiscoverTimeout + TimeSpan.FromSeconds(2), outer); }
+        catch (TimeoutException)
         {
+            // 늦게 끝나는 탐색의 예외는 관찰만 한다 (UnobservedTaskException 방지)
             _ = work.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            outer.ThrowIfCancellationRequested();
             throw new TimeoutException($"{DiscoverTimeout.TotalSeconds:0}초 안에 응답이 없습니다");
         }
-        try { return await work; }
         catch (OperationCanceledException) when (!outer.IsCancellationRequested)
         {
             throw new TimeoutException($"{DiscoverTimeout.TotalSeconds:0}초 안에 응답이 없습니다");
+        }
+        catch (OperationCanceledException)
+        {
+            // 요청 취소로 기다리기를 그만둔 경우에도 뒤에 끝나는 탐색의 예외를 관찰한다
+            _ = work.ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+            throw;
         }
     }
 

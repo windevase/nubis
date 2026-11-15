@@ -17,8 +17,13 @@ public enum VaultKind { Password, SshKey }
 /// Vault 계정: 여러 호스트가 함께 쓰는 로그인 정보 (사용자명 + 비밀번호 및/또는 SSH 개인키).
 /// 비밀 값(비밀번호·키 내용·키 암호)은 DPAPI(CurrentUser, <see cref="Nubis.Secret"/>)로 암호화해 저장한다.
 /// </summary>
-public sealed class VaultEntry
+public sealed class VaultEntry : System.ComponentModel.INotifyPropertyChanged
 {
+    // Vault 화면·선택 창 목록이 이 개체(앱 전체에서 공유하는 VaultStore 목록의 항목)에 바인딩한다.
+    // INotifyPropertyChanged 가 없으면 WPF 가 PropertyDescriptor.AddValueChanged 로 듣고 그 등록이 전역 표에 남으므로,
+    // 약한 참조 경로를 쓰도록 구현만 한다 (값은 목록을 다시 만들어 반영하므로 알림은 보내지 않는다 — 구독도 저장하지 않음)
+    event System.ComponentModel.PropertyChangedEventHandler? System.ComponentModel.INotifyPropertyChanged.PropertyChanged { add { } remove { } }
+
     public Guid Id { get; set; } = Guid.NewGuid();
     public string Name { get; set; } = "";
     /// <summary>로그인 사용자명 (호스트에 사용자명을 따로 적지 않으면 이 값)</summary>

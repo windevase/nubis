@@ -52,6 +52,22 @@ public sealed class McpServer : IDisposable
     // 등록 전에 도착한 취소 알림의 요청 id → 받은 시각(UTC). 요청이 등록될 때 확인하고, EarlyCancelTtl 이 지나면 버린다
     private readonly ConcurrentDictionary<string, DateTime> _earlyCancels = new();
     private static readonly TimeSpan EarlyCancelTtl = TimeSpan.FromSeconds(30);
+    // 선취소 기록의 최대 개수 — 새 요청이 오지 않아 시간 기준 정리가 돌지 않아도 이 이상 쌓이지 않는다
+    // (끝난 요청에 대한 늦은 취소 알림이 몰려와도 메모리가 일정)
+    internal const int MaxEarlyCancels = 256;
+    // arguments 가 없는 tools/call 에 넘길 빈 객체 — 요청마다 JsonDocument 를 만들고 버리지 않게 하나를 같이 쓴다 (Clone 은 Dispose 불필요)
+    private static readonly JsonElement EmptyArgs = CreateEmptyArgs();
+
+    private static JsonElement CreateEmptyArgs()
+    {
+        using var d = JsonDocument.Parse("{}");
+        return d.RootElement.Clone();
+    }
+
+    /// <summary>처리 중인 요청 수 (누수 점검·테스트용)</summary>
+    internal int InflightCount => _inflight.Count;
+    /// <summary>남아 있는 선취소 기록 수 (누수 점검·테스트용)</summary>
+    internal int EarlyCancelCount => _earlyCancels.Count;
 
     public int Port { get; }
     public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
@@ -270,6 +286,10 @@ public sealed class McpServer : IDisposable
     private void CancelRequest(string key)
     {
         PruneEarlyCancels();
+        // 한도에 닿으면 가장 오래된 기록부터 버린다 (드문 경로라 정렬 비용은 문제없음)
+        if (_earlyCancels.Count >= MaxEarlyCancels)
+            foreach (var old in _earlyCancels.OrderBy(kv => kv.Value).Take(_earlyCancels.Count - MaxEarlyCancels + 1).ToList())
+                _earlyCancels.TryRemove(old);
         _earlyCancels[key] = DateTime.UtcNow;
         if (_inflight.TryGetValue(key, out var target))
         {
@@ -281,6 +301,7 @@ public sealed class McpServer : IDisposable
     /// <summary>오래된(EarlyCancelTtl 초과) 선취소 기록을 지운다 — 끝난 요청에 대한 늦은 취소 알림이 쌓이지 않게</summary>
     private void PruneEarlyCancels()
     {
+        if (_earlyCancels.IsEmpty) return;   // 대부분의 요청은 선취소가 없다 — 열거 비용 없이 바로 끝낸다
         var limit = DateTime.UtcNow - EarlyCancelTtl;
         foreach (var kv in _earlyCancels)
             if (kv.Value < limit) _earlyCancels.TryRemove(kv);
@@ -325,7 +346,7 @@ public sealed class McpServer : IDisposable
                 if (p.ValueKind != JsonValueKind.Object || !p.TryGetProperty("name", out var nameEl) || nameEl.ValueKind != JsonValueKind.String)
                     return ToolResult("tools/call 에 name 이 없습니다.", true);
                 var name = nameEl.GetString() ?? "";
-                var args = p.TryGetProperty("arguments", out var a) ? a.Clone() : JsonDocument.Parse("{}").RootElement;
+                var args = p.TryGetProperty("arguments", out var a) ? a.Clone() : EmptyArgs;
                 if (!_tools.TryGetValue(name, out var tool))
                     return ToolResult($"알 수 없는 도구: {name}", true);
                 try
@@ -372,6 +393,9 @@ public sealed class McpServer : IDisposable
 
     public void Dispose()
     {
+        // 처리 중인 도구(승인 대기·명령 실행 포함)를 멈추고 기록을 비운다 — 서버를 닫은 뒤 핸들러·토큰이 남아 돌지 않게
+        CancelAll();
+        _earlyCancels.Clear();
         try { _listener.Stop(); _listener.Close(); } catch { }
     }
 }

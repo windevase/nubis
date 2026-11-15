@@ -95,10 +95,10 @@ public partial class MainWindow
         var clientW = (int)(ActualWidth * dpi.DpiScaleX) + 32;
         var clientH = (int)(ActualHeight * dpi.DpiScaleY) + 32;
 
-        byte[] data;
-        string mime;
-        int outW, outH;
-        using (var full = new System.Drawing.Bitmap(clientW, clientH))
+        // PrintWindow(창 메시지)만 UI 스레드에서 하고, 축소·PNG/JPEG 인코딩(큰 화면은 수백 ms)은 백그라운드에서 —
+        // 그동안 UI(터미널 입력·스크롤)가 멈추지 않게. 비트맵은 어느 경로로 끝나든 Dispose(GDI+ 핸들) 한다
+        var full = new System.Drawing.Bitmap(clientW, clientH);
+        try
         {
             using (var g = System.Drawing.Graphics.FromImage(full))
             {
@@ -106,11 +106,42 @@ public partial class MainWindow
                 try { PrintWindow(hwnd, hdc, 0x1 | 0x2); }   // PW_CLIENTONLY | PW_RENDERFULLCONTENT
                 finally { g.ReleaseHdc(hdc); }
             }
-            crop.Intersect(new System.Drawing.Rectangle(0, 0, full.Width, full.Height));
+        }
+        catch
+        {
+            full.Dispose();
+            throw;
+        }
+        crop.Intersect(new System.Drawing.Rectangle(0, 0, clientW, clientH));
+        if (crop.Width < 1 || crop.Height < 1)
+        {
+            full.Dispose();
+            throw new McpToolException("탭 화면 영역을 캡처하지 못했습니다.");
+        }
+        var (data, mime, outW, outH) = await Task.Run(() => EncodeCapture(full, crop, maxWidth));
 
+        var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
+        AuditLog.Write("capture_screen", new[] { target }, $"({outW}x{outH} {mime})", "조회");
+        var kind = tab.Protocol switch { Protocol.Rdp => "RDP", Protocol.Ssh => "SSH", _ => "로컬" };
+        return new McpImage(data, mime,
+            $"[{target}] {kind} 화면 {crop.Width}x{crop.Height}" + (outW != crop.Width ? $" (축소 {outW}x{outH})" : "") +
+            (switched ? " — 캡처를 위해 잠깐 이 탭으로 전환했다가 사용자가 보던 화면으로 되돌렸습니다." : ""));
+    }
+
+    /// <summary>JPEG 인코더 (한 번만 찾는다 — GetImageEncoders 는 부를 때마다 배열을 새로 만든다)</summary>
+    private static readonly Lazy<System.Drawing.Imaging.ImageCodecInfo> JpegEncoder =
+        new(() => System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders().First(e => e.MimeType == "image/jpeg"));
+
+    /// <summary>
+    /// 캡처 비트맵을 잘라 축소하고 PNG(크면 JPEG)로 인코딩한다 (백그라운드 스레드). full 은 여기서 Dispose 한다.
+    /// </summary>
+    private static (byte[] Data, string Mime, int Width, int Height) EncodeCapture(System.Drawing.Bitmap full, System.Drawing.Rectangle crop, int maxWidth)
+    {
+        using (full)
+        {
             var scale = Math.Min(1.0, Math.Clamp(maxWidth, 320, 3840) / (double)crop.Width);
-            outW = Math.Max(1, (int)(crop.Width * scale));
-            outH = Math.Max(1, (int)(crop.Height * scale));
+            var outW = Math.Max(1, (int)(crop.Width * scale));
+            var outH = Math.Max(1, (int)(crop.Height * scale));
             using var shot = new System.Drawing.Bitmap(outW, outH);
             using (var g = System.Drawing.Graphics.FromImage(shot))
             {
@@ -121,24 +152,12 @@ public partial class MainWindow
             // 대부분 PNG, 사진·배경화면처럼 큰 화면은 JPEG 로 (토큰·전송량 절약)
             using var ms = new MemoryStream();
             shot.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            if (ms.Length <= 1_500_000) { data = ms.ToArray(); mime = "image/png"; }
-            else
-            {
-                using var jms = new MemoryStream();
-                var jpeg = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders().First(e => e.MimeType == "image/jpeg");
-                using var p = new System.Drawing.Imaging.EncoderParameters(1);
-                p.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
-                shot.Save(jms, jpeg, p);
-                data = jms.ToArray();
-                mime = "image/jpeg";
-            }
+            if (ms.Length <= 1_500_000) return (ms.ToArray(), "image/png", outW, outH);
+            using var jms = new MemoryStream();
+            using var p = new System.Drawing.Imaging.EncoderParameters(1);
+            p.Param[0] = new System.Drawing.Imaging.EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
+            shot.Save(jms, JpegEncoder.Value, p);
+            return (jms.ToArray(), "image/jpeg", outW, outH);
         }
-
-        var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-        AuditLog.Write("capture_screen", new[] { target }, $"({outW}x{outH} {mime})", "조회");
-        var kind = tab.Protocol switch { Protocol.Rdp => "RDP", Protocol.Ssh => "SSH", _ => "로컬" };
-        return new McpImage(data, mime,
-            $"[{target}] {kind} 화면 {crop.Width}x{crop.Height}" + (outW != crop.Width ? $" (축소 {outW}x{outH})" : "") +
-            (switched ? " — 캡처를 위해 잠깐 이 탭으로 전환했다가 사용자가 보던 화면으로 되돌렸습니다." : ""));
     }
 }

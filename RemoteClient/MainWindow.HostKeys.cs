@@ -126,7 +126,7 @@ public partial class MainWindow
     {
         if (_searchTimer == null)
         {
-            _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+            _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
             _searchTimer.Tick += (_, _) => { _searchTimer.Stop(); RefreshHosts(); };
         }
         _searchTimer.Stop();

@@ -15,6 +15,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     private readonly XtermView _term = new();
     private readonly Decoder _utf8 = new UTF8Encoding(false).GetDecoder();
     private readonly object _decodeLock = new();
+    private char[] _decodeBuf = Array.Empty<char>();
 
     private SshClient? _client;
     private ShellStream? _shell;
@@ -194,9 +195,13 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         string text;
         lock (_decodeLock)
         {
-            var chars = new char[_utf8.GetCharCount(data, 0, count)];
-            _utf8.GetChars(data, 0, count, chars, 0);
-            text = new string(chars);
+            // 글자 버퍼는 재사용한다 — 읽기마다(최대 32KB) char[] 를 새로 만들고 GetCharCount 로 한 번 더 훑지 않게.
+            // UTF-8 은 바이트 수 + 디코더에 남은 바이트(최대 3) 보다 글자(UTF-16)가 많아질 수 없다
+            var need = count + 4;
+            if (_decodeBuf.Length < need) _decodeBuf = new char[Math.Max(need, 32768 + 4)];
+            var n = _utf8.GetChars(data, 0, count, _decodeBuf, 0);
+            if (n == 0) return;
+            text = new string(_decodeBuf, 0, n);
         }
         _term.Write(text);
     }

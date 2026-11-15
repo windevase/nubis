@@ -70,6 +70,8 @@ public partial class SftpPanel
         var data = new SftpDragData(this, items, DragTargets(items.Select(i => i.Name), dir), dir);
         try { DragDrop.DoDragDrop(FileList, data, DragDropEffects.Copy | DragDropEffects.Move); }
         catch (System.Runtime.InteropServices.COMException) { }
+        // 탐색기 등 놓은 쪽이 COM IDataObject 를 끌기가 끝난 뒤에도 붙잡고 있을 수 있다 — 패널·항목 목록을 끊어 패널(탭)이 그 때문에 남지 않게
+        finally { data.Detach(); }
         if (Directory.Exists(dir)) TrackTempDir(dir);   // 다른 드라이브로 복사돼 남은 임시 파일은 패널이 닫힐 때 지운다
     }
 
@@ -126,31 +128,42 @@ public partial class SftpPanel
         /// <summary>끌어낸 패널 식별 (같은 패널에 다시 놓기 방지)</summary>
         public const string SourceFormat = "Nubis.SftpDragSource";
 
-        private readonly SftpPanel _panel;
-        private readonly List<SftpItem> _items;
+        private SftpPanel? _panel;
+        private List<SftpItem> _items;
         private readonly List<string> _targets;
         private readonly string _dir;
+        private readonly string _panelId;
         private readonly Dictionary<string, object> _extra = new(StringComparer.OrdinalIgnoreCase);
         private string[]? _result;
         private bool _done, _downloading;
 
         public SftpDragData(SftpPanel panel, List<SftpItem> items, List<string> targets, string dir)
         {
-            _panel = panel; _items = items; _targets = targets; _dir = dir;
+            _panel = panel; _items = items; _targets = targets; _dir = dir; _panelId = panel._panelId;
+        }
+
+        /// <summary>끌기가 끝남 — 이후 요청에는 받은 결과(없으면 null)만 돌려주고, 패널·항목 참조와 놓은 쪽이 써 넣은 값은 놓는다</summary>
+        public void Detach()
+        {
+            if (_downloading) return;   // 받는 중(중첩 메시지 루프 안) — Files() 가 끝나면 _done
+            _done = true;
+            _panel = null;
+            _items = [];
+            _extra.Clear();
         }
 
         private static bool Is(string format, string name) => string.Equals(format, name, StringComparison.OrdinalIgnoreCase);
 
         private string[]? Files()
         {
-            if (_done) return _result;
+            if (_done || _panel is not { } panel) return _result;
             if (_downloading) return null;
             if (System.Windows.Forms.Control.MouseButtons != System.Windows.Forms.MouseButtons.None) return _targets.ToArray();
             _downloading = true;
             try
             {
                 // 받지 않고 건너뛴 항목(특수 파일 등)은 경로가 없다 — 실제로 만들어진 것만 넘긴다
-                _result = _panel.DownloadForDrag(_items, _targets, _dir)
+                _result = panel.DownloadForDrag(_items, _targets, _dir)
                     ? _targets.Where(p => File.Exists(p) || Directory.Exists(p)).ToArray() : null;
                 if (_result is { Length: 0 }) _result = null;
             }
@@ -161,7 +174,7 @@ public partial class SftpPanel
         public object? GetData(string format, bool autoConvert)
         {
             if (Is(format, DataFormats.FileDrop)) return Files();
-            if (Is(format, SourceFormat)) return _panel._panelId;
+            if (Is(format, SourceFormat)) return _panelId;
             return _extra.TryGetValue(format, out var v) ? v : null;
         }
         public object? GetData(string format) => GetData(format, true);

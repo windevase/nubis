@@ -16,6 +16,15 @@ public enum CommandShell { Sh, PowerShell, Cmd }
 /// </summary>
 public static class ReadOnlyCommands
 {
+    /// <summary>
+    /// 이 판별은 정적 Regex.IsMatch 패턴을 40개 넘게 쓰는데, .NET 정적 Regex 캐시 기본 크기(15)로는 호출마다 패턴을 다시 해석한다.
+    /// 캐시를 늘려 다시 해석하지 않게 한다 (캐시는 개수 한도가 있는 LRU 라 메모리는 일정)
+    /// </summary>
+    static ReadOnlyCommands()
+    {
+        if (Regex.CacheSize < 96) Regex.CacheSize = 96;
+    }
+
     public static bool IsReadOnly(string command, CommandShell shell) => IsReadOnly(command, shell, out _);
 
     public static bool IsReadOnly(string command, CommandShell shell, out string reason)

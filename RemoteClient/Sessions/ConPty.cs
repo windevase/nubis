@@ -67,6 +67,8 @@ public sealed class PseudoConsoleProcess : IDisposable
     private IntPtr _job;   // KILL_ON_JOB_CLOSE Job (PTY 수명 동안 유지, KillTreeOnClose 일 때만)
     // 읽기 스레드·입력 작업 줄에서도 읽는다
     private volatile bool _disposed;
+    /// <summary>WaitExitAsync 가 시작됨 — 그때부터 프로세스 핸들은 그쪽이 닫는다</summary>
+    private volatile bool _waitStarted;
 
     /// <summary>
     /// 닫을 때 하위 프로세스 트리까지 모두 끝낼지 (Claude 패널: cmd → node(claude) → MCP 자식 등이 남지 않게 KILL_ON_JOB_CLOSE Job 사용).
@@ -134,6 +136,7 @@ public sealed class PseudoConsoleProcess : IDisposable
 
         _input = new FileStream(_inputWrite, FileAccess.Write);
         new Thread(ReadLoop) { IsBackground = true, Name = "conpty-read" }.Start();
+        _waitStarted = true;
         _ = WaitExitAsync();
     }
 
@@ -232,7 +235,9 @@ public sealed class PseudoConsoleProcess : IDisposable
     /// 출력을 넘기기 전에 화면이 따라올 때까지 기다리는 함수 (최대 대기 ms → 받아도 되면 true). 없으면 기다리지 않는다.
     /// 기다리는 동안 읽지 않으므로 파이프가 차서 프로세스가 출력을 잠시 멈춘다 (화면이 못 따라갈 만큼 쏟아질 때의 흐름 제어)
     /// </summary>
-    public Func<int, bool>? OutputGate { get; init; }
+    public Func<int, bool>? OutputGate { get => _outputGate; init => _outputGate = value; }
+    // Dispose 가 놓는다 (게이트는 화면(XtermView)의 메서드라, 프로세스 종료 대기가 남아 있는 동안 화면을 붙잡지 않게)
+    private Func<int, bool>? _outputGate;
 
     /// <summary>
     /// Resize(UI 스레드)와 ClosePc(프로세스 종료 대기 스레드)가 겹치면 이미 닫힌(해제된) 의사 콘솔 핸들로
@@ -279,9 +284,20 @@ public sealed class PseudoConsoleProcess : IDisposable
         // Start 가 FileStream 을 만들기 전에 실패했으면 _input 이 없어 입력 파이프 핸들을 직접 닫는다
         try { _inputWrite?.Dispose(); } catch { }
         try { _outputRead?.Dispose(); } catch { }
-        // _hProcess 는 WaitExitAsync 가 종료 확인 후 닫는다
-        if (_hThread != IntPtr.Zero) CloseHandle(_hThread);
+        // _hProcess 는 WaitExitAsync 가 종료 확인 후 닫는다. 프로세스는 만들었는데 Start 가 그 전에 실패했으면(대기가 시작되지 않음) 여기서 닫는다
+        if (!_waitStarted)
+        {
+            var hp = Interlocked.Exchange(ref _hProcess, IntPtr.Zero);
+            if (hp != IntPtr.Zero) CloseHandle(hp);
+        }
+        var ht = Interlocked.Exchange(ref _hThread, IntPtr.Zero);
+        if (ht != IntPtr.Zero) CloseHandle(ht);
         _process?.Dispose();
+        // 구독자(탭의 람다)를 놓는다 — 종료 대기가 끝나기 전까지 이 객체가 살아 있어도 화면을 붙잡지 않게.
+        // Exited 는 WaitExitAsync 가 아직 부를 수 있지만, 닫는 쪽(LocalTerminalView)은 닫힌 뒤의 종료 알림을 쓰지 않는다
+        Output = null;
+        Exited = null;
+        _outputGate = null;
     }
 
     // ---------------- Win32 ----------------

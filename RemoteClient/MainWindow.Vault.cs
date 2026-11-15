@@ -23,7 +23,8 @@ public partial class MainWindow
     {
         var entries = VaultStore.All();
         // 기본 계정(설정·프로필)으로 쓰는 호스트도 센다
-        var used = _hosts.Select(h => h.EffectiveVaultId(_profiles.FirstOrDefault(p => p.Id == h.CloudProfileId)))
+        var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());   // 호스트마다 프로필 목록을 훑지 않게
+        var used = _hosts.Select(h => h.EffectiveVaultId(h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null))
             .Where(id => id != null).GroupBy(id => id!.Value).ToDictionary(g => g.Key, g => g.Count());
         var s = SettingsStore.Current;
         foreach (var v in entries)

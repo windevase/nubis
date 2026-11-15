@@ -20,6 +20,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
     // 로그인 직후에는 세션이 해상도 변경을 아직 받지 못해 실패할 때가 있어 잠시 뒤 한 번 더 시도한다
     private readonly DispatcherTimer _displayRetryTimer = new() { Interval = TimeSpan.FromMilliseconds(1500) };
     private Button? _reconnectButton;
+    // 마지막으로 원격에 보낸 해상도·배율 (같은 값이면 UpdateSessionDisplaySettings 를 다시 부르지 않는다). default = 아직 안 보냄
+    private (int w, int h, int scale) _appliedDisplay;
 
     private bool _initialized, _closed, _loggedIn;
     // 인증 실패(비밀번호 오류·계정 잠김 등)로 끊겼으면 저장된 비밀번호가 있어도 다음 연결 때 반드시 다시 묻는다 (같은 비밀번호 재시도로 계정이 잠기지 않게)
@@ -56,15 +58,18 @@ public sealed class RdpSessionView : UserControl, ISessionView
         _resizeTimer.Tick += (_, _) => { _resizeTimer.Stop(); UpdateDisplay(); };
         _displayRetryTimer.Tick += (_, _) => { _displayRetryTimer.Stop(); UpdateDisplay(); };   // 재시도도 실패하면 SmartSizing 으로 대체
         SizeChanged += (_, _) => RestartResizeTimer();
+        // 숨은 탭은 해상도를 바꾸지 않고(크기 0 → 640x480 로 줄였다 되돌리는 낭비 방지), 다시 보일 때 한 번 맞춘다
+        IsVisibleChanged += (_, _) => { if (IsVisible) RestartResizeTimer(); };
         Loaded += (_, _) => { if (!_initialized) { _initialized = true; Dispatcher.BeginInvoke(Connect, DispatcherPriority.Loaded); } };
     }
 
     /// <summary>RDP 컨트롤 이벤트 연결 (생성 때, 그리고 치명적 오류 뒤 컨트롤을 바꿀 때)</summary>
     private void WireEvents()
     {
-        _rdp.Connected += () => { HideOverlay(); SetStatus(SessionStatus.Connected); if (IsVisible) _rdp.Focus(); };
+        _rdp.Connected += () => { if (_closed) return; HideOverlay(); SetStatus(SessionStatus.Connected); if (IsVisible) _rdp.Focus(); };
         _rdp.LoginComplete += () =>
         {
+            if (_closed) return;
             _loggedIn = true;
             _forcePrompt = false;
             if (!TryUpdateDisplay()) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
@@ -78,7 +83,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             }
         };
         _rdp.Disconnected += OnDisconnected;
-        _rdp.LeftFullScreen += () => Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background);
+        _rdp.LeftFullScreen += () => { if (_closed) return; _appliedDisplay = default; Dispatcher.BeginInvoke(UpdateDisplay, DispatcherPriority.Background); };
         _rdp.FatalError += code => OnDisconnected(-code);
         // 네트워크 순단 때 컨트롤이 스스로 다시 연결하는 동안(컨트롤이 자체 안내 화면을 그린다) 탭 상태만 "연결 중" 으로 보여 준다
         _rdp.AutoReconnecting += (_, _) => { if (!_closed && _status == SessionStatus.Connected) SetStatus(SessionStatus.Connecting); };
@@ -88,7 +93,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
             HideOverlay();
             SetStatus(SessionStatus.Connected);
             // 다시 붙은 세션이 이전 해상도를 잃었을 수 있어 탭 크기로 다시 맞춘다
-            if (_loggedIn) { _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
+            if (_loggedIn) { _appliedDisplay = default; _displayRetryTimer.Stop(); _displayRetryTimer.Start(); }
         };
     }
 
@@ -107,7 +112,8 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
     private void RestartResizeTimer()
     {
-        if (_loggedIn && !_closed) { _resizeTimer.Stop(); _resizeTimer.Start(); }
+        // 숨은 탭에서는 타이머를 돌리지 않는다 (보일 때 IsVisibleChanged 가 다시 부른다) — 쉬는 동안 CPU 0
+        if (_loggedIn && !_closed && IsVisible) { _resizeTimer.Stop(); _resizeTimer.Start(); }
     }
 
     /// <summary>DPI 가 다른 모니터로 창을 옮기면 DIP 크기는 그대로라 SizeChanged 가 오지 않는다 → 원격 해상도·배율을 다시 맞춘다</summary>
@@ -235,6 +241,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         ShowOverlay(L.F("{0} 에 연결 중...", _host.DisplayName), $"{_host.Address}:{_host.Port}", showReconnect: false);
         SetStatus(SessionStatus.Connecting);
         _loggedIn = false;
+        _appliedDisplay = default;   // 새 세션 — 로그인 뒤 한 번은 반드시 맞춘다
 
         try
         {
@@ -330,10 +337,15 @@ public sealed class RdpSessionView : UserControl, ISessionView
     private bool TryUpdateDisplay()
     {
         if (_closed || !_loggedIn || _status != SessionStatus.Connected) return true;
-        var (w, h, scale) = DesktopSize();
+        // 숨은 탭(크기 0)은 건너뛴다 — 640x480 으로 줄였다가 되돌리며 원격 창 배치를 흔들지 않게. 보일 때 다시 불린다
+        if (!IsVisible || ActualWidth < 1 || ActualHeight < 1) return true;
+        var size = DesktopSize();
+        if (size == _appliedDisplay) return true;   // 같은 값이면 원격에 다시 보내지 않는다
+        var (w, h, scale) = size;
         try
         {
             _rdp.Ocx.UpdateSessionDisplaySettings((uint)w, (uint)h, (uint)w, (uint)h, 0u, (uint)scale, 100u);
+            _appliedDisplay = size;
             return true;
         }
         catch { return false; /* 지원하지 않는 서버는 SmartSizing 으로 대체 */ }
@@ -406,6 +418,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
                 try { _rdp.Ocx.UpdateSessionDisplaySettings((uint)(screen.Width & ~1), (uint)screen.Height, (uint)screen.Width, (uint)screen.Height, 0u, (uint)Math.Clamp(scale, 100, 500), 100u); }
                 catch { }
             }
+            _appliedDisplay = default;   // 전체 화면 해상도로 바뀜 — 나오면 탭 크기로 다시 보낸다
             _rdp.Ocx.FullScreenTitle = _host.DisplayName;
             _rdp.Ocx.FullScreen = true;
         }
@@ -414,17 +427,23 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
     public void FocusSession()
     {
-        if (_wfh.Visibility == Visibility.Visible) _rdp.Focus();
+        // 닫은 탭(SelectTab 이 예약한 늦은 포커스 등)은 풀로 돌아가 다른 탭이 쓰는 컨트롤에 포커스를 주지 않는다
+        if (!_closed && _wfh.Visibility == Visibility.Visible) _rdp.Focus();
     }
 
     public void CloseSession()
     {
+        // 두 번 불려도(탭 닫기 + 앱 종료 등) 같은 컨트롤을 풀에 두 번 넣지 않게 한 번만 정리한다
+        // — 두 번 넣으면 두 탭이 한 컨트롤을 나눠 갖고, 풀 자리를 차지해 다른 컨트롤이 해제되며 핸들·스레드가 샌다
+        if (_closed) return;
         _closed = true;
         _resizeTimer.Stop();
         _displayRetryTimer.Stop();
+        StatusChanged = null;   // 닫은 뒤에는 MainWindow 쪽 탭 상태를 건드리지 않는다
         _password = null;   // 닫은 탭에 비밀번호를 남겨 두지 않는다
         try { _wfh.Child = null; } catch { }
         RdpAxHost.Release(_rdp);   // 연결 끊고 풀에 반납 (풀이 차면 해제)
+        HwndHostRelease.Detach(_wfh);   // 키보드 입력 사이트 등록을 풀고 트리에서 뺀 뒤 Dispose (WebView2 와 같은 HwndHost 누수 방지)
         _wfh.Dispose();
     }
 }

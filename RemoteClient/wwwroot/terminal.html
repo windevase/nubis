@@ -56,6 +56,9 @@
   fit.fit();
 
   const post = m => window.chrome.webview.postMessage(m);
+  // 셀을 읽을 때 쓰는 재사용 객체 — getCell(x) 는 부를 때마다 새 객체를 만든다 (줄마다 수십~수백 개)
+  let cellBuf = null;
+  const scratchCell = () => cellBuf || (cellBuf = term.buffer.active.getNullCell());
 
   term.onData(d => post({ t: 'in', d }));
   // 셸이 알려주는 현재 폴더 (OSC 7: ESC ] 7 ; file://host/path BEL) → SFTP 패널이 따라감
@@ -182,7 +185,7 @@
   function lineCells(line) {
     let s = ''; const col = [], wid = [];
     for (let x = 0; x < line.length; x++) {
-      const cell = line.getCell(x); if (!cell) break;
+      const cell = line.getCell(x, scratchCell()); if (!cell) break;
       const w = cell.getWidth(); if (w === 0) continue;   // 넓은 글자의 뒤쪽 칸
       const ch = cell.getChars() || ' ';
       for (let k = 0; k < ch.length; k++) { s += ch[k]; col.push(x); wid.push(w); }
@@ -277,21 +280,24 @@
   function decorateLine(b, y, cur) {
     const line = b.getLine(y);
     if (!line) return [];
-    // 문자열 인덱스 → 셀 열 매핑 (한글 등 넓은 문자는 2칸)
-    let text = '', cols = [], widths = [];
-    for (let x = 0; x < term.cols; x++) {
-      const cell = line.getCell(x);
-      if (!cell) break;
-      const w = cell.getWidth();
-      if (w === 0) continue;
-      const ch = cell.getChars() || ' ';
-      for (let i = 0; i < ch.length; i++) { cols.push(x); widths.push(w); }
-      text += ch;
-    }
-    text = text.replace(/\s+$/, '');
+    // 줄 글자는 translateToString 한 번으로 (빈 칸은 ' ', 넓은 글자의 뒤쪽 칸은 빠짐 — 아래 셀 매핑과 같은 순서).
+    // 셀마다 객체를 만드는 열 매핑은 실제로 맞는 글자가 있을 때만 만든다 (대부분의 줄은 강조할 게 없다 — 출력이 쏟아질 때 CPU 절약)
+    const text = line.translateToString(true);
     if (!text) return [];
+    let cols = null, widths = null;
+    const mapCols = () => {
+      cols = []; widths = [];
+      const c = scratchCell();
+      for (let x = 0; x < line.length; x++) {
+        if (!line.getCell(x, c)) break;
+        const w = c.getWidth();
+        if (w === 0) continue;
+        const ch = c.getChars() || ' ';
+        for (let i = 0; i < ch.length; i++) { cols.push(x); widths.push(w); }
+      }
+    };
 
-    const taken = new Uint8Array(text.length);
+    let taken = null;
     const out = [];
     for (const rule of rules) {
       rule.re.lastIndex = 0;
@@ -299,10 +305,12 @@
       while ((m = rule.re.exec(text))) {
         const s = m.index, e = s + m[0].length;
         if (m[0].length === 0) { rule.re.lastIndex++; continue; }
+        if (!cols) { mapCols(); taken = new Uint8Array(text.length); }
+        if (e > cols.length) continue;   // 매핑이 어긋난 드문 경우(조합 문자 등) — 강조하지 않는다
         let overlap = false;
         for (let i = s; i < e; i++) if (taken[i]) { overlap = true; break; }
         if (overlap) continue;
-        const cell = line.getCell(cols[s]);
+        const cell = line.getCell(cols[s], scratchCell());
         if (cell && !cell.isFgDefault()) continue;   // 서버가 색을 준 글자는 그대로
         for (let i = s; i < e; i++) taken[i] = 1;
 
@@ -327,7 +335,9 @@
     // + 지난번 스캔 이후 새로 생긴 줄 전부 (한 번에 많은 출력이 지나간 경우)
     const winStart = Math.max(0, cur - term.rows + 1);
     const last = (mark && !mark.isDisposed && mark.line >= 0) ? mark.line : Math.max(0, cur - (backlog || term.rows));
-    const start = Math.min(last, winStart);
+    // 한 프레임에 지나간 줄이 많아도(cat 큰 파일 등) 화면 근처(4장)만 강조한다 — 이미 스크롤로 지나간 수천 줄을
+    // 프레임마다 정규식으로 훑지 않게 (CPU). 설정 변경·크기 변경(rescanAll)만 backlog 만큼 다시 그린다
+    const start = Math.max(Math.min(last, winStart), cur - Math.max(backlog || 0, term.rows * 4));
 
     // 범위 안 줄의 이전 강조는 지우고 다시 그림
     recent = recent.filter(r => {
@@ -346,11 +356,17 @@
     }
     if (mark) mark.dispose();
     mark = term.registerMarker(0);
-    if (all.length > 60000) all = all.filter(d => !d.isDisposed);
+    // 스크롤백 밖으로 밀려난 줄의 데코레이션은 xterm 이 dispose 한다 — 목록에서도 뺀다.
+    // 정리 뒤에도 살아 있는 것이 많으면 한도를 늘려 프레임마다 전체를 다시 훑지 않게 (상각)
+    if (all.length > allLimit) {
+      all = all.filter(d => !d.isDisposed);
+      allLimit = Math.max(60000, all.length * 2);
+    }
   }
+  let allLimit = 60000;
 
   function queueScan() {
-    if (scanQueued) return;
+    if (scanQueued || rules.length === 0) return;   // 강조를 모두 끈 경우 프레임 예약도 하지 않는다
     scanQueued = true;
     requestAnimationFrame(() => scan());
   }
@@ -414,7 +430,8 @@
   reconnectBtn.addEventListener('click', () => { hideReconnect(); post({ t: 'reconnect' }); term.focus(); });
   function afterWrite() {
     queueScan();
-    if (watchMark && !watchQueued) { watchQueued = true; requestAnimationFrame(sendWatch); }
+    // 프롬프트 감시 화면은 최대 초당 10번만 보낸다 — 출력이 쏟아지는 동안 프레임마다 50줄을 읽어 앱으로 보내지 않게 (CPU)
+    if (watchMark && !watchQueued) { watchQueued = true; setTimeout(sendWatch, 100); }
   }
 
   window.chrome.webview.addEventListener('message', e => {

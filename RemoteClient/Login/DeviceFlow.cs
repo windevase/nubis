@@ -46,7 +46,7 @@ public sealed class DeviceFlow
         // 서버 장애(5xx)는 연결 실패와 같이 본다 — 오프라인 허용 안내가 나오게 (설정 오류로 오인하지 않게)
         if ((int)res.StatusCode >= 500) throw new HttpRequestException(L.F("로그인 서버 오류 (HTTP {0})", (int)res.StatusCode));
         var body = await res.Content.ReadAsStringAsync(ct);
-        try { return JsonDocument.Parse(body).RootElement.Clone(); }
+        try { return ParseClone(body); }
         catch (JsonException) { throw new LoginException(L.F("로그인 서버 응답을 읽을 수 없습니다 (HTTP {0}). Client ID 를 확인하세요.", (int)res.StatusCode)); }
     }
 
@@ -182,8 +182,8 @@ public sealed class DeviceFlow
         Prepare(req, accessToken);
         using var res = await Http.SendAsync(req, ct);
         if (!res.IsSuccessStatusCode) return false;
-        var m = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct)).RootElement;
-        return Str(m, "state") == "active";
+        using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+        return Str(doc.RootElement, "state") == "active";
     }
 
     private static void Prepare(HttpRequestMessage req, string accessToken)
@@ -200,7 +200,14 @@ public sealed class DeviceFlow
         using var res = await Http.SendAsync(req, ct);
         if ((int)res.StatusCode >= 500) throw new HttpRequestException(L.F("로그인 서버 오류 (HTTP {0})", (int)res.StatusCode));
         if (!res.IsSuccessStatusCode) throw new LoginException(L.F("계정 정보를 읽지 못했습니다 (HTTP {0}).", (int)res.StatusCode));
-        return JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct)).RootElement.Clone();
+        return ParseClone(await res.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>JSON 을 읽어 문서와 무관한 사본으로 돌려준다 (JsonDocument 의 풀 버퍼는 바로 반납)</summary>
+    private static JsonElement ParseClone(string json)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
     }
 
     /// <summary>JWT 의 payload(가운데 부분)를 JSON 으로</summary>
@@ -210,7 +217,7 @@ public sealed class DeviceFlow
         if (parts.Length < 2) throw new LoginException(L.T("로그인 정보 형식이 올바르지 않습니다."));
         var b64 = parts[1].Replace('-', '+').Replace('_', '/');
         b64 = b64.PadRight(b64.Length + (4 - b64.Length % 4) % 4, '=');
-        return JsonDocument.Parse(Encoding.UTF8.GetString(Convert.FromBase64String(b64))).RootElement.Clone();
+        return ParseClone(Encoding.UTF8.GetString(Convert.FromBase64String(b64)));
     }
 
     /// <summary>OAuth 오류 코드를 한국어 안내로</summary>

@@ -338,9 +338,17 @@ public sealed class HostGroup : INotifyPropertyChanged
 }
 
 /// <summary>가상화 목록의 "카드 한 줄" 행</summary>
-public sealed class CardRow
+/// <remarks>
+/// 값이 바뀌지 않는 행이지만 INotifyPropertyChanged 를 구현한다 — 구현하지 않은 개체의 속성에 바인딩하면 WPF 가
+/// PropertyDescriptor.AddValueChanged 로 변경을 듣는데, 이 등록은 전역 표에 원본(행 → 호스트 목록)을 붙잡아 두어
+/// 목록을 다시 만들 때마다 버린 행·지운 호스트가 정리 시점까지 남는다. 구현하면 약한 참조(PropertyChangedEventManager)를 쓴다.
+/// 알림을 보낼 일이 없으므로 구독은 저장하지 않는다.
+/// </remarks>
+public sealed class CardRow : INotifyPropertyChanged
 {
     public required List<HostEntry> Hosts { get; init; }
+
+    event PropertyChangedEventHandler? INotifyPropertyChanged.PropertyChanged { add { } remove { } }
 }
 
 /// <summary>Cloud 페이지의 클라우드별 섹션</summary>
@@ -406,7 +414,7 @@ public sealed class SessionTab : INotifyPropertyChanged
     /// <summary>MCP 에서 세션을 가리킬 때 쓰는 번호</summary>
     public int Id { get; init; }
     private string _title = "";
-    public required string Title { get => _title; set { _title = value; OnChanged(); } }
+    public required string Title { get => _title; set { if (_title == value) return; _title = value; OnChanged(); } }
     public required Protocol Protocol { get; init; }
     public required System.Windows.FrameworkElement View { get; init; }
     /// <summary>원본 호스트 (로컬 터미널이면 null)</summary>
@@ -423,20 +431,35 @@ public sealed class SessionTab : INotifyPropertyChanged
     public bool IsSelected
     {
         get => _isSelected;
-        set { _isSelected = value; OnChanged(); }
+        // 같은 값이면 알리지 않는다 — 탭을 고를 때마다 모든 탭 항목의 바인딩·트리거가 다시 도는 것을 막는다
+        set { if (_isSelected == value) return; _isSelected = value; OnChanged(); }
     }
 
     public SessionStatus Status
     {
         get => _status;
-        set { _status = value; OnChanged(); OnChanged(nameof(StatusBrush)); }
+        set { if (_status == value) return; _status = value; OnChanged(); OnChanged(nameof(StatusBrush)); }
+    }
+
+    // 상태 점 색: 바뀔 때마다 새 브러시를 만들지 않고 고정(Freeze)된 것을 함께 쓴다 (처음 쓸 때 만든다)
+    private static class StatusBrushes
+    {
+        public static readonly Brush Connected = Frozen(0x20, 0xC5, 0xA0);
+        public static readonly Brush Connecting = Frozen(0xF5, 0xB7, 0x40);
+        public static readonly Brush Other = Frozen(0x6B, 0x70, 0x88);
+        private static Brush Frozen(byte r, byte g, byte b)
+        {
+            var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+            brush.Freeze();
+            return brush;
+        }
     }
 
     public Brush StatusBrush => Status switch
     {
-        SessionStatus.Connected => new SolidColorBrush(Color.FromRgb(0x20, 0xC5, 0xA0)),
-        SessionStatus.Connecting => new SolidColorBrush(Color.FromRgb(0xF5, 0xB7, 0x40)),
-        _ => new SolidColorBrush(Color.FromRgb(0x6B, 0x70, 0x88)),
+        SessionStatus.Connected => StatusBrushes.Connected,
+        SessionStatus.Connecting => StatusBrushes.Connecting,
+        _ => StatusBrushes.Other,
     };
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -73,6 +73,7 @@ public partial class SftpPanel
         // 준비(폴더 훑기·서버에 같은 이름이 있는지 확인)도 오래 걸릴 수 있어 처음부터 전송 중으로 표시한다 —
         // 화면이 멈춘 것처럼 보이지 않게, 그 사이 두 번째 업로드·사용자 전환이 끼어들지 않게
         var ct = BeginTransfer(L.T("업로드 목록 확인 중..."), 0);
+        var tseq = _statusSeq;   // 늦게 도착한 진행 보고가 끝난 뒤의 결과 문구를 덮지 않게
         try
         {
             var c = await ClientAsync();
@@ -126,11 +127,13 @@ public partial class SftpPanel
                 var label = L.F("업로드 {0}  [{1}/{2}]", Path.GetFileName(local), n + 1, files.Count);
                 TransferText.Text = $"{label}  ({meter.Detail(done)})";
                 var baseDone = done;
-                var progress = new Progress<Renci.SshNet.UploadFileProgressReport>(r =>
+                // 화면 갱신은 0.25초에 한 번만 UI 스레드로 (보고마다 올리면 빠른 전송에서 UI 스레드가 바빠진다)
+                var progress = ThrottledProgress<Renci.SshNet.UploadFileProgressReport>.OnDispatcher(Dispatcher, r =>
                 {
+                    if (tseq != _statusSeq) return;   // 전송이 이미 끝남
                     var now = baseDone + (long)r.TotalBytesUploaded;
                     SetProgress(now, total);
-                    if (meter.Due()) TransferText.Text = $"{label}  ({meter.Detail(now)})";
+                    TransferText.Text = $"{label}  ({meter.Detail(now)})";
                 });
                 // 목록으로 없다고 확인한 파일은 업로드 전에 다시 묻지 않는다 (새 폴더에 올리는 수천 개 파일)
                 await UploadOneAsync(c, () => File.OpenRead(local), remote, progress, ct, knownMissing: names?.Exists(remote) == false);
@@ -304,6 +307,7 @@ public partial class SftpPanel
         if (_busy) return null;
         // 연결을 기다리기 전에 전송 중으로 표시 — 그 사이 다른 전송이 끼어들어 서로의 상태(_busy·_cts)를 지우지 않게
         var ct = BeginTransfer(L.T("다운로드 목록 확인 중..."), 0);
+        var tseq = _statusSeq;   // 늦게 도착한 진행 보고가 끝난 뒤의 결과 문구를 덮지 않게
         try
         {
             var c = await ClientAsync();
@@ -332,11 +336,12 @@ public partial class SftpPanel
                 var label = L.F("다운로드 {0}  [{1}/{2}]", Path.GetFileName(local), n + 1, files.Count);
                 TransferText.Text = $"{label}  ({meter.Detail(done)})";
                 var baseDone = done;
-                var progress = new Progress<Renci.SshNet.DownloadFileProgressReport>(r =>
+                var progress = ThrottledProgress<Renci.SshNet.DownloadFileProgressReport>.OnDispatcher(Dispatcher, r =>
                 {
+                    if (tseq != _statusSeq) return;   // 전송이 이미 끝남
                     var now = baseDone + (long)r.TotalBytesDownloaded;
                     SetProgress(now, total);
-                    if (meter.Due()) TransferText.Text = $"{label}  ({meter.Detail(now)})";
+                    TransferText.Text = $"{label}  ({meter.Detail(now)})";
                 });
                 // 받는 중에는 .part 로 쓰고 다 받은 뒤 이름을 바꾼다 (취소·실패 때 반쯤 받은 파일이 남지 않게).
                 // .part 이름은 겹치지 않게 — 같은 폴더의 "x.part" 파일을 "x" 받는 중에 덮어쓰지 않게

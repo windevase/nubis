@@ -226,3 +226,68 @@ public sealed class TransferMeter(long total)
     public static string FormatEta(TimeSpan t) =>
         t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
 }
+
+/// <summary>
+/// 진행 보고를 화면 스레드로 넘기는 횟수를 줄인다. Progress&lt;T&gt; 는 SSH.NET 이 보고할 때마다(수십 KB 마다)
+/// UI 스레드에 작업을 올려, 빠른 전송에서는 초당 수천 번 화면 스레드를 깨웠다 (보고 처리 안에서 거르는 것으로는 그 비용이 그대로).
+/// 마지막 값만 기억해 두고 interval 에 한 번, 동시에 하나만 올린다. 그 사이 값은 버린다 —
+/// 부르는 쪽은 파일 하나가 끝날 때 진행률을 직접 맞춘다.
+/// </summary>
+public sealed class ThrottledProgress<T> : IProgress<T>
+{
+    private readonly Action<Action> _post;
+    private readonly Action<T> _apply;
+    private readonly long _intervalMs;
+    private readonly Func<long> _clock;
+    private readonly object _gate = new();
+    private T _latest = default!;
+    private long _lastPost = long.MinValue / 2;
+    private bool _pending;
+
+    /// <param name="post">apply 를 화면 스레드로 넘기는 방법 (테스트에서는 바로 실행)</param>
+    /// <param name="clock">밀리초 시계 (기본 Environment.TickCount64)</param>
+    public ThrottledProgress(Action<Action> post, Action<T> apply, int intervalMs = 250, Func<long>? clock = null)
+    {
+        _post = post;
+        _apply = apply;
+        _intervalMs = intervalMs;
+        _clock = clock ?? (() => Environment.TickCount64);
+    }
+
+    /// <summary>WPF 화면 스레드로 — 입력·그리기보다 낮은 우선순위라 전송 중에도 화면이 버벅이지 않는다</summary>
+    public static ThrottledProgress<T> OnDispatcher(System.Windows.Threading.Dispatcher dispatcher, Action<T> apply) =>
+        new(a => dispatcher.BeginInvoke(a, System.Windows.Threading.DispatcherPriority.Background), apply);
+
+    public void Report(T value)
+    {
+        lock (_gate)
+        {
+            _latest = value;
+            if (_pending) return;   // 이미 올려 둔 것이 최신 값을 가져간다
+            var now = _clock();
+            if (now - _lastPost < _intervalMs) return;
+            _pending = true;
+            _lastPost = now;
+        }
+        _post(Flush);
+    }
+
+    private void Flush()
+    {
+        T v;
+        lock (_gate)
+        {
+            v = _latest;
+            _pending = false;
+        }
+        _apply(v);
+    }
+}
+
+/// <summary>진행 보고를 받지 않음 — new Progress&lt;T&gt;(_ =&gt; { }) 는 빈 처리기라도 보고마다 UI 스레드에 작업을 올린다</summary>
+public sealed class NoProgress<T> : IProgress<T>
+{
+    public static readonly NoProgress<T> Instance = new();
+    private NoProgress() { }
+    public void Report(T value) { }
+}

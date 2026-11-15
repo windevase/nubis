@@ -76,9 +76,11 @@ public partial class MainWindow
             }));
 
         // 클라우드 프로필 그룹: AWS → Tencent → GCP → Azure → OCI, 기본은 접힌 상태 (서버가 많으므로)
+        // 프로필마다 전체 목록을 다시 훑지 않게 한 번에 나눠 둔다 (프로필 수 × 호스트 수 → 호스트 수)
+        var byProfile = filtered.Where(h => h.CloudProfileId != null).ToLookup(h => h.CloudProfileId!.Value);
         foreach (var p in _profiles.OrderBy(p => p.Provider).ThenBy(p => p.GroupName, StringComparer.CurrentCultureIgnoreCase))
         {
-            var hosts = filtered.Where(h => h.CloudProfileId == p.Id)
+            var hosts = byProfile[p.Id]
                 .OrderBy(h => h.IsStopped)
                 .ThenBy(h => h.DisplayName, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();

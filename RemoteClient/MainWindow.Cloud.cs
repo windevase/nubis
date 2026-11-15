@@ -27,11 +27,19 @@ public partial class MainWindow
 
     private void UpdateProfileCounts()
     {
+        // 프로필마다 전체 호스트를 다시 훑지 않게 한 번에 센다 (동기화가 끝날 때마다 불린다)
+        var counts = new Dictionary<Guid, (int total, int running)>();
+        foreach (var h in _hosts)
+        {
+            if (h.CloudProfileId is not { } pid) continue;
+            var c = counts.GetValueOrDefault(pid);
+            counts[pid] = (c.total + 1, c.running + (h.IsStopped ? 0 : 1));
+        }
         foreach (var p in _profiles)
         {
-            var hosts = _hosts.Where(h => h.CloudProfileId == p.Id).ToList();
-            p.HostCount = hosts.Count;
-            p.RunningCount = hosts.Count(h => !h.IsStopped);
+            var c = counts.GetValueOrDefault(p.Id);
+            p.HostCount = c.total;
+            p.RunningCount = c.running;
             p.NotifySummary();
         }
     }
