@@ -98,6 +98,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 | 패키지 | 라이선스 | 출처 |
 |---|---|---|
 | AWSSDK.Core / AWSSDK.EC2 / AWSSDK.SSO / AWSSDK.SSOOIDC | Apache-2.0 | https://github.com/aws/aws-sdk-net |
+| AWSSDK.EKS 4.0.108.3 (EKS 클러스터 조회) | Apache-2.0 | https://github.com/aws/aws-sdk-net |
 | Azure.Identity, Azure.Core | MIT | https://github.com/Azure/azure-sdk-for-net |
 | System.ClientModel (Azure.Core 의존성) | MIT | https://github.com/Azure/azure-sdk-for-net |
 | Microsoft.Identity.Client, Microsoft.Identity.Client.Extensions.Msal (MSAL, Azure.Identity 의존성) | MIT | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
@@ -130,6 +131,8 @@ OCI(Oracle Cloud) API 도 SDK 없이 공개된 HTTP Signature(rsa-sha256) 규격
 - Microsoft RDP Client Control (`mstscax.dll`) — Windows 기본 포함 구성요소를 호출만 함
 - Microsoft Edge WebView2 Runtime — Windows 기본 포함
 - Segoe Fluent Icons / Segoe MDL2 Assets — Windows 시스템 글꼴을 이름으로 참조만 함 (글꼴 파일 미포함)
+- kubectl — 사용자가 설치한 것을 호출만 함 (Kubernetes 페이지·클러스터 탭·Claude 의 `run_kubectl`)
+- 클라우드 클러스터 인증 도구 — 사용자가 설치한 것을 kubeconfig 의 exec 플러그인으로 호출만 함: AWS CLI (`aws eks get-token`), gke-gcloud-auth-plugin (GKE), kubelogin (AKS · Microsoft Entra 인증 클러스터), OCI CLI (`oci ce cluster generate-token`)
 
 ## 터미널 색 테마
 

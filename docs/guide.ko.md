@@ -23,6 +23,7 @@ Nubis 는 클라우드·온프레미스 서버를 프로필별로 모아 SSH · 
 13. [데이터 파일과 보안](#13-데이터-파일과-보안)
 14. [단축키](#14-단축키)
 15. [문제 해결](#15-문제-해결)
+16. [쿠버네티스](#16-쿠버네티스)
 
 ---
 
@@ -37,6 +38,7 @@ Nubis 는 클라우드·온프레미스 서버를 프로필별로 모아 SSH · 
 | WebView2 | Windows 10/11 에 기본 포함 (터미널 화면에 사용) |
 | Claude 패널 (선택) | [Claude Code CLI](https://docs.claude.com/claude-code) — `npm install -g @anthropic-ai/claude-code` |
 | 클라우드 가져오기 (선택) | 쓰는 클라우드의 인증 프로필 — `aws`, `tccli`, `gcloud`, `az`, `oci` CLI 로 만들어 둔 것 |
+| 쿠버네티스 (선택) | `kubectl`(`winget install Kubernetes.kubectl`), 클라우드 클러스터는 해당 클라우드의 CLI 나 인증 플러그인 ([16.1](#161-준비)) |
 
 ### 1.2 설치
 
@@ -69,7 +71,7 @@ Nubis 는 한 번에 하나만 실행됩니다. 이미 떠 있을 때 다시 실
 | 영역 | 설명 |
 |---|---|
 | 타이틀바 탭 | **Hosts** 홈 탭과 열린 세션 탭. 탭이 넘치면 휠로 넘기거나 ▾ 버튼(**모든 탭 보기**)으로 전체 목록. 오른쪽에 **+**(로컬 PowerShell), **Claude**(Claude 패널), 창 버튼 |
-| 사이드바 | **Hosts** · **Cloud** · **Vault** · **Known Hosts** · **Settings** |
+| 사이드바 | **Hosts** · **Cloud** · **Kubernetes** · **Vault** · **Known Hosts** · **Settings** |
 | Hosts 페이지 | 검색·빠른 접속 입력창과 **CONNECT**, **NEW HOST**, **IMPORT**, 그룹별 호스트 카드 |
 | 편집 패널 | 호스트를 추가·편집할 때 오른쪽에서 열림 |
 | Claude 패널 | 오른쪽 세로 패널. 경계선을 끌어 폭 조절 |
@@ -437,6 +439,9 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 | Vault 계정의 공개키 보기 (`vault_get_public_key`), 저장된 호스트키 목록 (`list_known_hosts`) | 없음 (감사 로그에 기록) |
 | 화면·탭 조작: 탭 열기·전환·이름 바꾸기·다시 연결·닫은 탭 다시 열기 (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), 로컬 PowerShell 탭 열기, SFTP 패널 열고 닫기, 그룹 접기, 앱 화면 열기 (`open_app_page`), 호스트 8개까지 한 번에 접속 (`connect_hosts`), 즐겨찾기, 클라우드 동기화 취소 | 없음 (감사 로그에 기록) |
 | 화면·편의 설정 (테마, 글꼴, 선택하면 바로 복사, 자동 재연결 등) | 없음 (감사 로그에 기록) |
+| 쿠버네티스: 클러스터 목록 (`list_k8s_clusters`, 인증 정보는 포함하지 않음) | 없음 |
+| 쿠버네티스: 클러스터 탭 · 파드 셸 탭 · 로그 탭 열기 (`open_k8s_session`) | 없음 (감사 로그에 기록) |
+| 클러스터에 `kubectl` 실행 (`run_kubectl`) | 승인 창 (읽기 전용 자동 승인을 켜면 `get`·`describe`·`logs`·`top` 같은 조회 명령만 생략. Secret 조회는 항상 승인이며, 출력에 비밀번호·토큰이 담길 수 있다고 승인 창에 경고) |
 | 연결 중인 탭 닫기 (`close_session`, `close_sessions`) | 승인 창 (끊긴 탭은 바로 닫음. 여러 탭은 승인 한 번) |
 | 호스트 8개 넘게 한 번에 접속 (`connect_hosts`) | 승인 창 |
 | 원격 파일 읽기 (`sftp_list`, `sftp_read`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략. 개인키·`/etc/shadow`·`.env` 같은 민감한 파일과 탭의 sudo 권한으로 읽을 때는 항상 승인) |
@@ -463,7 +468,7 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 
 ### 10.5 MCP 도구 목록
 
-Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 일은 Claude 도 할 수 있습니다. 예외는 비밀 값(비밀번호·키)과 몇 가지 보호된 설정입니다 (10.3 · 10.4 참고).
+Claude 가 쓰는 도구는 61개입니다. 앱에서 손으로 할 수 있는 일은 Claude 도 할 수 있습니다. 예외는 비밀 값(비밀번호·키)과 몇 가지 보호된 설정입니다 (10.3 · 10.4 참고).
 
 **호스트 · 그룹**
 
@@ -550,6 +555,14 @@ Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 �
 |---|---|
 | `import_hosts` | 엑셀·CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD 에서 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
 
+**쿠버네티스**
+
+| 도구 | 기능 |
+|---|---|
+| `list_k8s_clusters` | 등록된 클러스터 목록 (인증 정보는 포함하지 않음)과 이 PC 에서 `kubectl` 을 찾았는지 여부 |
+| `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session` |
+| `open_k8s_session` | 클러스터 탭 · 파드 셸 탭 · 파드 로그 탭 열기 ([16.6](#166-클러스터-탭)) |
+
 ### 10.6 여러 서버 명령 실행 (SSH / WinRM)
 
 `run_command` 는 Linux 서버에는 SSH, Windows 서버에는 WinRM(PowerShell · cmd)으로 여러 서버에 동시에 명령을 실행합니다. `group:Production` 처럼 그룹 전체를 대상으로 할 수 있고, 중지된 서버는 자동으로 건너뜁니다.
@@ -570,7 +583,7 @@ Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 �
 
 | 구분 | 승인 없이 실행 (예) | 승인 창이 뜸 (예) |
 |---|---|---|
-| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, 파일 리디렉션 `>`, 명령 치환 `$( )`·백틱 |
+| Linux | `ls` `cat` `grep` `df` `ps` `ss` `journalctl` `systemctl status` `docker ps` `kubectl get` | `systemctl restart`, `find -delete`, 파일 리디렉션 `>`, 명령 치환 `$( )`·백틱, Secret 조회(`kubectl get secret -o yaml`), `kubectl config view --raw` |
 | PowerShell | `Get-*`, `Select-/Where-/Sort-/Format-*`, `Test-*` | `Invoke-*`, 메서드·.NET 호출, 모르는 명령 |
 | cmd · 공통 | `ipconfig` `sc query` `reg query` `netstat` `tasklist` | `ipconfig /release` 같은 쓰기 옵션 |
 
@@ -731,6 +744,10 @@ Claude 가 쓰는 도구는 58개입니다. 앱에서 손으로 할 수 있는 �
 
 Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경** 으로 지정합니다 (기본은 표준 위치). AWS 는 `AWS_CONFIG_FILE`, GCP 는 `GOOGLE_APPLICATION_CREDENTIALS`, Azure 는 `AZURE_CONFIG_DIR`, OCI 는 `OCI_CLI_CONFIG_FILE` 로 적용되어 로그인 버튼으로 띄우는 CLI 에도 같은 경로가 쓰입니다. Claude 는 바꿀 수 없습니다.
 
+### 12.15 kubectl 경로
+
+이것도 Settings 페이지가 아니라 Kubernetes 페이지에 있습니다. `kubectl` 을 찾은 경로가 보이고, 찾지 못하면 설치 명령(`winget install Kubernetes.kubectl`)을 복사하거나 **경로 지정...** 으로 `kubectl.exe` 를 고릅니다 ([16.1](#161-준비)). Claude 는 바꿀 수 없습니다.
+
 ---
 
 ## 13. 데이터 파일과 보안
@@ -743,6 +760,8 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 | `%APPDATA%\Nubis\login.json` | 마지막 로그인 기록 (암호화) |
 | `%APPDATA%\Nubis\users\<계정>\` | 계정별 프로필 (로그인을 쓸 때) |
 | `hosts.json` · `vault.json` · `cloud_profiles.json` · `known_hosts.json` | 호스트 · Vault · 클라우드 프로필 · 호스트키 (**파일 전체 암호화**) |
+| `k8s_clusters.json` | 쿠버네티스 클러스터 (**파일 전체 암호화**, 클러스터마다 kubeconfig 를 그 안에서 한 번 더 암호화) |
+| `k8s-run\` | 클러스터 탭이나 `kubectl` 이 실행되는 동안에만 두는 복호화된 kubeconfig (현재 Windows 계정만 읽을 수 있고, 닫으면 지움) |
 | `claude\` · `claude_audit.log` | Claude 패널 작업 폴더 · 감사 로그 |
 | `%LOCALAPPDATA%\Nubis\WebView2\` | 터미널 화면 캐시 |
 
@@ -762,6 +781,7 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 | Claude 패널 | 계정 파일 읽기 · DPAPI 복호화 명령 · 설정 파일 수정 차단, 원격 변경은 승인 + 감사 로그 |
 | 가져오기 | 어떤 곳에서도 비밀번호·키는 가져오지 않음 |
 | 호스트키 | 바뀐 키는 항상 경고 |
+| 쿠버네티스 | 클러스터마다 인증을 따로 암호화하고, 쓰는 동안에만 임시 파일로 풂 ([16.7](#167-보안)) |
 
 **한계** — 시작 화면 로그인과 계정별 프로필은 "앱에 들어가는 문" 과 "앱 화면에서의 분리" 입니다. 암호화는 Windows 계정 단위이므로, 같은 Windows 계정에서 도는 프로그램이 파일을 직접 푸는 것까지 막지는 못합니다. 여러 사람이 한 PC 를 쓴다면 Windows 계정을 나누세요.
 
@@ -798,7 +818,7 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 | `Ctrl+Enter` | 호스트 편집 |
 | `Esc` | 닫기 |
 
-동작: 새 호스트 · 호스트 가져오기 · 새 PowerShell 탭 · 닫은 탭 다시 열기 · Claude 패널 열기/닫기 · 모든 클라우드 동기화 · Cloud / Vault / Known Hosts / 설정 페이지.
+동작: 새 호스트 · 호스트 가져오기 · 새 PowerShell 탭 · 닫은 탭 다시 열기 · Claude 패널 열기/닫기 · 모든 클라우드 동기화 · Cloud / Kubernetes / Vault / Known Hosts / 설정 페이지. 쿠버네티스 클러스터도 나오며, `Enter` 로 클러스터 탭을 엽니다.
 
 **호스트 목록**
 
@@ -861,3 +881,96 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 | 로그인 화면에서 "Client ID 에 해당하는 OAuth 앱을 찾을 수 없습니다" | Client ID 오타, GitHub 앱의 Enable Device Flow 체크 확인 |
 | 로그인 설정을 잘못해 들어갈 수 없음 | [11.4](#114-로그아웃-로그인-끄기-잠겼을-때) |
 | RDP 연결 직후 인증서 경고 | 자체 서명 인증서 환경이면 Settings → RDP 의 인증서 경고를 끔 |
+
+---
+
+## 16. 쿠버네티스
+
+사이드바의 **Kubernetes** 페이지(Cloud 와 Vault 사이)에서 쿠버네티스 클러스터를 관리합니다. 인증(kubeconfig)은 클러스터마다 따로 저장합니다 — kubeconfig 를 그 클러스터 하나만 담은 독립된 kubeconfig 로 잘라 Windows DPAPI 로 암호화하고, `k8s_clusters.json`(파일 전체도 암호화)에 넣습니다. 그래서 다른 클러스터의 토큰이 섞이지 않습니다.
+
+### 16.1 준비
+
+| 항목 | 내용 |
+|---|---|
+| kubectl | 필수. 페이지에 `kubectl` 을 찾은 경로가 보입니다. 찾지 못하면 **설치 명령 복사** 로 `winget install Kubernetes.kubectl` 을 복사하거나 **경로 지정...** 으로 `kubectl.exe` 를 고릅니다 |
+| EKS (AWS) | AWS CLI (`winget install Amazon.AWSCLI`) |
+| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) |
+| AKS (Azure) | Microsoft Entra(AAD) 로그인을 쓰는 클러스터는 `kubelogin` (`winget install Microsoft.Azure.Kubelogin`). 로컬 계정 클러스터는 따로 필요 없음 |
+| OKE (OCI) | OCI CLI (`pip install oci-cli`) |
+| TKE (Tencent) | 따로 필요 없음 |
+
+클러스터 인증에 필요한 명령이 이 PC 에 없으면 그 행에 경고 배지와 설치 안내가 나옵니다.
+
+### 16.2 kubeconfig 가져오기
+
+**kubeconfig 가져오기** 는 아래에서 context 를 읽습니다.
+
+- `~/.kube/config` — 환경변수 `KUBECONFIG` 가 있으면 그 첫 번째 파일
+- **파일...** — 고른 kubeconfig 파일
+- **붙여넣기** — kubeconfig YAML 을 칸에 붙여 넣기
+
+가져올 context 를 고르면(그룹은 선택) context 마다 그 클러스터의 인증만 담아 따로 저장합니다. kubeconfig 가 파일 경로로 가리키는 인증서·토큰은 내용을 읽어 함께 넣으므로(인라인), 그 파일을 옮겨도 계속 쓸 수 있습니다. 붙여 넣은 kubeconfig 가 파일을 가리키면 파일로 가져와야 합니다. 원본 파일은 바꾸지 않습니다. 이미 가져온 context 는 **이미 있음** 으로 표시됩니다.
+
+### 16.3 클라우드에서 찾기
+
+**클라우드에서 찾기** 는 Cloud 페이지에 등록한 클라우드 프로필([8장](#8-클라우드-서버-가져오기))로 클러스터를 찾습니다. 조회 API 만 씁니다.
+
+| 클라우드 | 클러스터 | 인증 |
+|---|---|---|
+| AWS | EKS | exec 플러그인 `aws eks get-token` (`AWS_PROFILE` = 그 프로필) |
+| GCP | GKE | exec 플러그인 `gke-gcloud-auth-plugin` |
+| Azure | AKS | Microsoft Entra(AAD) 클러스터: exec 플러그인 `kubelogin` (Azure CLI 로그인 사용). 로컬 계정 클러스터: Azure 에서 받은 kubeconfig(인증서·토큰 포함)를 암호화해 저장 |
+| OCI | OKE | exec 플러그인 `oci ce cluster generate-token` (`--profile`, 세션 프로필이면 `--auth security_token` 도) |
+| Tencent | TKE | Tencent Cloud 에서 받은 kubeconfig(인증서·토큰 포함)를 암호화해 저장 |
+
+직접 가져온 클러스터와 API 서버 주소가 같으면 클라우드 항목을 따로 만들지 않습니다.
+
+### 16.4 동기화 규칙
+
+클러스터가 있는 프로필은 그 뒤로 서버(VM) 동기화 때 클러스터도 함께 갱신합니다 (필요할 때 · 앱을 켤 때 · 주기적으로 — [12.4](#124-클라우드-자동-동기화)).
+
+| 항목 | 동작 |
+|---|---|
+| 일부 실패 | 일부 조회가 실패하면 **그 동기화에서는 지우지 않음** |
+| 권한 거부 | 권한이 없어 거부된 리전의 클러스터는 그대로 둠 |
+| 사라진 클러스터 | **두 번 연속** 안 보여야 제거 |
+| 사용자가 바꾼 값 | 바꾼 이름과 기본 네임스페이스는 유지 |
+
+### 16.5 Kubernetes 페이지
+
+클러스터는 **직접 등록** 과 클라우드 프로필별(`[AWS] <프로필>` 등) 그룹으로 나뉩니다. 행마다 인증 방식 배지(`kubeconfig` · `aws` · `gcloud` · `azure` · `oci` · `exec`), 서버 버전, 그리고 빠진 것이 있으면 경고 배지가 보입니다.
+
+| 동작 | 설명 |
+|---|---|
+| 열기 (더블클릭 · `Enter`) | 클러스터 탭을 엶 ([16.6](#166-클러스터-탭)) |
+| 연결 테스트 | 서버 버전을 보여 주고 `kubectl auth can-i list pods` 로 권한 확인 |
+| 더 보기 → 이름 바꾸기 (`F2`) | Nubis 에서 보이는 이름 변경 |
+| 더 보기 → 기본 네임스페이스 | 탭을 열 때 처음 보는 네임스페이스 (비우면 kubeconfig 의 값, 없으면 `default`) |
+| 더 보기 → 그룹 | 그룹 지정 |
+| 더 보기 → kubeconfig 내보내기... | 이 클러스터의 kubeconfig 를 파일로 저장. 파일은 **암호화되지 않으므로**(토큰·클라이언트 키 포함) 저장 전에 경고 |
+| 더 보기 → 삭제 (`Delete`) | 확인 후 클러스터와 저장된 인증을 Nubis 에서 지움. 클러스터 자체에는 영향 없음. 클라우드에서 찾은 클러스터는 다음 동기화 때 다시 나타날 수 있음 |
+
+### 16.6 클러스터 탭
+
+클러스터를 열면 두 부분으로 된 탭이 열립니다.
+
+- **왼쪽: 리소스 패널** — **Pods** · **Deploy** · **Svc** · **Nodes**, 네임스페이스 선택(**모든 네임스페이스** 포함), **이름으로 찾기**, 5초 자동 새로고침(눌러서 끄고 켬), `F5` 새로고침.
+- **오른쪽: kubectl 터미널** — `KUBECONFIG` 가 이 클러스터인 PowerShell 이라, `kubectl` · `k9s` · `helm` 이 모두 이 클러스터를 가리킵니다.
+
+| 리소스 | 동작 |
+|---|---|
+| 파드 | 더블클릭 · `Enter`: 셸 탭 (`kubectl exec -it`, bash 가 없으면 sh). 우클릭: **셸 열기** · **로그 보기** (`logs -f --tail=500`, 컨테이너가 여럿이면 하위 메뉴) · **이전 컨테이너 로그** · describe · **YAML 보기** · **이름 복사** · **삭제** (확인 창, 컨트롤러가 관리하는 파드는 다시 만들어짐) |
+| 디플로이먼트 | describe · **YAML 보기** · **다시 시작** (`rollout restart`, 확인 창) |
+| 서비스 · 노드 | describe · **YAML 보기** |
+
+describe 와 YAML 은 오른쪽 터미널에서 실행됩니다. 셸·로그 탭을 닫으면 `kubectl` 과 하위 프로세스도 끝납니다. 닫은 클러스터 탭은 `Ctrl+Shift+R` 로 다시 열고, 명령 팔레트(`Ctrl+K`)에서도 클러스터와 **Kubernetes 페이지** 를 찾을 수 있습니다.
+
+### 16.7 보안
+
+| 보호 | 내용 |
+|---|---|
+| 저장 | 클러스터마다 kubeconfig 를 DPAPI 로 따로 암호화해, 파일 전체가 암호화된 `k8s_clusters.json` 에 저장 |
+| 쓰는 동안 | 복호화한 kubeconfig 는 데이터 폴더 아래 `k8s-run\` 의 임시 파일로, 현재 Windows 계정만 접근할 수 있고 클러스터 탭이 열려 있거나 `kubectl` 이 실행되는 동안에만 있음. 닫으면 지우고, 비정상 종료로 남은 파일은 다음 시작 때 정리 |
+| kubectl 실행 | Nubis 는 `kubectl` 을 셸을 거치지 않고 바로 실행. Claude 의 `run_kubectl` 은 `--kubeconfig` · `--context` · `--cluster` · `--user` · `-s`/`--server` · `--token` · `--as` 같은 옵션을 거부해, 저장된 인증이 다른 서버로 가거나 다른 kubeconfig 로 바뀌지 않게 함 |
+| Claude 패널 | 거부 규칙으로 `k8s_clusters.json` · `k8s-run` 읽기 차단 (2차 안전장치). `run_kubectl` 은 승인 + 감사 로그 ([10.3](#103-승인과-기록)) |
+| 내보내기 | 내보낸 kubeconfig 는 암호화되지 않은 파일이니 안전한 곳에 보관 |
