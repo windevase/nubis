@@ -124,6 +124,16 @@ public partial class MainWindow
         _ => false,
     };
 
+    /// <summary>
+    /// Win32 키보드 포커스가 이 창의 WPF 영역이 아닌 곳(내장된 WebView2 · RDP 창, 다른 스레드의 창)에 있는지.
+    /// 그 경우 WPF 의 Keyboard.FocusedElement 는 null 이나 창 자신으로 보여 "카드 목록에 포커스" 와 구별되지 않는다
+    /// </summary>
+    private bool FocusInEmbeddedWindow()
+    {
+        var self = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        return GetFocus() != self;   // GetFocus 선언은 MainWindow.Tabs.cs
+    }
+
     private DispatcherTimer? _searchTimer;
 
     /// <summary>입력이 잠깐 멈췄을 때 한 번만 목록 갱신</summary>
