@@ -118,7 +118,6 @@
   "{0}개 추가 · {1}개 갱신 · {2}개 건너뜀": "{0} added · {1} updated · {2} skipped",
   "{0}대는 IP 를 찾지 못해 DNS 이름을 그대로 두었습니다.": "Could not resolve an IP for {0} hosts; kept their DNS names.",
   "검색 기준 DN 을 찾을 수 없습니다: {0}": "Search base DN not found: {0}",
-  "다단계 ProxyJump 는 마지막 점프 서버만 가져왔습니다.": "For multi-hop ProxyJump, only the last jump server was imported.",
   "다른 그룹: {0}": "Other groups: {0}",
   "닫히지 않은 따옴표가 있습니다. 마지막 줄의 내용을 확인하세요.": "An unclosed quote was found. Check the content of the last row.",
   "목록의 '{0}' 와 같습니다.": "Matches '{0}' in your list.",
