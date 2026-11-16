@@ -57,6 +57,7 @@ public partial class MainWindow
         EdPassword.Password = h?.Password ?? "";
         EdKey.Text = h?.KeyPath ?? "";
         EdGateway.Text = h?.RdpGateway ?? "";
+        EdNoNla.IsChecked = h?.RdpDisableNla == true;
         EdTags.Text = HostTags.ToText(h?.Tags);
         _edVaultId = h?.VaultId;
         _edClearAnswers = false;
@@ -92,14 +93,14 @@ public partial class MainWindow
 
     // EditorValues 의 칸 순서
     private const int FProto = 0, FAddress = 1, FPort = 2, FPublicIp = 3, FUsePublic = 4, FLabel = 5, FGroup = 6, FUser = 7,
-                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14;
+                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14, FNoNla = 15;
 
     /// <summary>편집 칸 값 (칸별)</summary>
     private string[] EditorValues() => new[]
     {
         (ProtoRdp.IsChecked == true).ToString(), EdAddress.Text, EdPort.Text, EdPublicIp.Text, (EdUsePublic.IsChecked == true).ToString(),
         EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text,
-        _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "", EdTags.Text,
+        _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "", EdTags.Text, (EdNoNla.IsChecked == true).ToString(),
     };
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
@@ -147,6 +148,33 @@ public partial class MainWindow
         UpdateProtoUi();
     }
 
+    /// <summary>
+    /// NLA 끄기 안내: 켰으면 무엇이 달라지는지, 꺼져 있는데 사용자명이 AzureAD\ 형식이면 꺼야 할 수 있다고,
+    /// Default.rdp 에서 이미 껐으면 그 사실을
+    /// </summary>
+    private void UpdateNlaHint(RdpDefaults? d = null)
+    {
+        if (NlaHint == null || EdNoNla == null || EdUser == null) return;   // InitializeComponent 중
+        d ??= RdpDefaults.Load();
+        var entra = RdpDefaults.IsEntraUser(EdUser.Text) || RdpDefaults.IsEntraUser(VaultStore.Get(_edVaultId)?.Username);
+        var warn = entra && EdNoNla.IsChecked != true && d.CredSsp;
+        NlaHint.Text = EdNoNla.IsChecked == true
+            ? L.T("접속 전 인증 없이 원격 PC 의 로그인 화면까지 연결되고, 계정은 그 화면에서 확인됩니다. 이 설정이 필요한 PC 에만 켜세요.")
+            : !d.CredSsp
+                ? L.T("원격 데스크톱 연결(mstsc) 기본 설정(Default.rdp)에서 NLA 를 꺼 두어 모든 RDP 호스트에 NLA 를 쓰지 않습니다.")
+                : warn
+                    ? L.T("사용자명이 AzureAD\\ 형식입니다. 이 PC 가 같은 Entra 테넌트에 가입돼 있지 않으면 NLA 를 꺼야 접속됩니다.")
+                    : L.T("Microsoft Entra ID(Azure AD)에 가입된 PC 에 AzureAD\\사용자@도메인 형식으로 접속할 때만 켭니다.");
+        NlaHint.Foreground = (System.Windows.Media.Brush)FindResource(warn ? "Warning" : "SubText");
+    }
+
+    private void OnEdNlaChanged(object sender, RoutedEventArgs e) => UpdateNlaHint();
+
+    private void OnEdUserChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+    {
+        if (ProtoRdp?.IsChecked == true) UpdateNlaHint();
+    }
+
     private void UpdateProtoUi()
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
@@ -158,6 +186,7 @@ public partial class MainWindow
             GatewayHint.Text = !string.IsNullOrWhiteSpace(d.GatewayHost) && d.GatewayUsage != 0
                 ? L.F("비워 두면 원격 데스크톱 연결(mstsc) 기본 설정의 게이트웨이 '{0}' 을 씁니다. 게이트웨이에도 같은 계정으로 로그인합니다.", d.GatewayHost)
                 : L.T("회사 밖에서 RD 게이트웨이를 거쳐야 하는 서버만 적으세요. 게이트웨이에도 같은 계정으로 로그인합니다.");
+            UpdateNlaHint(d);
         }
         UpdateAuthUi();
     }
@@ -215,6 +244,7 @@ public partial class MainWindow
         PwHint.Text = L.T("비워두면 접속할 때 묻습니다. 저장 시 Windows DPAPI 로 암호화됩니다.");
         EdKeyLabel.Text = L.T("개인키 파일 (선택)");
         KeyHint.Text = L.T("키에 암호가 걸려 있으면 비밀번호 칸의 값을 암호로 사용합니다.");
+        if (!ssh) UpdateNlaHint();   // Vault 계정의 사용자명이 AzureAD\ 형식인지도 본다
     }
 
     /// <summary>Vault 계정을 고르지 않았을 때 실제로 쓰일 기본 계정 안내 (프로필 기본 계정 · 설정의 기본 Vault)</summary>
@@ -421,6 +451,7 @@ public partial class MainWindow
         // 평문이 같으면 다시 암호화하지 않는다 (암호문이 바뀌면 열린 탭이 "계정이 바뀜" 으로 보고 세션에서 입력한 계정을 버렸다)
         if (changed[FPassword] && h.Password != EdPassword.Password) h.Password = EdPassword.Password;
         if (changed[FKey] || changed[FProto]) h.KeyPath = ssh && EdKey.Text.Trim().Length > 0 ? EdKey.Text.Trim() : null;
+        if (changed[FNoNla] || changed[FProto]) h.RdpDisableNla = !ssh && EdNoNla.IsChecked == true;
         if (changed[FGateway] || changed[FProto]) h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
         if (_edClearAnswers) h.PromptAnswers = null;
         if (changed[FJump] || changed[FProto]) h.JumpHostId = ssh ? _edJumpId : null;

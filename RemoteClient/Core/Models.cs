@@ -29,6 +29,12 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// <summary>RDP: RD 게이트웨이 ("host" 또는 "host:port"). 비우면 mstsc 의 Default.rdp 게이트웨이 설정을 따른다</summary>
     public string? RdpGateway { get; set; }
     /// <summary>
+    /// RDP: NLA(CredSSP)를 쓰지 않는다 (.rdp 의 enablecredsspsupport:i:0). Microsoft Entra ID(Azure AD)에 가입된 PC 에
+    /// 같은 테넌트에 가입하지 않은 PC 에서 접속할 때 필요하다 (사용자명 AzureAD\사용자@도메인). 접속 전 인증 없이
+    /// 원격 PC 의 로그인 화면까지 연결되므로 필요한 호스트에만 켠다
+    /// </summary>
+    public bool RdpDisableNla { get; set; }
+    /// <summary>
     /// SSH 인증 질문에 기억해 둔 답 (질문 → 답). "Choose [1] Push, or [2] TOTP" 같은 고정 선택만 —
     /// 가려진 질문은 빈 답만 저장한다 (KbdAuth.CanUseRemembered). hosts.json 은 파일 전체가 DPAPI 암호화
     /// </summary>

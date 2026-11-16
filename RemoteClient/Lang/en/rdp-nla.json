@@ -1,0 +1,7 @@
+{
+  "NLA(CredSSP) 사용 안 함 — Entra ID(Azure AD) 가입 PC": "Don't use NLA (CredSSP) — Entra ID (Azure AD) joined PC",
+  "접속 전 인증 없이 원격 PC 의 로그인 화면까지 연결되고, 계정은 그 화면에서 확인됩니다. 이 설정이 필요한 PC 에만 켜세요.": "The connection reaches the remote PC's sign-in screen without authenticating first, and the account is checked on that screen. Turn this on only for PCs that need it.",
+  "원격 데스크톱 연결(mstsc) 기본 설정(Default.rdp)에서 NLA 를 꺼 두어 모든 RDP 호스트에 NLA 를 쓰지 않습니다.": "NLA is turned off in the Remote Desktop Connection (mstsc) defaults (Default.rdp), so no RDP host uses NLA.",
+  "사용자명이 AzureAD\\ 형식입니다. 이 PC 가 같은 Entra 테넌트에 가입돼 있지 않으면 NLA 를 꺼야 접속됩니다.": "The username is in the AzureAD\\ form. If this PC isn't joined to the same Entra tenant, turn NLA off to connect.",
+  "Microsoft Entra ID(Azure AD)에 가입된 PC 에 AzureAD\\사용자@도메인 형식으로 접속할 때만 켭니다.": "Turn this on only when connecting to a Microsoft Entra ID (Azure AD) joined PC as AzureAD\\user@domain."
+}

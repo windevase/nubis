@@ -322,7 +322,9 @@ public sealed class RdpSessionView : UserControl, ISessionView
 
             var adv = ocx.AdvancedSettings9;
             adv.RDPPort = _host.Port;
-            adv.EnableCredSspSupport = true;
+            // NLA(CredSSP): 기본은 켬. Entra ID 가입 PC 처럼 끄라고 한 호스트(또는 Default.rdp 의 enablecredsspsupport:i:0)만 끈다 —
+            // 끄면 접속 전 인증 없이 원격 로그인 화면까지 연결되고, 계정은 그 화면에서 확인된다
+            adv.EnableCredSspSupport = d.CredSspFor(_host);
             // 서버 인증(인증서) 검증: 2 = 확인 실패 시 경고 후 선택(기본), 0 = 경고 없이 연결(자체 서명 인증서 환경용 설정)
             adv.AuthenticationLevel = SettingsStore.Current.RdpCertWarning ? 2 : 0;
             adv.SmartSizing = true;              // 해상도 갱신 전까지는 창 크기에 맞춰 축소/확대 (Nubis 탭 동작)

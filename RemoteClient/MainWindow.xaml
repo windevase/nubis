@@ -2112,6 +2112,12 @@
                                         <TextBlock Text="{l:Tr 'RD 게이트웨이 (선택)'}" Style="{StaticResource FieldLabel}"/>
                                         <TextBox x:Name="EdGateway" Tag="{l:Tr '예: rdgw.example.com  /  rdgw.example.com:443'}"/>
                                         <TextBlock x:Name="GatewayHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                        <!-- Entra ID(Azure AD) 가입 PC: NLA(CredSSP) 끄기 (.rdp 의 enablecredsspsupport:i:0) -->
+                                        <CheckBox x:Name="EdNoNla" Margin="0,12,0,0" Foreground="{StaticResource TextPrimary}" Checked="OnEdNlaChanged" Unchecked="OnEdNlaChanged"
+                                                  AutomationProperties.Name="{l:Tr 'NLA(CredSSP) 사용 안 함 — Entra ID(Azure AD) 가입 PC'}">
+                                            <TextBlock Text="{l:Tr 'NLA(CredSSP) 사용 안 함 — Entra ID(Azure AD) 가입 PC'}" TextWrapping="Wrap"/>
+                                        </CheckBox>
+                                        <TextBlock x:Name="NlaHint" FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"/>
                                     </StackPanel>
 
                                     <TextBlock Text="{l:Tr '이름 · 그룹'}" Style="{StaticResource EdSection}"/>
@@ -2177,7 +2183,7 @@
 
                                     <StackPanel x:Name="HostUserPanel">
                                         <TextBlock x:Name="EdUserLabel" Text="{l:Tr '사용자명'}" Style="{StaticResource FieldLabel}"/>
-                                        <TextBox x:Name="EdUser" Tag="{l:Tr '예: ubuntu  /  DOMAIN\\user'}"/>
+                                        <TextBox x:Name="EdUser" Tag="{l:Tr '예: ubuntu  /  DOMAIN\\user'}" TextChanged="OnEdUserChanged"/>
                                     </StackPanel>
 
                                     <StackPanel x:Name="HostSecretPanel">
