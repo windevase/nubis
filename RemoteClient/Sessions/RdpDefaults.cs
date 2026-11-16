@@ -39,6 +39,19 @@ public sealed class RdpDefaults
     public int GatewayCredsSource { get; init; } = 4;
     /// <summary>게이트웨이와 원격 PC 에 같은 계정 사용 (promptcredentialonce)</summary>
     public bool GatewayCredSharing { get; init; } = true;
+    /// <summary>NLA(CredSSP) 사용 (enablecredsspsupport). 0 이면 끈다 — 모든 RDP 호스트에 적용 (호스트별 설정은 HostEntry.RdpDisableNla)</summary>
+    public bool CredSsp { get; init; } = true;
+
+    /// <summary>
+    /// 이 호스트에 NLA(CredSSP)를 쓸지: 호스트에서 껐거나 Default.rdp 에서 껐으면 false
+    /// </summary>
+    public bool CredSspFor(HostEntry host) => CredSsp && !host.RdpDisableNla;
+
+    /// <summary>
+    /// 사용자명이 Entra ID(Azure AD) 계정 형식(AzureAD\사용자@도메인)인지 — NLA 를 꺼야 할 수 있다고 안내할 때
+    /// </summary>
+    public static bool IsEntraUser(string? user) =>
+        user?.Trim().StartsWith(@"AzureAD\", StringComparison.OrdinalIgnoreCase) == true;
 
     /// <summary>
     /// 이 호스트에 쓸 RD 게이트웨이: 호스트에 적은 값이 있으면 그 값(항상 사용), 없으면 Default.rdp 설정(사용 방식이 0 이 아닐 때).
@@ -129,6 +142,7 @@ public sealed class RdpDefaults
             GatewayUsage = I("gatewayusagemethod", 0),
             GatewayCredsSource = I("gatewaycredentialssource", 4),
             GatewayCredSharing = B("promptcredentialonce", true),
+            CredSsp = B("enablecredsspsupport", true),
         };
     }
 }

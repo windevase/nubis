@@ -245,6 +245,7 @@ Windows 내장 원격 데스크톱 엔진(mstsc 와 같은 `mstscax`)을 앱 안
 - 창 크기를 바꾸면 원격 해상도가 맞춰집니다 (Windows 8.1 / 2012 R2 이상)
 - 연결 품질, 색 깊이, 화면 효과, 클립보드·프린터·드라이브·스마트카드 리디렉션, 소리, Windows 키 전달, 자동 재연결은 **mstsc 기본 설정 파일 `문서\Default.rdp`** 를 그대로 따릅니다. mstsc 에서 바꾼 기본값이 Nubis 에도 적용됩니다
 - **RD 게이트웨이** — 호스트 편집의 RD 게이트웨이 칸, 비우면 `Default.rdp` 의 게이트웨이 설정을 씁니다
+- **Entra ID(Azure AD) 가입 PC** — 사용자명을 `AzureAD\사용자@도메인` 으로 넣고, 호스트 편집의 RD 게이트웨이 아래 **NLA(CredSSP) 사용 안 함** 을 체크합니다 (.rdp 파일의 `enablecredsspsupport:i:0` 과 같음). 이 PC 가 같은 Entra 테넌트에 가입돼 있지 않을 때 필요합니다. NLA 를 끄면 계정을 확인하기 전에 원격 로그인 화면까지 연결되므로 필요한 PC 에만 켜세요. `Default.rdp` 에 `enablecredsspsupport:i:0` 이 있으면 모든 RDP 호스트에 NLA 를 쓰지 않습니다. Claude 는 `add_host` / `update_host` 의 `rdp_disable_nla` 로 바꿀 수 있습니다 (승인 필요).
 - 서버 인증서 경고만 Nubis 설정을 따릅니다 ([Settings → RDP](#1213-rdp))
 - **전체 화면** — 탭 우클릭 → **전체 화면** (연결된 동안만, 단축키는 없음). 원격 해상도를 모니터에 맞추고, 전체 화면에서는 Win 키·Alt+Tab 이 원격으로 갑니다. 위쪽 연결 표시줄로 돌아오면 탭 크기에 다시 맞춥니다
 

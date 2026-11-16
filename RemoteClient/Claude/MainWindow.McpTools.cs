@@ -420,6 +420,7 @@ public partial class MainWindow
                 favorite = new { type = "boolean", description = "즐겨찾기" },
                 jump_host = new { type = "string", description = "SSH 만: 거쳐 갈 점프 서버(ProxyJump) — 목록의 다른 SSH 호스트 이름·id. 한 단계만 (점프 서버가 다시 점프를 거치면 불가)" },
                 rdp_gateway = new { type = "string", description = "RDP 만: RD 게이트웨이 \"호스트\" 또는 \"호스트:포트\"" },
+                rdp_disable_nla = new { type = "boolean", description = "RDP 만: NLA(CredSSP) 끄기 — Microsoft Entra ID(Azure AD) 가입 PC 에 같은 테넌트에 가입하지 않은 이 PC 에서 접속할 때 (사용자명 AzureAD\\사용자@도메인). 필요할 때만" },
             }, "address"),
             a => OnUiAsync(() => AddHostFromClaude(a)));
 
@@ -444,6 +445,7 @@ public partial class MainWindow
                 favorite = new { type = "boolean", description = "즐겨찾기. 이것만 바꾸면 승인 창 없이 반영된다 (감사 로그는 남음)" },
                 jump_host = new { type = "string", description = "SSH 만: 점프 서버(ProxyJump) 호스트 이름·id. \"none\" = 해제. 자기 자신·다른 점프를 거치는 호스트는 불가 (한 단계만)" },
                 rdp_gateway = new { type = "string", description = "RDP 만: RD 게이트웨이 \"호스트\" 또는 \"호스트:포트\". 빈 문자열 = 지우기 (mstsc 기본 설정을 따름)" },
+                rdp_disable_nla = new { type = "boolean", description = "RDP 만: NLA(CredSSP) 끄기(true)/켜기(false) — Entra ID(Azure AD) 가입 PC 에 AzureAD\\사용자@도메인 으로 접속할 때 필요할 수 있다. 끄면 접속 전 인증 없이 로그인 화면까지 연결된다" },
                 clear_prompt_answers = new { type = "boolean", description = "true = 서버 인증 질문(OTP 방식 선택 등)에 기억해 둔 답을 모두 지운다. 답 내용은 보여주지 않는다" },
             }, "host"),
             a => OnUiAsync(() => UpdateHostFromClaude(a)));

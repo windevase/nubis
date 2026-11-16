@@ -163,6 +163,18 @@ public partial class MainWindow
             Note(McpHostRules.GatewayLabel, h.RdpGateway, "없음");
             h.RdpGateway = null;
         }
+        if (h.Protocol != Protocol.Rdp && h.RdpDisableNla && !Has(a, "rdp_disable_nla"))
+        {
+            Note(McpHostRules.NlaLabel, "끔", "켬");
+            h.RdpDisableNla = false;
+        }
+        if (Has(a, "rdp_disable_nla"))
+        {
+            var v = BoolArg(a, "rdp_disable_nla") ?? throw new McpToolException("rdp_disable_nla 는 true 또는 false 입니다.");
+            if (v && h.Protocol != Protocol.Rdp) throw new McpToolException("rdp_disable_nla 는 RDP 호스트에만 지정할 수 있습니다.");
+            Note(McpHostRules.NlaLabel, h.RdpDisableNla ? "끔" : "켬", v ? "끔" : "켬");
+            h.RdpDisableNla = v;
+        }
         if (Has(a, "jump_host"))
         {
             var spec = Arg(a, "jump_host").Trim();
@@ -208,6 +220,7 @@ public partial class MainWindow
         (h.TagsText.Length > 0 ? $" · 태그 {h.TagsText}" : "") +
         (h.JumpHostId != null ? $" · 점프 서버 {JumpName(h.JumpHostId)}" : "") +
         (h.RdpGateway != null ? $" · RD 게이트웨이 {h.RdpGateway}" : "") +
+        (h.RdpDisableNla ? " · NLA 끔" : "") +
         (h.Favorite ? " · 즐겨찾기" : "");
 
     /// <summary>
@@ -308,6 +321,7 @@ public partial class MainWindow
             if (Changed(McpHostRules.FavoriteLabel)) h.Favorite = copy.Favorite;
             if (Changed(McpHostRules.JumpLabel)) h.JumpHostId = copy.JumpHostId;
             if (Changed(McpHostRules.GatewayLabel)) h.RdpGateway = copy.RdpGateway;
+            if (Changed(McpHostRules.NlaLabel)) h.RdpDisableNla = copy.RdpDisableNla;
             // 태그는 요청에서 바뀐 키만 원본에 반영 (대기 중 다른 경로로 바뀐 다른 키는 유지)
             var tagKeys = McpHostRules.ChangedTagKeys(tagsBefore, copy.Tags);
             if (tagKeys.Count > 0)
@@ -417,6 +431,8 @@ internal static class McpHostRules
     public const string FavoriteLabel = "즐겨찾기";
     public const string JumpLabel = "점프 서버";
     public const string GatewayLabel = "RD 게이트웨이";
+    /// <summary>RDP NLA(CredSSP) — 끄면 접속 전 인증 없이 원격 로그인 화면까지 연결되므로 위험 변경으로 본다</summary>
+    public const string NlaLabel = "NLA(CredSSP)";
     public const string AnswersLabel = "기억한 인증 답";
     public const string TagLabel = "태그";
 
@@ -429,7 +445,7 @@ internal static class McpHostRules
             .Where(k => b.GetValueOrDefault(k) != a.GetValueOrDefault(k)).ToList();
     }
 
-    private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel };
+    private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel, NlaLabel };
 
     /// <summary>접속 대상·계정·경로를 바꾸는 변경 (승인 창에 경고)</summary>
     public static bool IsRisky(string change) => RiskyLabels.Any(l => change.StartsWith(l, StringComparison.Ordinal));
