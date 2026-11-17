@@ -109,13 +109,15 @@ public sealed partial class OciProvider
 
         using var s = await OpenAsync(p, ct);
         var errors = s.Errors;
-        var kubeconfigErrors = new ConcurrentBag<string>();
+        // 목록에는 있지만 kubeconfig 를 못 받은 클러스터 (그 클러스터만 지우지 않음 — 프로필 전체를 부분 실패로 만들지 않는다)
+        var skipped = new ConcurrentBag<(string id, string error)>();
 
         var (found, scopeErrors) = await CloudProviders.ParallelCollect(s.Scopes, 8,
-            x => FetchClusterScopeAsync(s.Ctx, x, kubeconfigErrors, ct), x => $"{x.Region} · {x.CompartmentName}", ct);
+            x => FetchClusterScopeAsync(s.Ctx, x, skipped, ct), x => $"{x.Region} · {x.CompartmentName}", ct);
         ct.ThrowIfCancellationRequested();
         errors.AddRange(scopeErrors);
-        errors.AddRange(kubeconfigErrors.OrderBy(e => e, StringComparer.Ordinal));
+        // 같은 클러스터가 여러 범위에서 보여도 보호 ID·오류 줄은 한 번만 (오류 줄 수와 보호 ID 수를 맞춘다)
+        var skippedList = skipped.DistinctBy(x => x.id).OrderBy(x => x.error, StringComparer.Ordinal).ToList();
 
         // 같은 이름이 여러 리전·컴파트먼트에 있으면 context 이름이 겹치지 않게 (순서를 고정해 동기화마다 같은 이름)
         var ordered = found.DistinctBy(f => f.Ocid)
@@ -126,11 +128,13 @@ public sealed partial class OciProvider
             "oke:" + f.Ocid, f.Name, f.Region, f.Endpoint, f.Version, CloudCluster.NormalizeState(f.State), K8sAuthKind.Oci,
             BuildOkeKubeconfig(names[i], f.Server, f.CaData, f.Ocid, f.Region, p.Name, s.Prof.IsSession), names[i])).ToList();
 
-        if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
-        return new ClusterFetchResult(items, errors);
+        // 목록 조회 자체가 실패했고 보여 줄 것도 없으면 실패로 (kubeconfig 만 못 받은 경우는 조회 성공 — 보호 목록으로 넘긴다)
+        if (items.Count == 0 && skippedList.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
+        errors.AddRange(skippedList.Select(x => x.error));
+        return new ClusterFetchResult(items, errors) { ProtectedIds = skippedList.Select(x => x.id).ToList() };
     }
 
-    private static async Task<IEnumerable<OkeFound>> FetchClusterScopeAsync(Ctx ctx, Scope s, ConcurrentBag<string> kubeconfigErrors,
+    private static async Task<IEnumerable<OkeFound>> FetchClusterScopeAsync(Ctx ctx, Scope s, ConcurrentBag<(string id, string error)> skipped,
         CancellationToken ct)
     {
         var ce = $"https://containerengine.{s.Region}.{ctx.Domain}/{ContainerEngineApiVersion}";
@@ -151,10 +155,10 @@ public sealed partial class OciProvider
                 var endpoint = host.Length > 0 ? WithHttps(host) : server;
                 return new OkeFound(ocid, name, s.Region, endpoint, c.Str("kubernetesVersion"), c.Str("lifecycleState"), server, ca);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
             {
-                // kubeconfig 를 못 받은 클러스터는 건너뛰고 오류로 남긴다 (부분 결과 → 아무것도 지우지 않음)
-                kubeconfigErrors.Add($"{s.Region} · {name}: {CloudProviders.FirstLine(ex.Message)}");
+                // kubeconfig 를 못 받은 클러스터(생성 중·실패 상태, 권한 없음 등)는 건너뛰고 그 클러스터만 보호한다 (기존 kubeconfig 유지)
+                skipped.Add(("oke:" + ocid, $"{s.Region} · {name}: {CloudProviders.FirstLine(ex.Message)}"));
                 return (OkeFound?)null;
             }
         });
