@@ -444,4 +444,57 @@ public class KubectlArgsTests
         Assert.False(Sh("kubectl -x get pods"));     // 모르는 옵션이 앞에 있으면 승인 받기
         Assert.False(Sh("kubectl -n get delete ns prod"));
     }
+
+    // ---------------------------------------------------------------- 재검수 반례: 공백 붙은 옵션 · -- 앞 옵션 · --prefix · -w=false · 자격 증명 폴더
+
+    [Fact]
+    public void 앞뒤_공백_붙은_인자는_거부하고_읽기_전용이_아니다()
+    {
+        // kubectl 은 "-n " 을 -n 으로 보지 않아 delete 가 명령이 된다
+        var args = new List<string> { "-n ", "delete", "events", "--all", "-A" };
+        Assert.NotNull(KubectlArgs.Validate(args));
+        Assert.False(KubectlArgs.IsReadOnly(args));
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { "-n\t", "edit", "deploy", "x" }));
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { "-n ", "cp", "C:/x", "pod:/tmp/k" }));
+        Assert.Equal(-1, KubectlArgs.SubcommandIndex(new List<string> { "-n ", "delete", "events" }));
+    }
+
+    [Theory]
+    [InlineData("-R -- edit deploy x")]
+    [InlineData("--show-managed-fields -- config view")]
+    [InlineData("--allow-missing-template-keys -- config view")]
+    [InlineData("-f x.yaml -R -- diff")]
+    [InlineData("-q -- attach pod")]
+    public void 하위_명령_없는_끝_표시는_거부(string line) => Assert.NotNull(KubectlArgs.Validate(A(line)));
+
+    [Theory]
+    [InlineData("set env --prefix -- deploy/x --list --server=https://evil")]
+    [InlineData("set env --prefix -- deploy/x --kubeconfig=C:/x/other")]
+    [InlineData("set env --prefix -- deploy/x --token=abc")]
+    [InlineData("label --overwrite -- pod/x a=b --server=https://evil")]
+    public void exec_run_debug_create_밖의_끝_표시_뒤도_검사(string line) => Assert.NotNull(KubectlArgs.Validate(A(line)));
+
+    [Theory]
+    [InlineData("exec web -- ls -s /")]
+    [InlineData("exec web -c app -- sh -c 'echo --server=x'")]
+    [InlineData("run tmp --image=busybox --restart=Never -- echo -s")]
+    [InlineData("create job j --image=busybox -- echo -s")]
+    public void exec_run_create_의_끝_표시_뒤는_원격_명령이라_그대로_허용(string line) => Assert.Null(KubectlArgs.Validate(A(line)));
+
+    [Theory]
+    [InlineData("rollout status deploy/x -w=false")]
+    [InlineData("get pods -w=0")]
+    [InlineData("logs web -f=false")]
+    public void 짧은_watch_follow_거짓_값은_끝나는_명령(string line) => Assert.Null(MainWindow.KubectlInteractiveReason(A(line)));
+
+    [Theory]
+    [InlineData(".kube")]
+    [InlineData(".aws")]
+    [InlineData(".azure")]
+    [InlineData(".docker")]
+    public void 자격_증명_폴더의_파일은_f_로_읽지_않는다(string dir)
+    {
+        var p = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), dir, "config.json");
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { "apply", "-f", p, "--dry-run=client" }));
+    }
 }

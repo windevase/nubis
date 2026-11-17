@@ -185,9 +185,11 @@ public partial class MainWindow
         if (Is("exec") && before.Any(x => KubectlArgs.ShortHas(x, "it") || Long(x) is { Name: "--stdin" or "--tty" } o && !False(o.Value)))
             return "exec -i/-t 는 대화형이라 run_kubectl 로 실행할 수 없습니다 — 비대화형 exec(예: exec pod -- ls /) 는 됩니다. 셸은 open_k8s_session kind=shell.";
         // --follow · --watch · --watch-only (어느 하위 명령이든: get · events · rollout status …), -w 묶음(-Aw), logs 의 -f 묶음(-pf · -f=true)
-        if (before.Any(x => KubectlArgs.ShortHas(x, "w") ||
+        // 짧은 -w=false · -f=false 는 끝나는 명령 (긴 --watch=false 와 같게)
+        static bool ShortOff(string x, char c) => x.Length > 3 && x[0] == '-' && x[1] == c && x[2] == '=' && False(x[3..]);
+        if (before.Any(x => KubectlArgs.ShortHas(x, "w") && !ShortOff(x, 'w') ||
                             Long(x) is var o && (o.Name.StartsWith("--follow", StringComparison.Ordinal) || o.Name.StartsWith("--watch", StringComparison.Ordinal)) && !False(o.Value)) ||
-            Is("logs") && before.Any(x => KubectlArgs.ShortHas(x, "f")))
+            Is("logs") && before.Any(x => KubectlArgs.ShortHas(x, "f") && !ShortOff(x, 'f')))
             return "-f/--follow/-w/--watch 는 끝나지 않아 run_kubectl 로 실행할 수 없습니다. 로그 탭은 open_k8s_session kind=logs.";
         return null;
     }

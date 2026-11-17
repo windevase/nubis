@@ -73,6 +73,9 @@ public static class KubectlArgs
     /// </summary>
     private static readonly string[] LocalVerbs = { "cp", "kustomize", "diff", "edit" };
 
+    /// <summary>-- 뒤가 컨테이너·파드에서 실행할 명령인 하위 명령 (이 밖의 하위 명령은 -- 뒤도 옵션으로 검사)</summary>
+    private static readonly HashSet<string> TerminatorVerbs = new(StringComparer.Ordinal) { "exec", "run", "debug", "create" };
+
     /// <summary>둘째 단계 하위 명령 (apply edit-last-applied — 편집기 실행, alpha kuberc — 1.33+ 설정 파일 쓰기). 이름이 드물어 어디에 있든 막는다</summary>
     private static readonly string[] LocalSubVerbs = { "edit-last-applied", "kuberc" };
 
@@ -106,7 +109,8 @@ public static class KubectlArgs
         "--recursive", "--all-namespaces", "--all", "--dry-run", "--cascade", "--validate", "--overwrite", "--local", "--record",
         "--allow-missing-template-keys", "--disable-compression", "--match-server-version", "--warnings-as-errors", "--help",
         "--server-side", "--force-conflicts", "--prune", "--ignore-not-found", "--no-headers", "--show-labels", "--show-kind",
-        "--watch", "--watch-only", "--previous", "--follow", "--timestamps", "--prefix", "--all-containers", "--ignore-errors",
+        "--watch", "--watch-only", "--previous", "--follow", "--timestamps", "--all-containers", "--ignore-errors",
+        // --prefix 는 넣지 않는다: logs 에서는 값 없는 옵션이지만 set env 에서는 값을 받아, set env --prefix -- x --server=y 의 -- 가 값이 된다
     };
 
     /// <summary>kubectl 기본 명령 (이 밖의 첫 인자는 플러그인 kubectl-이름 실행이 된다)</summary>
@@ -142,8 +146,20 @@ public static class KubectlArgs
             return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", args[0]);
         if (args[0] == "create" && args.Count > 1 && !args[1].StartsWith('-') && !CreateSubs.Contains(args[1]))
             return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", "create " + args[1]);
+        // 앞뒤 공백·탭이 붙은 인자: kubectl 은 "-n " 을 -n 으로 보지 않아(다음 인자를 값으로 가져가지 않음) 하위 명령 판정이 어긋난다 — 받지 않는다
+        if (args.Any(x => x.Length > 0 && (char.IsWhiteSpace(x[0]) || char.IsWhiteSpace(x[^1]) || x.Any(char.IsControl))))
+            return L.T("kubectl 인자 앞뒤에 공백을 두거나 제어 문자를 넣을 수 없습니다.");
         var allowed = fixedCluster ? Array.Empty<string>() : ClusterSelect;
         var end = TerminatorIndex(args);
+        if (end < args.Count)
+        {
+            // 끝 표시(--)를 믿는 것은 그 앞에 하위 명령이 분명히 있고, -- 뒤가 원격에서 실행할 명령인 하위 명령일 때만.
+            // 모르는 옵션 뒤의 -- 는 kubectl 이 그 옵션의 값으로 가져가 뒤를 하위 명령·옵션으로 해석한다 (-R -- edit, --show-managed-fields -- config view)
+            var si = SubcommandIndex(args);
+            if (si < 0 || si > end)
+                return L.T("kubectl 인자에 -- 를 쓸 때는 그 앞에 하위 명령(exec · run · debug 등)이 있어야 합니다.");
+            if (!TerminatorVerbs.Contains(args[si])) end = args.Count;   // 그 밖의 하위 명령은 -- 뒤까지 모두 검사한다
+        }
         if (fixedCluster && ConfigSecretReason(args, end) is { } secret) return secret;
         if (fixedCluster && (CommandIs(args, LocalVerbs) ?? VerbBeforeEnd(args, LocalSubVerbs)) is { } localVerb)
             return L.F("kubectl {0} 은(는) 쓸 수 없습니다 — 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행할 수 있습니다.", localVerb);
@@ -320,7 +336,9 @@ public static class KubectlArgs
     {
         for (var i = 0; i < args.Count; i++)
         {
-            var x = args[i].Trim();
+            // 다듬지 않는다 — "-n " 은 kubectl 에서 -n 이 아니다 (다음 인자를 값으로 가져가지 않음). 앞뒤 공백이 있으면 자리를 정할 수 없다
+            var x = args[i];
+            if (x != x.Trim()) return -1;
             if (x.Length == 0 || x == "--") return -1;
             if (x[0] != '-') return i;
             var eq = x.IndexOf('=');
@@ -350,7 +368,7 @@ public static class KubectlArgs
     {
         var v = value.Trim();
         if (v.Length == 0 || v == "-") return null;
-        var bad = L.F("파일 경로 '{0}' 은(는) 쓸 수 없습니다 — Nubis 데이터 폴더·~/.ssh(또는 그 위 폴더)의 파일은 kubectl 로 읽지 않습니다.", v);
+        var bad = L.F("파일 경로 '{0}' 은(는) 쓸 수 없습니다 — Nubis 데이터 폴더·자격 증명 폴더(~/.ssh · ~/.kube · ~/.aws 등, 또는 그 위 폴더)의 파일은 kubectl 로 읽지 않습니다.", v);
         if (v.Contains('"')) return bad;   // CSV 따옴표 묶음은 해석이 엇갈릴 수 있다
         foreach (var raw in v.Split(','))
         {
@@ -367,7 +385,13 @@ public static class KubectlArgs
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return new List<string> { AppPaths.DataDir, AppPaths.RootDir, ClaudeGuard.LegacyDataDir, Path.Combine(appData, "Nubis"), Path.Combine(home, ".ssh") };
+        // 자격 증명 폴더도 — -f 로 읽은 JSON·YAML 이 kubectl 디코드 오류 메시지에 내용째 찍힐 수 있다
+        return new List<string>
+        {
+            AppPaths.DataDir, AppPaths.RootDir, ClaudeGuard.LegacyDataDir, Path.Combine(appData, "Nubis"), Path.Combine(home, ".ssh"),
+            Path.Combine(home, ".kube"), Path.Combine(home, ".aws"), Path.Combine(home, ".azure"), Path.Combine(home, ".oci"),
+            Path.Combine(home, ".docker"), Path.Combine(home, ".config", "gcloud"), Path.Combine(appData, "gcloud"),
+        };
     }
 
     /// <summary>
