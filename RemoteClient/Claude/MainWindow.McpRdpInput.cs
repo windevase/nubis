@@ -56,15 +56,19 @@ public partial class MainWindow
     /// <summary>이 탭에 Claude 의 화면 조작(클릭·키 조합)이 허용돼 있는가 (탭 메뉴에서 끝내기 표시용)</summary>
     internal bool HasRdpControl(SessionTab tab) => ActiveGrant(tab) != null;
 
-    /// <summary>화면 조작 허용을 바로 끝낸다 (탭 우클릭 메뉴) — 진행 중인 입력도 멈춘다</summary>
-    internal void RevokeRdpControl(SessionTab tab)
+    /// <summary>
+    /// 화면 조작 허용을 바로 끝낸다 (탭 우클릭 메뉴, byClaude = MCP rdp_release_control 로 Claude 가 스스로 반납) — 진행 중인 입력도 멈춘다.
+    /// 끝낼 허용이 있었으면 true
+    /// </summary>
+    internal bool RevokeRdpControl(SessionTab tab, bool byClaude = false)
     {
         if (_rdpActiveInput.TryGetValue(tab, out var running)) { try { running.Cancel(); } catch (ObjectDisposedException) { } }
-        if (!_rdpGrants.TryGetValue(tab, out var g)) return;
+        if (!_rdpGrants.TryGetValue(tab, out var g)) return false;
         _rdpGrants.Remove(tab);
         try { g.Stop.Cancel(); } catch (ObjectDisposedException) { }
-        AuditLog.Write("rdp_control", new[] { SessionAuditTarget(tab) }, "(화면 조작 허용 끝냄)", "사용자 해제");
-        Toast.Show(L.F("{0} 화면의 Claude 조작 허용을 끝냈습니다.", tab.Title));
+        AuditLog.Write(byClaude ? "rdp_release_control" : "rdp_control", new[] { SessionAuditTarget(tab) }, "(화면 조작 허용 끝냄)", byClaude ? "Claude 반납" : "사용자 해제");
+        Toast.Show(byClaude ? L.F("Claude 가 {0} 화면의 조작 허용을 반납했습니다.", tab.Title) : L.F("{0} 화면의 Claude 조작 허용을 끝냈습니다.", tab.Title));
+        return true;
     }
 
     private static readonly object CaptureArgs = new { type = "boolean", description = "동작 뒤 화면을 다시 캡처해 함께 돌려준다 (기본 true). 여러 동작을 이어서 할 때 중간 것은 false 로 토큰 절약" };
@@ -77,6 +81,26 @@ public partial class MainWindow
 
     private IEnumerable<McpTool> RdpInputTools()
     {
+        yield return new McpTool("rdp_release_control",
+            "RDP 탭에서 받아 둔 화면 조작 허용(클릭·끌기·스크롤·키 조합을 다시 묻지 않는 10분)을 Claude 가 스스로 끝낸다 — " +
+            "탭 우클릭 'Claude 화면 조작 허용 끝내기'와 같고, 진행 중인 입력도 멈춘다. 화면 작업을 마쳤으면 반납해 둔다. 다시 조작하려면 사용자 승인을 다시 받는다.",
+            Schema(new { session_id = new { type = "integer", description = "생략 시 현재 탭" } }),
+            a => OnUi(() =>
+            {
+                var tab = RequireSession(a, allowCurrent: true);
+                if (tab.View is not RdpSessionView) throw new McpToolException($"session {tab.Id} 은 RDP 탭이 아닙니다.");
+                var active = HasRdpControl(tab);
+                var released = RevokeRdpControl(tab, byClaude: true);
+                if (!released)
+                {
+                    AuditLog.Write("rdp_release_control", new[] { SessionAuditTarget(tab) }, "(화면 조작 허용 반납)", "허용 없음");
+                    return $"session {tab.Id} 에는 반납할 화면 조작 허용이 없습니다.";
+                }
+                return active
+                    ? $"session {tab.Id} 의 화면 조작 허용을 반납했습니다. 다시 조작하려면 사용자 승인이 필요합니다."
+                    : $"session {tab.Id} 의 (이미 만료됐거나 연결이 바뀐) 화면 조작 허용 기록을 지웠습니다.";
+            }));
+
         yield return new McpTool("rdp_click",
             "RDP(원격 데스크톱) 탭 화면을 클릭한다. " + CoordNote + GrantNote +
             "사용자의 실제 마우스 커서는 움직이지 않는다. 결과는 동작 뒤 캡처로 확인. " +

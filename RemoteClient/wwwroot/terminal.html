@@ -529,6 +529,7 @@
       // 앱이 이미 걸렀지만 한 번 더: 탭·CR·LF 외 C0, DEL, C1 제어 문자 제거 (bracketed paste 탈출 방지)
       case 'paste': term.paste(String(m.d).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, '')); break;
       case 'focus': term.focus(); break;
+      case 'setzoom': setZoom(Number(m.z) || 0); break;
       case 'settings': applySettings(m); break;
     }
   });

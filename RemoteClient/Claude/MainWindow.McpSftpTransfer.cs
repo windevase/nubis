@@ -25,49 +25,54 @@ public partial class MainWindow
 
     private async Task<string> SftpDownloadAsync(JsonElement a)
     {
+        if (McpSftpRules.CollectPaths("path", Arg(a, "path"), "paths", StringListArg(a, "paths"), ignoreCase: false, out var paths) is { } badArgs)
+            throw new McpToolException(badArgs);
         var conn = await SftpTargetAsync(a);
         var h = conn.Host;
-        var path = Arg(a, "path").Trim();
-        if (path.Length == 0) throw new McpToolException("path 가 필요합니다.");
         var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Nubis", SftpPanel.SafeLocalName(h.DisplayName));
         var target = conn.Label;
-        var what = $"받기: {path}\n저장 위치: {root}";
+        var multi = paths.Count > 1;
+        var what = (multi ? $"받기 ({paths.Count}개):{McpSftpRules.ListText(paths, McpSftpRules.MaxMultiPaths)}" : $"받기: {paths[0]}") + $"\n저장 위치: {root}";
+        var auditPath = multi ? $"{paths.Count}개: {string.Join(", ", paths)}" : paths[0];
         var ok = await OnUiAsync(() => AskApprovalAsync("sftp_download", L.T("Claude 가 파일 다운로드를 요청합니다"),
-            L.T("서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호).") + conn.Note, new[] { target }, what));
+            L.T("서버의 파일을 이 PC 로 받습니다. 기존 파일은 덮어쓰지 않습니다(이름 뒤에 번호).") +
+            (multi ? L.F("\n받을 항목: {0}개", paths.Count) : "") + conn.Note, new[] { target }, what));
         AuditLog.Write("sftp_download", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 
         var count = 0;
         long bytes = 0;
+        var finished = new List<string>();   // 다 받은 항목 "원격 → 로컬"
+        var failed = new List<string>();     // 받지 못한 항목 (없음·권한 없음·특수 파일)
+        string Progress() =>
+            $"중단 전까지 파일 {count}개 받음 ({SftpPanel.HumanSize(bytes)}), 받던 파일은 일부만 저장됐을 수 있음 — 저장 위치 {root}" +
+            (multi && finished.Count > 0 ? $"\n다 받은 항목 {finished.Count}개:{McpSftpRules.ListText(finished, 50)}" : "") +
+            (failed.Count > 0 ? $"\n받지 못한 항목 {failed.Count}개:{McpSftpRules.ListText(failed, 50)}" : "");
         try
         {
-            return await WithSftp(conn, (c, ct) => DownloadCore(c, ct),
-                () => $"중단 전까지 파일 {count}개 받음 ({SftpPanel.HumanSize(bytes)}), 받던 파일은 일부만 저장됐을 수 있음 — 저장 위치 {root}");
+            return await WithSftp(conn, (c, ct) => DownloadCore(c, ct), Progress);
         }
         catch (McpToolException ex)
         {
-            AuditLog.Write("sftp_download", new[] { target }, path, $"실패 (파일 {count}개 받음): {ex.Message}");
+            AuditLog.Write("sftp_download", new[] { target }, auditPath, $"실패 (파일 {count}개 받음): {ex.Message}");
             throw;
         }
         catch (OperationCanceledException)
         {
             // 접속 전 취소(Task.Run 의 토큰, WithSftp 첫 ThrowIfCancellationRequested)는 McpToolException 으로 바뀌지 않는다 — 취소 기록을 남긴다
-            AuditLog.Write("sftp_download", new[] { target }, path, $"요청 취소로 중단 (파일 {count}개 받음)");
+            AuditLog.Write("sftp_download", new[] { target }, auditPath, $"요청 취소로 중단 (파일 {count}개 받음)");
             throw new McpToolException($"요청이 취소되어 중단했습니다 (파일 {count}개 받음).");
         }
         catch (Exception ex)
         {
             // 접속·인증 실패 등도 '승인' 기록만 남지 않게 결과를 적는다
-            AuditLog.Write("sftp_download", new[] { target }, path, $"실패 (파일 {count}개 받음): {ex.Message}");
+            AuditLog.Write("sftp_download", new[] { target }, auditPath, $"실패 (파일 {count}개 받음): {ex.Message}");
             throw;
         }
 
         string DownloadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
             Directory.CreateDirectory(root);
-            var attr = c.GetAttributes(path);
-            if (!attr.IsDirectory && !attr.IsRegularFile) throw new McpToolException("일반 파일이 아닙니다 (장치·FIFO·소켓 등).");
-            var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
             var full = Path.GetFullPath(root).TrimEnd('\\') + "\\";
             var skipped = new List<string>();
             var renamed = new List<string>();
@@ -119,120 +124,255 @@ public partial class MainWindow
                 }
                 count++;   // 다 받은 파일만 센다 (실패 메시지의 진행 상황)
             }
-            Get(path, attr.IsDirectory, top, attr.Size);
-            var note = skipped.Count == 0 ? "" : $", 심볼릭 링크 {skipped.Count}개 건너뜀";
-            AuditLog.Write("sftp_download", new[] { target }, path, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}{note}");
-            return $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {top}" +
-                   (skipped.Count == 0 ? "" : $"\n건너뛴 심볼릭 링크 {skipped.Count}개:\n" + string.Join("\n", skipped.Take(50)) +
+
+            // 항목마다: 없음·권한 없음·특수 파일은 그 항목만 빼고 나머지는 받는다 (결과에 따로 적음). 한도·취소·연결 오류는 전체를 멈춘다
+            foreach (var path in paths)
+            {
+                ct.ThrowIfCancellationRequested();
+                Renci.SshNet.Sftp.SftpFileAttributes attr;
+                try { attr = c.GetAttributes(path); }
+                catch (Renci.SshNet.Common.SftpPathNotFoundException) { failed.Add($"{path} (원격 경로가 없음)"); continue; }
+                catch (Renci.SshNet.Common.SftpPermissionDeniedException) { failed.Add($"{path} (권한 없음)"); continue; }
+                if (!attr.IsDirectory && !attr.IsRegularFile) { failed.Add($"{path} (일반 파일이 아님 — 장치·FIFO·소켓 등)"); continue; }
+                var top = SftpPanel.UniquePath(Path.Combine(root, SftpPanel.SafeLocalName(McpHelpers.RemoteFileName(path))), attr.IsDirectory);
+                var before = count;
+                try { Get(path, attr.IsDirectory, top, attr.Size); }
+                // 여러 항목이면 폴더 안의 권한 없는 파일 등으로 그 항목만 멈추고 다음 항목으로 (한도 · 취소 · 연결 오류는 전체를 멈춤)
+                catch (Exception ex) when (multi && ex is Renci.SshNet.Common.SftpPermissionDeniedException or Renci.SshNet.Common.SftpPathNotFoundException)
+                {
+                    failed.Add($"{path} ({(ex is Renci.SshNet.Common.SftpPermissionDeniedException ? "안의 항목에 권한 없음" : "받는 중 없어진 항목")} — 그 전까지 파일 {count - before}개 받음, 일부는 {top} 에 남음)");
+                    continue;
+                }
+                finished.Add($"{path} → {top}");
+            }
+            if (finished.Count == 0)
+                throw new McpToolException(multi ? "받은 항목이 없습니다:" + McpSftpRules.ListText(failed, 50) : $"받지 못했습니다: {failed[0]}");
+
+            var note = (skipped.Count == 0 ? "" : $", 심볼릭 링크 등 {skipped.Count}개 건너뜀") + (failed.Count == 0 ? "" : $", 받지 못한 항목 {failed.Count}개");
+            AuditLog.Write("sftp_download", new[] { target }, auditPath, $"완료 {count}개 {SftpPanel.HumanSize(bytes)}{note}" +
+                (failed.Count == 0 ? "" : " — 받지 못함: " + string.Join(", ", failed)));
+            var head = multi
+                ? $"받았습니다: 항목 {finished.Count}/{paths.Count}개, 파일 {count}개 ({SftpPanel.HumanSize(bytes)}):{McpSftpRules.ListText(finished, McpSftpRules.MaxMultiPaths)}"
+                : $"받았습니다: {count}개 ({SftpPanel.HumanSize(bytes)}) → {finished[0][(paths[0].Length + 3)..]}";
+            return head +
+                   (failed.Count == 0 ? "" : $"\n받지 못한 항목 {failed.Count}개:{McpSftpRules.ListText(failed, McpSftpRules.MaxMultiPaths)}") +
+                   (skipped.Count == 0 ? "" : $"\n건너뛴 심볼릭 링크 등 {skipped.Count}개:\n" + string.Join("\n", skipped.Take(50)) +
                                               (skipped.Count > 50 ? $"\n… 외 {skipped.Count - 50}개" : "")) +
                    (renamed.Count == 0 ? "" : $"\n이 PC 에서 이름이 겹쳐(대소문자·쓸 수 없는 글자) 번호를 붙인 {renamed.Count}개:\n" + string.Join("\n", renamed.Take(50)) +
                                               (renamed.Count > 50 ? $"\n… 외 {renamed.Count - 50}개" : ""));
         }
     }
 
+    /// <summary>sftp_upload 에서 올릴 로컬 항목 하나 (최상위) — 폴더면 하위 파일 목록과 크기</summary>
+    private sealed record UploadTop(string Local, bool IsDir, List<(string Path, long Size)> Files);
+
+    /// <summary>sftp_upload 승인 전 로컬 검사 (백그라운드 스레드): 절대 경로 · 막힌 경로 · 있는지 · 겹침, 파일마다 막힌 경로와 크기. 5000개를 넘으면 세다가 멈춘다</summary>
+    private static List<UploadTop> ScanUploadLocals(IReadOnlyList<string> locals)
+    {
+        var tops = new List<UploadTop>();
+        var counted = 0;
+        foreach (var local in locals)
+        {
+            if (!Path.IsPathFullyQualified(local)) throw new McpToolException($"local_path 는 절대 경로여야 합니다: {local}");
+            if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } why) throw new McpToolException(why);
+            var isDir = Directory.Exists(local);
+            if (!isDir && !File.Exists(local)) throw new McpToolException($"로컬 경로가 없습니다: {local}");
+            var files = new List<(string Path, long Size)>();
+            foreach (var f in isDir ? Directory.EnumerateFiles(local, "*", SearchOption.AllDirectories) : new[] { local })
+            {
+                if (++counted > 5000) throw new McpToolException("파일이 5000개를 넘습니다.");
+                files.Add((f, 0L));
+            }
+            tops.Add(new UploadTop(local, isDir, files));
+        }
+        if (McpSftpRules.LocalPathListProblem(tops.Select(t => Path.GetFullPath(t.Local)).ToList()) is { } overlap) throw new McpToolException(overlap);
+        foreach (var t in tops)
+            for (var i = 0; i < t.Files.Count; i++)
+            {
+                if (McpHelpers.BlockedUploadReason(t.Files[i].Path, AppPaths.DataDir, AppPaths.RootDir) is { } blocked) throw new McpToolException(blocked);
+                t.Files[i] = (t.Files[i].Path, new FileInfo(t.Files[i].Path).Length);
+            }
+        return tops;
+    }
+
     private async Task<string> SftpUploadAsync(JsonElement a)
     {
         var conn = await SftpTargetAsync(a);
-        var local = Arg(a, "local_path").Trim().Trim('"');
+        var many = StringListArg(a, "local_paths")?.Select(x => x.Trim().Trim('"')).ToList();
+        if (McpSftpRules.CollectPaths("local_path", Arg(a, "local_path").Trim().Trim('"'), "local_paths", many, ignoreCase: true, out var locals) is { } badArgs)
+            throw new McpToolException(badArgs);
         var remoteDir = Arg(a, "remote_dir").Trim();
-        var overwrite = BoolArg(a, "overwrite") == true;
-        if (local.Length == 0 || remoteDir.Length == 0) throw new McpToolException("local_path 와 remote_dir 가 필요합니다.");
-        if (!Path.IsPathFullyQualified(local)) throw new McpToolException("local_path 는 절대 경로여야 합니다.");
-        // 링크(끊긴 링크 포함)를 알아볼 수 없으면 승인 창을 띄우기 전에 거부한다 (OverwriteLinkRefusal 이 어차피 모든 대상을 거부)
+        if (remoteDir.Length == 0) throw new McpToolException("remote_dir 가 필요합니다.");
+        if (McpSftpRules.HasBadChars(remoteDir)) throw new McpToolException("remote_dir 에 제어 문자(줄바꿈 등)나 보이지 않는 문자(양방향 제어 등)가 있습니다.");
+        if (McpSftpRules.ResolveConflictMode(Arg(a, "on_conflict"), BoolArg(a, "overwrite"), out var mode) is { } badMode) throw new McpToolException(badMode);
+        // 링크(끊긴 링크 포함)를 알아볼 수 없으면 승인 창을 띄우기 전에 거부한다 (UploadDecision 이 링크를 구분해야 함)
         if (!SftpRaw.LStatSupported) throw new McpToolException("이 SSH.NET 버전에서는 심볼릭 링크를 확인할 수 없어 sftp_upload 를 쓸 수 없습니다.");
-        if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } why) throw new McpToolException(why);
-        var isDir = Directory.Exists(local);
-        if (!isDir && !File.Exists(local)) throw new McpToolException($"로컬 경로가 없습니다: {local}");
 
-        var files = isDir ? Directory.EnumerateFiles(local, "*", SearchOption.AllDirectories).ToList() : new List<string> { local };
-        if (files.Count > 5000) throw new McpToolException("파일이 5000개를 넘습니다.");
-        var blocked = files.Select(f => McpHelpers.BlockedUploadReason(f, AppPaths.DataDir, AppPaths.RootDir)).FirstOrDefault(r => r != null);
-        if (blocked != null) throw new McpToolException(blocked);
-        var total = files.Sum(f => new FileInfo(f).Length);
+        // 로컬 폴더 훑기·파일마다 검사는 디스크를 오래 읽을 수 있어 UI 스레드에서 돌지 않게 (앞의 await 가 UI 스레드에서 이어질 수 있음)
+        var tops = await Task.Run(() => ScanUploadLocals(locals), McpRequest.Token);
+        var fileCount = tops.Sum(t => t.Files.Count);
+        var total = tops.Sum(t => t.Files.Sum(f => f.Size));
 
         var target = conn.Label;
-        var what = $"올리기: {local}{(isDir ? $" (폴더, 파일 {files.Count}개)" : "")} — {SftpPanel.HumanSize(total)}\n원격 폴더: {remoteDir}" + (overwrite ? "\n같은 이름이 있으면 덮어씀 (심볼릭 링크는 덮어쓰지 않음)" : "");
+        var multi = tops.Count > 1;
+        string TopText(UploadTop t) => $"{t.Local}{(t.IsDir ? $" (폴더, 파일 {t.Files.Count}개)" : "")}";
+        var modeText = mode switch
+        {
+            "overwrite" => "\n같은 이름이 있으면 덮어씀 (심볼릭 링크는 덮어쓰지 않음, 폴더는 병합)",
+            "skip" => "\n같은 이름이 있으면 건너뜀 (폴더는 병합)",
+            _ => "\n같은 이름 파일이 하나라도 있으면 아무것도 올리지 않음 (폴더는 병합)",
+        };
+        var what = (multi
+            ? $"올리기 ({tops.Count}개, 파일 {fileCount}개) — {SftpPanel.HumanSize(total)}:{McpSftpRules.ListText(tops.Select(TopText).ToList(), McpSftpRules.MaxMultiPaths)}"
+            : $"올리기: {TopText(tops[0])} — {SftpPanel.HumanSize(total)}") + $"\n원격 폴더: {remoteDir}" + modeText;
+        var auditLocal = multi ? $"{tops.Count}개: {string.Join(", ", locals)}" : locals[0];
+        var modeNote = mode switch
+        {
+            "overwrite" => L.T("\n원격에 같은 이름 파일이 있으면 덮어씁니다."),
+            "skip" => L.T("\n원격에 같은 이름이 있으면 건너뜁니다."),
+            _ => L.T("\n원격에 같은 이름 파일이 하나라도 있으면 아무것도 올리지 않습니다."),
+        };
         var ok = await OnUiAsync(() => AskApprovalAsync("sftp_upload", L.T("Claude 가 파일 업로드를 요청합니다"),
-            L.T("이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요.") + conn.Note, new[] { target }, what));
+            L.T("이 PC 의 파일을 서버로 보냅니다. 보내도 되는 파일인지 확인하세요.") + modeNote + conn.Note, new[] { target }, what));
         AuditLog.Write("sftp_upload", new[] { target }, what, ok ? "승인" : "거부");
         if (!ok) throw new McpToolException("사용자가 거부했습니다.");
 
         var done = 0;
+        var planned = 0;
+        var overwritten = 0;
+        var madeDirs = 0;
+        // 중단 시 진행 상황: 덮어쓴 파일(원래 내용은 사라짐) · 새로 만든 폴더까지 알린다
+        string Done() => $"올릴 파일 {(planned > 0 ? planned : fileCount)}개 중 {done}개 올림" +
+                         (overwritten > 0 ? $"(그중 덮어씀 {overwritten}개)" : "") + (madeDirs > 0 ? $", 폴더 {madeDirs}개 만듦" : "");
         try
         {
-            return await WithSftp(conn, (c, ct) => UploadCore(c, ct), () => $"파일 {files.Count}개 중 {done}개 올림, 올리던 파일은 원격에 일부만 남았을 수 있음");
+            return await WithSftp(conn, (c, ct) => UploadCore(c, ct), () => Done() + ", 올리던 파일은 원격에 일부만 남았을 수 있음");
         }
         catch (McpToolException ex)
         {
-            AuditLog.Write("sftp_upload", new[] { target }, local, $"실패 ({files.Count}개 중 {done}개 올림): {ex.Message}");
+            AuditLog.Write("sftp_upload", new[] { target }, auditLocal, $"실패 ({Done()}): {ex.Message}");
             throw;
         }
         catch (OperationCanceledException)
         {
-            AuditLog.Write("sftp_upload", new[] { target }, local, $"요청 취소로 중단 ({files.Count}개 중 {done}개 올림)");
-            throw new McpToolException($"요청이 취소되어 중단했습니다 ({files.Count}개 중 {done}개 올림).");
+            AuditLog.Write("sftp_upload", new[] { target }, auditLocal, $"요청 취소로 중단 ({Done()})");
+            throw new McpToolException($"요청이 취소되어 중단했습니다 ({Done()}).");
         }
         catch (Exception ex)
         {
-            AuditLog.Write("sftp_upload", new[] { target }, local, $"실패 ({files.Count}개 중 {done}개 올림): {ex.Message}");
+            AuditLog.Write("sftp_upload", new[] { target }, auditLocal, $"실패 ({Done()}): {ex.Message}");
             throw;
         }
 
         string UploadCore(Renci.SshNet.SftpClient c, CancellationToken ct)
         {
             // 승인 대기 중 최상위 경로가 링크·정션으로 바뀌었을 수 있다 — 접속 뒤 쓰기 전에 다시 검사 (파일별 핸들 검사는 아래)
-            if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } again) throw new McpToolException(again);
-            var name = Path.GetFileName(local.TrimEnd('\\'));
-            var root = SftpPanel.Combine(remoteDir, name);
-            // 덮어쓸 대상이 심볼릭 링크면 거부한다 — UploadFile(덮어쓰기)은 링크를 따라가 링크가 가리키는 파일(폴더 밖 /etc 등)에 쓴다.
-            // 끊긴 링크도 LSTAT 으로 잡는다 (Exists 는 못 보지만 열기(O_CREAT)는 링크 대상 파일을 새로 만든다)
-            if (OverwriteLinkRefusal(c, root) is { } rootLink) throw new McpToolException(rootLink);
-            var rootExisted = c.Exists(root);
-            if (rootExisted && !overwrite) throw new McpToolException($"원격에 이미 있습니다: {root} (덮어쓰려면 overwrite=true)");
-            string RemoteOf(string f) => isDir ? SftpPanel.Combine(root, Path.GetRelativePath(local, f).Replace('\\', '/')) : root;
-            // 이미 있던 폴더에 덮어쓰면 올리기 전에 모든 대상(하위 폴더·파일)의 링크 여부를 먼저 본다 — 중간에 멈춰 반쯤 올린 채 남지 않게
-            if (isDir && rootExisted)
+            foreach (var t in tops)
+                if (McpHelpers.BlockedUploadReason(t.Local, AppPaths.DataDir, AppPaths.RootDir) is { } again) throw new McpToolException(again);
+
+            // 1) 계획: 원격의 지금 상태(LSTAT — 링크를 따라가지 않음)를 보고 항목마다 할 일을 정한다. 이 단계에서는 서버를 바꾸지 않는다 —
+            //    거부할 항목(링크 자리 · 종류가 다른 같은 이름)이나 fail 의 같은 이름이 있으면 아무것도 올리기 전에 멈춘다
+            var createDirs = new List<string>();
+            var jobs = new List<(string Local, string Remote, long Size, bool Overwrite)>();
+            var skipped = new List<string>();
+            var conflicts = new List<string>();
+            var skippedInside = 0;
+            var roots = new List<string>();
+            static bool Under(List<string> prefixes, string r) => prefixes.Any(p => r.StartsWith(p.TrimEnd('/') + "/", StringComparison.Ordinal));
+            void DecideFile(string local, string remote, long size)
             {
-                foreach (var d in Directory.EnumerateDirectories(local, "*", SearchOption.AllDirectories))
+                var at = TryLStat(c, remote);
+                var (act, why) = McpSftpRules.UploadDecision(mode, false, at != null, at?.IsSymbolicLink == true, at?.IsDirectory == true, at?.IsRegularFile == true);
+                switch (act)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    if (OverwriteLinkRefusal(c, RemoteOf(d)) is { } dirLink) throw new McpToolException(dirLink);
-                }
-                foreach (var f in files)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    if (OverwriteLinkRefusal(c, RemoteOf(f)) is { } fileLink) throw new McpToolException(fileLink);
+                    case McpSftpRules.UploadAction.Create: jobs.Add((local, remote, size, false)); break;
+                    case McpSftpRules.UploadAction.Overwrite: jobs.Add((local, remote, size, true)); break;
+                    case McpSftpRules.UploadAction.Skip: skipped.Add($"{remote} ({why})"); break;
+                    case McpSftpRules.UploadAction.Conflict: conflicts.Add($"{remote} ({why})"); break;
+                    default: throw new McpToolException($"{why}: {remote}");
                 }
             }
-            if (isDir)
+            foreach (var t in tops)
             {
-                if (!rootExisted) c.CreateDirectory(root);
-                foreach (var d in Directory.EnumerateDirectories(local, "*", SearchOption.AllDirectories))
+                var root = SftpPanel.Combine(remoteDir, Path.GetFileName(t.Local.TrimEnd('\\', '/')));
+                roots.Add($"{t.Local} → {root}");
+                if (!t.IsDir) { ct.ThrowIfCancellationRequested(); DecideFile(t.Local, root, t.Files[0].Size); continue; }
+                string RemoteOf(string f) => SftpPanel.Combine(root, Path.GetRelativePath(t.Local, f).Replace('\\', '/'));
+                var skipDirs = new List<string>();
+                var newDirs = new List<string>();
+                // 상위 폴더부터 (EnumerateDirectories 는 폴더를 그 하위보다 먼저 돌려준다)
+                foreach (var d in new[] { t.Local }.Concat(Directory.EnumerateDirectories(t.Local, "*", SearchOption.AllDirectories)))
                 {
                     ct.ThrowIfCancellationRequested();
-                    var rd = RemoteOf(d);
-                    if (!c.Exists(rd)) c.CreateDirectory(rd);
+                    var rd = d == t.Local ? root : RemoteOf(d);
+                    if (Under(skipDirs, rd)) continue;
+                    if (Under(newDirs, rd)) { createDirs.Add(rd); continue; }   // 새로 만들 폴더 안 — 서버에 물을 필요 없음
+                    var at = TryLStat(c, rd);
+                    var (act, why) = McpSftpRules.UploadDecision(mode, true, at != null, at?.IsSymbolicLink == true, at?.IsDirectory == true, at?.IsRegularFile == true);
+                    switch (act)
+                    {
+                        case McpSftpRules.UploadAction.Create: createDirs.Add(rd); newDirs.Add(rd); break;
+                        case McpSftpRules.UploadAction.Merge: break;
+                        case McpSftpRules.UploadAction.Skip: skipped.Add($"{rd}/ ({why} — 안의 파일도 건너뜀)"); skipDirs.Add(rd); break;
+                        default: throw new McpToolException($"{why}: {rd}");
+                    }
+                }
+                foreach (var (f, size) in t.Files)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var rf = RemoteOf(f);
+                    if (Under(skipDirs, rf)) { skippedInside++; continue; }
+                    if (Under(newDirs, rf)) { jobs.Add((f, rf, size, false)); continue; }
+                    DecideFile(f, rf, size);
                 }
             }
-            foreach (var f in files)
+            if (conflicts.Count > 0)
+                throw new McpToolException($"원격에 같은 이름이 {conflicts.Count}개 있어 아무것도 올리지 않았습니다 (덮어쓰려면 on_conflict=overwrite, 건너뛰려면 skip):" +
+                                           McpSftpRules.ListText(conflicts, 30));
+            planned = jobs.Count;
+
+            // 2) 실행
+            foreach (var d in createDirs)
             {
                 ct.ThrowIfCancellationRequested();
-                var remote = RemoteOf(f);
+                if (TryLStat(c, d) is { } now)
+                {
+                    if (now.IsDirectory && !now.IsSymbolicLink) continue;
+                    throw new McpToolException($"승인 뒤 폴더 자리에 다른 항목이 생겨 중단했습니다: {d}");
+                }
+                c.CreateDirectory(d);
+                madeDirs++;
+            }
+            long sent = 0;
+            foreach (var (localFile, remote, size, overwrite) in jobs)
+            {
+                ct.ThrowIfCancellationRequested();
                 // 쓰기 직전에 한 번 더 (위 확인과 쓰기 사이에 링크로 바뀐 경우를 좁힌다 — 그 사이 경쟁은 SFTP 로는 완전히 막을 수 없음)
-                if ((rootExisted || !isDir) && OverwriteLinkRefusal(c, remote) is { } link) throw new McpToolException(link);
+                if (overwrite && OverwriteLinkRefusal(c, remote) is { } link) throw new McpToolException(link);
+                // skip: 확인 뒤 생긴 같은 이름도 건너뛴다 (fail · overwrite 의 새 파일은 아래 CREAT|EXCL 이 실패로 막음)
+                if (!overwrite && mode == "skip" && TryLStat(c, remote) != null) { skipped.Add($"{remote} (승인 뒤 생김)"); continue; }
                 // 승인 뒤 읽기 직전에 다시 검사한다: 파일을 열고 그 핸들의 실제 경로·하드 링크 수로 판단한 뒤 같은 핸들로 읽는다
                 // (승인 대기 중 링크로 바꿔치기·id_rsa 하드 링크 차단)
                 FileStream fs;
-                try { fs = McpHelpers.OpenUploadFile(f, AppPaths.DataDir, AppPaths.RootDir); }
-                catch (InvalidOperationException ex) { throw new McpToolException($"{ex.Message} — {f}"); }
-                // 새로 만드는 대상(없던 최상위 폴더 아래 · 없던 파일)은 "없을 때만" 만든다 (CREAT|EXCL) — 확인 뒤 그 이름에 링크가 생겨도 따라가지 않음
-                using (fs) c.UploadFile(new CancellableStream(fs, ct), remote, rootExisted);
+                try { fs = McpHelpers.OpenUploadFile(localFile, AppPaths.DataDir, AppPaths.RootDir); }
+                catch (InvalidOperationException ex) { throw new McpToolException($"{ex.Message} — {localFile}"); }
+                // 새로 만드는 대상은 "없을 때만" 만든다 (CREAT|EXCL) — 확인 뒤 그 이름에 링크가 생겨도 따라가지 않음
+                using (fs) c.UploadFile(new CancellableStream(fs, ct), remote, overwrite);
                 done++;
+                sent += size;
+                if (overwrite) overwritten++;
             }
-            AuditLog.Write("sftp_upload", new[] { target }, local, $"완료 {files.Count}개 {SftpPanel.HumanSize(total)}");
-            return $"올렸습니다: {files.Count}개 ({SftpPanel.HumanSize(total)}) → {root}";
+            var skipCount = skipped.Count + skippedInside;
+            AuditLog.Write("sftp_upload", new[] { target }, auditLocal,
+                $"완료 {done}개 {SftpPanel.HumanSize(sent)} (on_conflict={mode}{(overwritten > 0 ? $", 덮어씀 {overwritten}개" : "")}{(skipCount > 0 ? $", 건너뜀 {skipCount}개" : "")})");
+            return $"올렸습니다: {done}개 ({SftpPanel.HumanSize(sent)})" +
+                   (multi ? ":" + McpSftpRules.ListText(roots, McpSftpRules.MaxMultiPaths) : $" → {roots[0][(tops[0].Local.Length + 3)..]}") +
+                   (overwritten > 0 ? $"\n덮어쓴 파일 {overwritten}개" : "") +
+                   (skipped.Count > 0 ? $"\n건너뛴 항목 {skipped.Count}개:" + McpSftpRules.ListText(skipped, 50) : "") +
+                   (skippedInside > 0 ? $"\n건너뛴 폴더 안의 파일 {skippedInside}개" : "");
         }
     }
+
 
     /// <summary>
     /// 쓰기 한도가 있는 스트림 (sftp_download): limit 바이트를 넘겨 쓰려 하면 McpToolException.

@@ -146,17 +146,71 @@ public partial class MainWindow
                 return $"session {tab.Id} 의 SFTP 패널을 {(want ? "열었습니다 (Claude 가 파일을 읽으려면 sftp_list·sftp_read 를 쓰세요)" : "닫았습니다")}.";
             }));
 
+        yield return new McpTool("move_session",
+            "세션 탭의 순서를 바꾼다 (탭을 끌어서 옮기는 것과 같음). position = 왼쪽부터 몇 번째 자리로 (1 = 맨 왼쪽, 탭 수 = 맨 오른쪽), " +
+            "before_session_id = 그 탭 바로 왼쪽으로 — 둘 중 하나. 결과로 바뀐 탭 순서(session_id)를 돌려준다.",
+            Schema(new
+            {
+                session_id = new { type = "integer", description = "옮길 탭" },
+                position = new { type = "integer", description = "옮길 자리 (1부터, 왼쪽 기준)" },
+                before_session_id = new { type = "integer", description = "이 탭 바로 왼쪽으로" },
+            }, "session_id"),
+            a => OnUi(() =>
+            {
+                var tab = RequireSession(a, allowCurrent: false);
+                var position = StrictIntArg(a, "position");
+                var beforeId = StrictIntArg(a, "before_session_id");
+                int? beforeIndex = null;
+                if (beforeId is { } bid)
+                {
+                    var before = _tabs.FirstOrDefault(t => t.Id == bid) ?? throw new McpToolException($"before_session_id {bid} 탭이 없습니다. list_sessions 로 확인하세요.");
+                    beforeIndex = _tabs.IndexOf(before);
+                }
+                int to;
+                try { to = McpSessionLogic.MoveTargetIndex(_tabs.Count, _tabs.IndexOf(tab), position, beforeIndex); }
+                catch (ArgumentException ex) { throw new McpToolException(ex.Message); }
+                if (!MoveTab(tab, to)) return $"session {tab.Id} 은 이미 그 자리({to + 1}번째)에 있습니다. 순서: {string.Join(", ", _tabs.Select(t => t.Id))}";
+                AuditLog.Write("move_session", new[] { SessionAuditTarget(tab) }, $"(탭 순서 바꾸기: {to + 1}번째로)", "실행");
+                return $"session {tab.Id} 을 {to + 1}번째로 옮겼습니다. 탭 순서(왼쪽부터): {string.Join(", ", _tabs.Select(t => t.Id))}";
+            }));
+
+        yield return new McpTool("set_terminal_zoom",
+            "터미널 탭(SSH · 로컬 PowerShell · 쿠버네티스 파드)의 글자 크기를 그 탭만 키우거나 줄인다 (터미널에서 Ctrl+= / Ctrl+- / Ctrl+0 · Ctrl+휠과 같음). " +
+            $"zoom = 설정 글꼴 크기에 더할 값으로 정하기 ({XtermView.MinZoom}~{XtermView.MaxZoom}, 0 = 기본 크기), delta = 지금 값에서 더하거나 빼기 — 둘 중 하나, 둘 다 없으면 지금 값만 알려 준다. " +
+            "session_id 생략 시 현재 탭. 범위를 넘으면 끝 값으로 맞춘다. 결과로 조절값과 실제 글꼴 크기를 돌려준다.",
+            Schema(new
+            {
+                session_id = new { type = "integer" },
+                zoom = new { type = "integer", description = $"조절값 ({XtermView.MinZoom}~{XtermView.MaxZoom}, 0 = 기본)" },
+                delta = new { type = "integer", description = "지금 조절값에 더할 값 (예: 2, -1)" },
+            }),
+            a => OnUi(() =>
+            {
+                var tab = RequireSession(a, allowCurrent: true);
+                var term = tab.View switch { SshSessionView s => s.Terminal, LocalTerminalView l => l.Terminal, _ => null }
+                           ?? throw new McpToolException($"session {tab.Id} 은 터미널 탭이 아닙니다 (RDP · 쿠버네티스 클러스터 화면은 글자 크기 조절이 없음).");
+                var zoom = StrictIntArg(a, "zoom");
+                var delta = StrictIntArg(a, "delta");
+                int next;
+                try { next = McpSessionLogic.NextZoom(term.Zoom, zoom, delta, XtermView.MinZoom, XtermView.MaxZoom); }
+                catch (ArgumentException ex) { throw new McpToolException(ex.Message); }
+                var font = SettingsStore.Current.FontSize;
+                if (zoom == null && delta == null)
+                    return $"session {tab.Id} 의 글자 크기 조절값 {term.Zoom} (글꼴 {McpSessionLogic.ZoomedFontSize(font, term.Zoom)}pt, 설정 {font}pt).";
+                var before = term.Zoom;
+                var applied = term.SetZoom(next);
+                AuditLog.Write("set_terminal_zoom", new[] { SessionAuditTarget(tab) }, $"(글자 크기 조절: {before} → {applied})", "실행");
+                return $"session {tab.Id} 의 글자 크기 조절값 {before} → {applied} (글꼴 {McpSessionLogic.ZoomedFontSize(font, applied)}pt, 설정 {font}pt)." +
+                       (zoom is { } z && z != applied || delta is { } && before + delta != applied ? $" 범위({XtermView.MinZoom}~{XtermView.MaxZoom})에 맞췄습니다." : "");
+            }));
+
         yield return new McpTool("list_closed_tabs",
-            "최근에 닫은 탭 기록 (reopen_closed_tab 이 다시 열 순서, 첫 줄이 다음 차례). 그 사이 지운 호스트는 빠진다.",
+            "최근에 닫은 탭 기록 (reopen_closed_tab 이 다시 열 순서, 첫 줄이 다음 차례). 호스트 · 로컬 PowerShell · 쿠버네티스 클러스터 탭. 그 사이 지운 호스트·클러스터는 빠진다.",
             Schema(new { }),
             _ => OnUi(() =>
             {
                 var lines = _closedTabs.Items.Reverse()
-                    .Select(e => e.HostId is not { } id ? "로컬 PowerShell"
-                        : _hosts.FirstOrDefault(h => h.Id == id) is { } h
-                            ? $"{h.Id.ToString()[..8]} | {McpHelpers.VisibleControlChars(h.DisplayName)} |{h.ProtocolText.ToLowerInvariant()}" +
-                              (e.UsePublic is { } pub ? (pub ? " | 공인 주소" : " | 사설 주소") : "")
-                            : null)
+                    .Select(e => McpSessionLogic.ClosedTabLine(e, id => _hosts.FirstOrDefault(h => h.Id == id), cid => K8sStore.Get(cid)?.Name))
                     .Where(l => l != null).ToList();
                 if (lines.Count == 0) return "다시 열 수 있는 닫은 탭이 없습니다.";
                 return "다시 열 순서 (위가 먼저):\n" + string.Join("\n", lines);
@@ -232,6 +286,15 @@ public partial class MainWindow
             : "세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
     }
 
+    /// <summary>정수 인자 — 없거나 null 이면 null, 있는데 정수가 아니면 오류 (잘못된 값을 '없음'으로 보고 다른 동작을 하지 않게)</summary>
+    private static int? StrictIntArg(JsonElement a, string name)
+    {
+        if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null) return null;
+        if (McpHelpers.NumberArg(a, name) is not { } d || d != Math.Floor(d) || d < int.MinValue || d > int.MaxValue)
+            throw new McpToolException($"{name} 는 정수여야 합니다.");
+        return (int)d;
+    }
+
     /// <summary>감사 로그·승인 창용 탭 표시 (보이지 않는 문자는 드러낸다, 비밀번호 없음)</summary>
     private static string SessionAuditTarget(SessionTab t) =>
         $"session {t.Id}: {McpHelpers.VisibleControlChars(t.Title)}" + (t.Host != null ? $" ({t.Host.Address})" : "");
@@ -278,5 +341,50 @@ internal static class McpSessionLogic
             default:
                 throw new ArgumentException("unknown filter: " + filter);
         }
+    }
+
+    /// <summary>
+    /// move_session: 옮긴 뒤의 인덱스(ObservableCollection.Move 의 newIndex). position 은 1부터(왼쪽 기준),
+    /// beforeIndex 는 그 탭의 지금 인덱스 — 그 탭 바로 왼쪽으로. 둘 중 정확히 하나. 잘못되면 ArgumentException
+    /// </summary>
+    public static int MoveTargetIndex(int count, int from, int? position, int? beforeIndex)
+    {
+        if (from < 0 || from >= count) throw new ArgumentException("옮길 탭을 찾을 수 없습니다.");
+        if ((position == null) == (beforeIndex == null)) throw new ArgumentException("position 과 before_session_id 중 하나만 주세요.");
+        if (position is { } p)
+        {
+            if (p < 1 || p > count) throw new ArgumentException($"position 은 1~{count} 사이여야 합니다 (탭 {count}개).");
+            return p - 1;
+        }
+        var b = beforeIndex!.Value;
+        if (b < 0 || b >= count) throw new ArgumentException("before_session_id 탭을 찾을 수 없습니다.");
+        if (b == from) throw new ArgumentException("before_session_id 가 옮길 탭과 같습니다.");
+        // 왼쪽에서 오른쪽으로 옮기면 빠진 자리만큼 앞당겨진다
+        return from < b ? b - 1 : b;
+    }
+
+    /// <summary>set_terminal_zoom: 다음 조절값 (zoom = 절대값, delta = 더할 값, 둘 다 없으면 지금 값). 범위로 자른다. 둘 다 주면 ArgumentException</summary>
+    public static int NextZoom(int current, int? zoom, int? delta, int min, int max)
+    {
+        if (zoom != null && delta != null) throw new ArgumentException("zoom 과 delta 중 하나만 주세요.");
+        var next = zoom ?? (delta is { } d ? (long)current + d : current);
+        return (int)Math.Clamp(next, min, max);
+    }
+
+    /// <summary>터미널에 실제로 쓰이는 글꼴 크기 (terminal.html: Math.max(6, 설정 + 조절값))</summary>
+    public static int ZoomedFontSize(int baseSize, int zoom) => Math.Max(6, baseSize + zoom);
+
+    /// <summary>
+    /// list_closed_tabs 의 한 줄 (TabHistory 의 기록 하나). 쿠버네티스 클러스터 탭은 HostId 가 비어 있으므로 먼저 본다 —
+    /// 그 사이 지운 호스트·클러스터는 null (다시 열 때도 건너뛰므로 목록에서 뺀다)
+    /// </summary>
+    public static string? ClosedTabLine(ClosedTabHistory.Entry e, Func<Guid, HostEntry?> findHost, Func<Guid, string?> clusterName)
+    {
+        if (e.K8sClusterId is { } cid)
+            return clusterName(cid) is { } name ? $"쿠버네티스 클러스터 | {McpHelpers.VisibleControlChars(name)}" : null;
+        if (e.HostId is not { } id) return "로컬 PowerShell";
+        if (findHost(id) is not { } h) return null;
+        return $"{h.Id.ToString()[..8]} | {McpHelpers.VisibleControlChars(h.DisplayName)} | {h.ProtocolText.ToLowerInvariant()}" +
+               (e.UsePublic is { } pub ? (pub ? " | 공인 주소" : " | 사설 주소") : "");
     }
 }

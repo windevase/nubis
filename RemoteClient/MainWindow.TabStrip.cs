@@ -182,9 +182,18 @@ public partial class MainWindow
             if (from >= 0 && to >= 0 &&
                 (overBox == null || dragBox == null ||
                  ShouldReorderTab(from, to, e.GetPosition(overBox).X, overBox.ActualWidth, dragBox.ActualWidth)))
-                _tabs.Move(from, to);
+                MoveTab(dragged, to);
         }
         e.Handled = true;
+    }
+
+    /// <summary>탭을 to 자리(옮긴 뒤의 인덱스)로 옮긴다 — 끌어서 옮기기와 MCP move_session 공용. 옮겼으면 true</summary>
+    internal bool MoveTab(SessionTab tab, int to)
+    {
+        var from = _tabs.IndexOf(tab);
+        if (from < 0 || to < 0 || to >= _tabs.Count || from == to) return false;
+        _tabs.Move(from, to);
+        return true;
     }
 
     /// <summary>
