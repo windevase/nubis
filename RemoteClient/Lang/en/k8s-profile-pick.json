@@ -1,0 +1,18 @@
+{
+  "클러스터를 찾을 클라우드 프로필": "Cloud profiles to search for clusters",
+  "고른 프로필만 조회하고 앞으로 동기화할 때 함께 갱신합니다. 클러스터가 있는 모든 리전을 자동으로 확인합니다.": "Only the selected profiles are searched, and their clusters are updated on every sync from now on. Every region that has clusters is checked automatically.",
+  "전체 선택": "Select all",
+  "전체 해제": "Clear all",
+  "선택 해제한 프로필의 클러스터를 목록에서 제거": "Remove the clusters of unselected profiles from the list",
+  "클러스터 동기화 켜짐": "Cluster sync on",
+  "클러스터 동기화 꺼짐": "Cluster sync off",
+  "클러스터 {0}개": "{0} cluster(s)",
+  "프로필 {0}개 중 {1}개 선택": "{1} of {0} profiles selected",
+  "클러스터를 찾을 프로필을 하나 이상 고르세요.": "Select at least one profile to search for clusters.",
+  "선택 해제한 프로필의 클러스터 {0}개를 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.": "Remove {0} cluster(s) of the unselected profiles from the list? Their saved credentials are removed too. The clusters themselves are not affected.",
+  "클러스터 동기화를 끄고 클러스터 {0}개를 목록에서 지웠습니다.": "Turned off cluster sync and removed {0} cluster(s) from the list.",
+  "고른 프로필이 없어 클러스터 동기화만 껐습니다.": "No profile was selected, so cluster sync was just turned off.",
+  "클라우드 프로필 {0}개에서 클러스터를 찾는 중...": "Looking for clusters in {0} cloud profile(s)...",
+  "시간 안에 끝나지 않음 (3분)": "did not finish in time (3 min)",
+  "클러스터 {0}개를 찾았습니다 (새로 {1}개). 고른 프로필은 앞으로 동기화할 때 함께 갱신합니다.": "Found {0} cluster(s) ({1} new). The selected profiles will update their clusters on every sync from now on."
+}

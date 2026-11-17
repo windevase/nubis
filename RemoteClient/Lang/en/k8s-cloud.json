@@ -4,13 +4,10 @@
   "{0}: 권한 없음 (SCP·IAM 정책으로 거부 — 이 리전 클러스터는 유지) — {1}": "{0}: no permission (denied by SCP/IAM policy; clusters in this region are kept): {1}",
   "모든 리전에서 EKS 조회 권한이 없습니다 (eks:ListClusters) — {0}": "No permission to list EKS clusters in any region (eks:ListClusters): {0}",
   "일부 조회 실패 {0}건": "{0} lookup(s) failed",
-  "클러스터 {0}개를 찾았습니다 (새로 {1}개). 클러스터가 있는 프로필은 앞으로 동기화할 때 함께 갱신합니다.": "Found {0} cluster(s) ({1} new). Profiles that have clusters will update them on every sync from now on.",
   "클러스터 일부 조회 실패 {0}건 — 이번엔 삭제하지 않음": "{0} cluster lookup(s) failed, so nothing was removed this time",
   "클러스터 조회 실패: {0}": "Cluster lookup failed: {0}",
   "클러스터 추가 {0} · 제거 {1}": "clusters added {0} · removed {1}",
   "프로필 {0}개에서 클러스터를 찾지 못했습니다.": "No clusters were found in {0} profile(s).",
   "등록한 클라우드 프로필이 없습니다. Cloud 페이지에서 프로필을 먼저 추가하세요.": "There are no cloud profiles yet. Add one on the Cloud page first.",
-  "클라우드 프로필에서 클러스터를 찾는 중...": "Looking for clusters in your cloud profiles...",
-  "클러스터 조회 취소": "cluster lookup canceled",
-  "클러스터 찾기가 시간 안에 끝나지 않았습니다.": "Finding clusters did not finish in time."
+  "클러스터 조회 취소": "cluster lookup canceled"
 }
