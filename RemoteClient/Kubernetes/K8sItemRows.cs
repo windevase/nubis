@@ -60,6 +60,17 @@ public static class K8sRowSync
         Func<TData, TRow> create, Action<TRow, TData> update)
     {
         var structural = false;
+        // 1) 없어질 행(과 같은 키의 중복 행)을 먼저 뒤에서부터 뺀다 — 앞에서부터 맞추면 행 하나가 빠질 때
+        //    그 아래 행이 전부 한 칸씩 Move 된다 (행 수천 개면 새로고침마다 Move 수천 번)
+        var wantedKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var w in wanted) wantedKeys.Add(dataKey(w));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var keep = new bool[target.Count];
+        for (var i = 0; i < target.Count; i++) { var k = rowKey(target[i]); keep[i] = wantedKeys.Contains(k) && seen.Add(k); }
+        for (var i = target.Count - 1; i >= 0; i--)
+            if (!keep[i]) { target.RemoveAt(i); structural = true; }
+
+        // 2) 남은 행은 모두 wanted 에 있다 → 앞에서부터 맞추면 추가는 Insert 한 번, 이동은 순서가 실제로 바뀐 행만
         var existing = new Dictionary<string, TRow>(StringComparer.Ordinal);
         foreach (var r in target) existing.TryAdd(rowKey(r), r);
         for (var i = 0; i < wanted.Count; i++)
@@ -84,6 +95,7 @@ public static class K8sRowSync
             }
             target.Insert(i, create(wanted[i]));
         }
+        // wanted 에 같은 키가 두 번 있으면 기존 행은 앞쪽에만 쓰이므로 여기서 남는 것은 없다 (안전망)
         while (target.Count > wanted.Count) { target.RemoveAt(target.Count - 1); structural = true; }
         return structural;
     }
