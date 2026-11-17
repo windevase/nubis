@@ -125,6 +125,7 @@ public partial class MainWindow
         // 접속에 쓰일 계정 출처 (빠른 연결은 프로필이 없으므로 설정의 기본 Vault 계정만 해당)
         var credUi = host.CredentialSourceText(null);
         var credAudit = McpHelpers.CredentialSourceForAudit(host, null);
+        var credBefore = host.ResolveVault(null);   // 승인 뒤 재확인용 (이름이 아니라 계정 id·출처로 비교)
         var target = McpHostParity.QuickTargetLabel(host);
         var command = "(빠른 연결 탭 열기 — 등록하지 않음)" + (credAudit != null ? $" · {credAudit}" : "");
         var registered = _hosts.Where(h => h.Protocol == proto &&
@@ -142,7 +143,7 @@ public partial class MainWindow
             throw new McpToolException("사용자가 빠른 연결을 거부했습니다.");
         }
         // 승인 창이 큐에서 기다리는 사이 설정의 기본 Vault 계정이 바뀌었으면 사용자가 본 것과 다른 계정이 이 주소로 간다 — 실행하지 않는다
-        if (McpHelpers.CredentialSourceForAudit(host, null) != credAudit)
+        if (host.ResolveVault(null) != credBefore)
         {
             AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(대기 중 접속 계정이 바뀜)");
             throw new McpToolException("승인을 기다리는 동안 접속에 쓰일 기본 계정이 바뀌어 접속하지 않았습니다. 다시 요청하세요.");

@@ -59,7 +59,8 @@ public partial class MainWindow
     internal bool HasRdpControl(SessionTab tab) => ActiveGrant(tab) != null;
 
     /// <summary>
-    /// 화면 조작 허용을 바로 끝낸다 (탭 우클릭 메뉴, byClaude = MCP rdp_release_control 로 Claude 가 스스로 반납) — 진행 중인 입력도 멈춘다.
+    /// 화면 조작 허용을 바로 끝낸다 (탭 우클릭 메뉴, byClaude = MCP rdp_release_control 로 Claude 가 스스로 반납).
+    /// 사용자가 끝내면 진행 중인 입력을 모두 멈추고, Claude 반납은 허용으로 하던 클릭·키 조합 입력만 멈춘다.
     /// 끝낼 허용이 있었으면 true
     /// </summary>
     internal bool RevokeRdpControl(SessionTab tab, bool byClaude = false)
@@ -69,7 +70,7 @@ public partial class MainWindow
         if (!_rdpGrants.TryGetValue(tab, out var g)) return false;
         var wasActive = ActiveGrant(tab) != null;
         _rdpGrants.Remove(tab);
-        g.StopReason = byClaude ? "Claude 가 화면 조작 허용을 반납해" : "사용자가 화면 조작 허용을 끝내";
+        if (byClaude) g.StopReason = "Claude 가 화면 조작 허용을 반납해";   // 사용자 해제는 입력 멈춤(userStop)이 먼저 잡혀 "사용자가 Claude 입력을 멈춰" 로 기록된다
         try { g.Stop.Cancel(); } catch (ObjectDisposedException) { }
         if (!wasActive)
         {
@@ -94,7 +95,7 @@ public partial class MainWindow
     {
         yield return new McpTool("rdp_release_control",
             "RDP 탭에서 받아 둔 화면 조작 허용(클릭·끌기·스크롤·키 조합을 다시 묻지 않는 10분)을 Claude 가 스스로 끝낸다 — " +
-            "탭 우클릭 'Claude 화면 조작 허용 끝내기'와 같고, 진행 중인 입력도 멈춘다. 화면 작업을 마쳤으면 반납해 둔다. 다시 조작하려면 사용자 승인을 다시 받는다.",
+            "허용(10분)으로 하던 클릭·끌기·스크롤·키 조합 입력은 멈추지만, 따로 승인받은 글자 입력(rdp_type)은 멈추지 않는다. 화면 작업을 마쳤으면 반납해 둔다. 다시 조작하려면 사용자 승인을 다시 받는다.",
             Schema(new { session_id = new { type = "integer", description = "생략 시 현재 탭" } }),
             a => OnUi(() =>
             {
