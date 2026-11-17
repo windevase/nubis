@@ -1,0 +1,16 @@
+{
+  "kubectl config view {0} 은(는) 쓸 수 없습니다 — Nubis 에 저장한 클러스터 인증(토큰·키)이 그대로 출력됩니다.": "kubectl config view {0} is not allowed — it would print the cluster credentials (tokens, keys) stored in Nubis as-is.",
+  "kubectl config view 는 쓸 수 없습니다 — Nubis 에 저장한 kubeconfig 의 인증 일부(비밀번호·OIDC 토큰 등)는 가려지지 않고 출력됩니다. 클러스터 주소·네임스페이스는 Nubis 클러스터 목록에서 보세요.": "kubectl config view is not allowed — part of the credentials in the kubeconfig stored in Nubis (passwords, OIDC tokens, etc.) is printed unredacted. See the Nubis cluster list for the cluster address and namespace.",
+  "이미 클라우드에서 클러스터를 찾는 중입니다. 끝난 뒤 다시 하세요.": "Already finding clusters in the cloud. Try again when it finishes.",
+  "요청이 취소됨": "Request cancelled",
+  "클러스터 '{0}' 의 설정을 바꿉니다.": "Changes the settings of cluster '{0}'.",
+  "기본 네임스페이스를 바꾸면 이후 이 클러스터에 실행하는 kubectl(클러스터 탭 터미널 · Claude)의 대상 네임스페이스가 바뀝니다.": "Changing the default namespace changes the target namespace of later kubectl commands on this cluster (cluster tab terminal, Claude).",
+  "Claude 가 쿠버네티스 클러스터 설정 변경을 요청합니다": "Claude wants to change Kubernetes cluster settings",
+  "Claude 가 쿠버네티스 클러스터 삭제를 요청합니다": "Claude wants to delete a Kubernetes cluster",
+  "Claude 가 클러스터 '{0}' 연결 테스트를 요청합니다": "Claude wants to test the connection to cluster '{0}'",
+  "승인하면 이 PC 의 kubectl 로 서버 버전과 파드 목록 권한을 확인합니다. 클러스터는 바꾸지 않습니다.": "If you approve, this PC's kubectl checks the server version and the permission to list pods. The cluster is not changed.",
+  "Claude 가 쿠버네티스 클러스터 제거를 요청합니다": "Claude wants to remove Kubernetes clusters",
+  "kubeconfig 의 context 를 Nubis 쿠버네티스 클러스터로 등록합니다. 인증(토큰·인증서·키)은 이 PC 에 암호화해 저장하고 Claude 에게 보내지 않습니다.": "Registers kubeconfig contexts as Nubis Kubernetes clusters. Credentials (tokens, certificates, keys) are stored encrypted on this PC and are not sent to Claude.",
+  "⚠ exec 인증 명령이 있습니다. 이 클러스터에 kubectl 을 실행할 때마다 이 PC 에서 그 명령이 실행되니 아는 명령인지 확인하세요.": "⚠ There is an exec authentication command. It runs on this PC every time kubectl runs against this cluster, so make sure you recognize it.",
+  "Claude 가 kubeconfig 에서 클러스터 {0}개 가져오기를 요청합니다": "Claude wants to import {0} clusters from kubeconfig"
+}

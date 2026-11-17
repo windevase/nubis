@@ -48,12 +48,13 @@ public partial class KubeconfigImportDialog : Window
     private Func<LoadResult>? _pendingWork;
     private bool _closed;
 
-    private static string HomeConfig => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".kube", "config");
+    // 원본 읽기·context 정보·클러스터 만들기는 MCP import_k8s_clusters 와 공용 (KubeconfigImport)
+    private static string HomeConfig => KubeconfigImport.HomeConfig;
 
-    private static string? EnvKubeconfig => Environment.GetEnvironmentVariable("KUBECONFIG");
+    private static string? EnvKubeconfig => KubeconfigImport.EnvKubeconfig;
 
     /// <summary>기본 원본: KUBECONFIG 의 파일들 (없으면 ~/.kube/config)</summary>
-    private static List<string> DefaultPaths => Kubeconfig.EnvPaths(EnvKubeconfig, HomeConfig);
+    private static List<string> DefaultPaths => KubeconfigImport.DefaultPaths;
 
     private KubeconfigImportDialog()
     {
@@ -142,50 +143,17 @@ public partial class KubeconfigImportDialog : Window
         var paths = DefaultPaths;
         if (paths.Count == 1) { LoadFile(paths[0]); return; }
         SourceText.Text = string.Join(";  ", paths);
-        StartLoad(() =>
-        {
-            var parts = new List<(string, string?)>();
-            foreach (var p in paths)
-            {
-                if (ReadFile(p, out var text, out var err) is not { } dir)
-                {
-                    if (err == null) continue;   // 없는 파일은 kubectl 처럼 건너뛴다
-                    return Empty(err);
-                }
-                parts.Add((text, dir));
-            }
-            if (parts.Count == 0) return Empty(L.T("KUBECONFIG 가 가리키는 파일이 하나도 없습니다."));
-            try { return Build(Kubeconfig.Merge(parts), null); }
-            catch (FormatException ex) { return Empty(ex.Message); }
-        });
+        // 없는 파일은 kubectl 처럼 건너뛰고 나머지를 합친다
+        StartLoad(() => FromSource(KubeconfigImport.ReadDefault(paths)));
     }
 
     private void LoadFile(string path)
     {
         SourceText.Text = path;
-        StartLoad(() => ReadFile(path, out var text, out var err) is { } dir ? Build(text, dir)
-            : Empty(err ?? L.F("파일이 없습니다: {0}", path)));
+        StartLoad(() => FromSource(KubeconfigImport.ReadPath(path)));
     }
 
-    /// <summary>파일을 읽는다. 성공하면 파일 폴더, 없으면 null(err null), 읽지 못하면 null + err</summary>
-    private static string? ReadFile(string path, out string text, out string? err)
-    {
-        text = "";
-        err = null;
-        try
-        {
-            var info = new FileInfo(path);
-            if (!info.Exists) return null;
-            if (info.Length > Kubeconfig.MaxChars) { err = L.T("kubeconfig 가 너무 큽니다 (1MB 이하)."); return null; }
-            text = File.ReadAllText(info.FullName);
-            return info.DirectoryName ?? "";
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            err = $"{path}: {ex.Message}";
-            return null;
-        }
-    }
+    private static LoadResult FromSource(KubeconfigImport.Source s) => s.Error != null ? Empty(s.Error) : Build(s.Yaml, s.BaseDir);
 
     private static LoadResult Empty(string message) => new("", null, null, new(), message);
 
@@ -196,20 +164,18 @@ public partial class KubeconfigImportDialog : Window
         try
         {
             var doc = Kubeconfig.Load(yaml);
-            var existing = K8sStore.All();
-            var current = Kubeconfig.CurrentContext(doc);
-            var rows = Kubeconfig.ReadContexts(doc).Select(c =>
+            // 같은 API 서버 + context 이름이 이미 있으면 다시 가져오지 않는다 (KubeconfigImport.Describe)
+            var rows = KubeconfigImport.Describe(doc, baseDir, K8sStore.All()).Select(i =>
             {
-                // 같은 API 서버 + context 이름이 이미 있으면 다시 가져오지 않는다
-                var dup = K8sSync.AlreadyImported(existing, c);
+                var c = i.Context;
                 return new Row
                 {
                     Context = c,
-                    Badge = AuthOf(doc, c.Name, baseDir),
+                    Badge = AuthBadge(i),
                     Detail = string.Join("  ·  ", new[] { c.Server, c.Namespace is { Length: > 0 } ns ? "ns " + ns : null, c.User }.Where(s => !string.IsNullOrEmpty(s))),
-                    Note = dup ? L.T("이미 있음") : "",
-                    CanImport = !dup,
-                    Selected = !dup && (c.Name == current || existing.Count == 0),
+                    Note = i.AlreadyImported ? L.T("이미 있음") : "",
+                    CanImport = !i.AlreadyImported,
+                    Selected = i.DefaultSelected,
                 };
             }).ToList();
             return new(yaml, baseDir, doc, rows, rows.Count == 0 ? L.T("가져올 context 가 없습니다.") : null);
@@ -218,11 +184,10 @@ public partial class KubeconfigImportDialog : Window
     }
 
     /// <summary>context 의 인증 방식 배지 (잘라 보지 않고 원본 사용자 항목으로 — 인증서 파일은 읽지 않는다)</summary>
-    private static string AuthOf(KubeconfigDoc doc, string context, string? baseDir)
+    private static string AuthBadge(KubeconfigImport.ContextInfo i)
     {
-        var (kind, cmd) = Kubeconfig.ContextAuth(doc, context, baseDir);
-        var badge = new K8sCluster { AuthKind = kind }.AuthBadge;
-        if (cmd != null && !Kubectl.CommandExists(cmd)) badge += " · " + L.F("{0} 없음", Path.GetFileName(cmd));
+        var badge = new K8sCluster { AuthKind = i.Auth }.AuthBadge;
+        if (i.ExecCommand is { } cmd && !Kubectl.CommandExists(cmd)) badge += " · " + L.F("{0} 없음", Path.GetFileName(cmd));
         return badge;
     }
 
@@ -286,22 +251,7 @@ public partial class KubeconfigImportDialog : Window
         var list = new List<K8sCluster>();
         foreach (var r in picked)
         {
-            try
-            {
-                var one = Kubeconfig.Extract(doc, r.Context.Name, _loaded.BaseDir);
-                list.Add(new K8sCluster
-                {
-                    Name = r.Context.Name,
-                    Group = group,
-                    Source = K8sSource.Imported,
-                    ContextName = r.Context.Name,
-                    Endpoint = r.Context.Server ?? "",
-                    // context 의 namespace 를 기본 네임스페이스로 (패널·카드·MCP 가 default 대신 이 값을 쓴다)
-                    DefaultNamespace = K8sCluster.ImportedNamespace(r.Context.Namespace),
-                    AuthKind = Kubeconfig.DetectAuth(one),
-                    Kubeconfig = one,
-                });
-            }
+            try { list.Add(KubeconfigImport.ToCluster(doc, r.Context, _loaded.BaseDir, group)); }
             catch (FormatException ex) { ShowError($"{r.Context.Name}: {ex.Message}"); return; }
         }
         _result = list;
