@@ -934,7 +934,11 @@ Pick the contexts to import (optionally with a group). Each selected context is 
 
 ### 16.3 Finding clusters in the cloud
 
-**Find in cloud** looks for clusters with the cloud profiles you added on the Cloud page ([8](#8-importing-cloud-servers)), using read-only lookup APIs.
+**Find in cloud** looks for clusters with the cloud profiles you added on the Cloud page ([8](#8-importing-cloud-servers)), using read-only lookup APIs. It first opens a list of your profiles so you choose which ones to search:
+
+- Each row shows the provider, the profile, whether cluster sync is on and how many clusters it has. Profiles that already have cluster sync on are checked; the first time (none on yet) every profile is checked, since you don't know yet which accounts have clusters. **Select all** / **Clear all** are above the list.
+- You never pick a region: every region where the account can have clusters is checked automatically (AWS and Tencent: all available regions; GCP: all locations of the project; Azure: the whole subscription; OCI: all subscribed regions and compartments).
+- Checked profiles are searched and get cluster sync turned on, so their clusters update with every sync from then on. Unchecked profiles get cluster sync turned off; their existing cluster cards stay unless you tick **Remove the clusters of unselected profiles from the list** — then you are asked to confirm with the number of clusters before they are removed (only from Nubis; the clusters themselves are not affected).
 
 | Cloud | Clusters | Authentication |
 |---|---|---|
@@ -948,7 +952,7 @@ If a cluster you imported yourself has the same API server address, no separate 
 
 ### 16.4 Sync rules
 
-Once a profile has clusters, they are updated together with that profile's server sync from then on (on demand, at startup or periodically — [12.4](#124-cloud-auto-sync)).
+Profiles picked in **Find in cloud** update their clusters together with that profile's server sync from then on (on demand, at startup or periodically — [12.4](#124-cloud-auto-sync)).
 
 | Item | Behavior |
 |---|---|
