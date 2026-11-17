@@ -282,4 +282,61 @@ public class KubeconfigDataTests
         }
         finally { File.Delete(file); }
     }
+
+    [Theory]
+    [InlineData(".exe")]
+    [InlineData(".cmd")]
+    [InlineData(".bat")]
+    public void 확장자_없는_절대_경로_명령도_PATH_검색과_같은_확장자로_찾는다(string ext)
+    {
+        // exec.command: C:\...\bin\kubelogin (실제 파일은 kubelogin.exe) — kubectl(Go LookPath)은 PATHEXT 를 붙여 찾는다
+        var dir = Path.Combine(Path.GetTempPath(), "Nubis.Tests", "cmdx-" + Guid.NewGuid().ToString("N")[..6]);
+        Directory.CreateDirectory(dir);
+        var name = "kubelogin" + Guid.NewGuid().ToString("N")[..6];
+        File.WriteAllText(Path.Combine(dir, name + ext), "");
+        try
+        {
+            Assert.True(Kubectl.CommandExists(Path.Combine(dir, name)));
+            Assert.True(Kubectl.CommandExists(Path.Combine(dir, name + ext)));
+            Assert.False(Kubectl.CommandExists(Path.Combine(dir, name + "-missing")));
+            Assert.False(Kubectl.CommandExists(Path.Combine(dir, name + ".txt")));   // 확장자가 있으면 그 파일만
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("kube-empty")]
+    public void 빈_파일_경로_값은_kubectl_처럼_없는_것으로_본다(string? baseDirName)
+    {
+        // certificate-authority: "" · client-key: "" · tokenFile: "" · 스칼라가 아닌 값 — 예전에는 기준 폴더 자체를 파일로 읽으려다 가져오기가 실패했다
+        var dir = baseDirName == null ? null : Path.Combine(Path.GetTempPath(), "Nubis.Tests", baseDirName + Guid.NewGuid().ToString("N")[..6]);
+        if (dir != null) Directory.CreateDirectory(dir);
+        try
+        {
+            const string yaml = """
+                clusters:
+                - name: c
+                  cluster: { server: https://x, certificate-authority: "" }
+                users:
+                - name: u
+                  user:
+                    client-certificate: [a, b]
+                    client-key: ""
+                    tokenFile: ""
+                contexts:
+                - name: x
+                  context: { cluster: c, user: u }
+                """;
+            var one = Kubeconfig.Extract(yaml, "x", dir);
+            Assert.DoesNotContain("certificate-authority", one);
+            Assert.DoesNotContain("client-certificate", one);
+            Assert.DoesNotContain("client-key", one);
+            Assert.DoesNotContain("token", one);
+            Assert.Contains("https://x", one);
+            // 가져오기 전 경로 검사(ReferencedFiles)와 같은 규칙 — 읽을 파일이 없다
+            Assert.Empty(Kubeconfig.ReferencedFiles(Kubeconfig.Load(yaml), "x", dir));
+        }
+        finally { if (dir != null) Directory.Delete(dir, true); }
+    }
 }

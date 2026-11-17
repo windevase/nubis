@@ -220,4 +220,228 @@ public class KubectlArgsTests
         Assert.Equal(4, KubectlArgs.TerminatorIndex(new[] { "get", "pods", "-l", "--" }));                    // 끝 표시 없음
         Assert.Equal(3, KubectlArgs.TerminatorIndex(new[] { "exec", "web", "-c=app", "--", "sh" }));
     }
+
+    // ---------------------------------------------------------------- 최종 검수: 이 PC 의 파일 읽기·쓰기·프로그램 실행 (run_kubectl)
+
+    [Theory]
+    // configmap/secret 의 --from-file · --from-env-file: 폴더를 주면 안의 파일 전부가 --dry-run=client -o yaml 로 출력된다
+    [InlineData(@"create configmap x --from-file=C:\Users\me\AppData\Roaming\Nubis\k8s-run --dry-run=client -o yaml")]
+    [InlineData(@"create configmap x --from-file C:\temp")]
+    [InlineData(@"create configmap x --from_file=C:\temp")]
+    [InlineData(@"create configmap x --FROM-FILE=C:\temp")]
+    [InlineData(@"create configmap x --from-env-file=C:\temp\a.env")]
+    [InlineData(@"create configmap x --from_env_file C:\temp\a.env")]
+    [InlineData(@"create secret generic s --from-file=key=C:\temp\a")]
+    [InlineData(@"create secret generic s --from-env-file C:\temp\a.env")]
+    [InlineData(@"create secret docker-registry r --from-file=.dockerconfigjson=C:\temp\a")]
+    [InlineData(@"create secret tls t --cert=C:\temp\a.crt --key=C:\temp\a.key")]
+    [InlineData(@"create secret tls t --key C:\temp\a.key")]
+    [InlineData(@"create secret tls t --cert C:\temp\a.crt")]
+    // cp: 로컬 → 파드(아무 파일 읽기) · 파드 → 로컬(설정 파일 덮어쓰기 — hook 실행)
+    [InlineData(@"cp C:\temp\a default/web:/tmp/a")]
+    [InlineData(@"cp default/web:/x AppData/Roaming/Nubis/claude/.claude/settings.local.json")]
+    [InlineData(@"-n default cp web:/x C:\temp\diff.exe")]
+    [InlineData(@"-v 1 cp web:/x y")]
+    [InlineData(@"-A cp web:/x y")]           // -A 는 루트 옵션이 아니라 하위 명령 자리를 정할 수 없다 → 어디에 있든 막는다
+    [InlineData(@"-l -- edit deploy/web")]
+    // kustomize: 다른 폴더(base)·git 원격까지 따라 읽고, 옵션으로 루트 밖 읽기·helm 실행
+    [InlineData(@"kustomize C:\overlay")]
+    [InlineData(@"kustomize . --load-restrictor=LoadRestrictionsNone")]
+    [InlineData(@"kustomize . --enable-helm")]
+    [InlineData(@"-n x kustomize .")]
+    [InlineData(@"apply -k overlay")]
+    [InlineData(@"apply -Rk overlay")]
+    [InlineData(@"apply --kustomize=overlay")]
+    [InlineData(@"get -k overlay")]
+    [InlineData(@"apply -f x.yaml --load_restrictor LoadRestrictionsNone")]
+    [InlineData(@"apply -f x.yaml --enable-helm")]
+    // 로컬 프로그램 실행: diff(KUBECTL_EXTERNAL_DIFF · PATH 의 diff) · edit(KUBE_EDITOR · notepad)
+    [InlineData(@"diff -f deploy.yaml")]
+    [InlineData(@"-n x diff -f deploy.yaml")]
+    [InlineData(@"edit deploy/web")]
+    [InlineData(@"-n x edit deploy/web")]
+    [InlineData(@"create -f deploy.yaml --edit")]                 // 만들기 전에 편집기 실행
+    [InlineData(@"create -f deploy.yaml --edit=true")]
+    [InlineData(@"apply edit-last-applied deploy/web")]
+    [InlineData(@"alpha kuberc set --section defaults")]          // 1.33+ kuberc 설정 파일 쓰기
+    // 이름이 file · -dir · -directory 로 끝나는 옵션 (새 버전 옵션 포함)
+    [InlineData(@"run x --image=nginx --env-file=C:\temp\a.env")]
+    [InlineData(@"get pods --template-file=C:\temp\t")]
+    [InlineData(@"get pods --some-new-dir C:\temp")]
+    // debug --custom(로컬 파일) · cluster-info dump --output-directory(아무 폴더에 쓰기)
+    [InlineData(@"debug web --custom=C:\temp\x.json")]
+    [InlineData(@"cluster-info dump --output-directory=C:\temp\out")]
+    [InlineData(@"cluster-info dump --output_directory C:\temp\out")]
+    public void 이_PC_의_파일을_읽거나_쓰거나_프로그램을_실행하는_인자는_거부(string line)
+    {
+        Assert.NotNull(KubectlArgs.Validate(A(line)));
+        Assert.False(KubectlArgs.IsReadOnly(A(line)));
+    }
+
+    /// <summary>-f/--filename · --patch-file 이 Nubis 데이터 폴더(k8s-run 임시 kubeconfig 포함)·~/.ssh 나 그 위 폴더를 가리키는 반례</summary>
+    public static IEnumerable<object[]> ProtectedFileArgs()
+    {
+        var data = AppPaths.DataDir;   // 테스트에서는 NUBIS_DATA_DIR 의 임시 폴더
+        var run = System.IO.Path.Combine(data, "k8s-run");
+        var ssh = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh", "id_rsa");
+        yield return new object[] { new[] { "label", "--local", "-f", run, "-o", "yaml", "x=y" } };
+        yield return new object[] { new[] { "set", "env", "--local", "-f", run + @"\a.yaml", "-o", "yaml", "A=1" } };
+        yield return new object[] { new[] { "apply", "-f=" + System.IO.Path.Combine(data, "hosts.json") } };
+        yield return new object[] { new[] { "apply", "-f" + run } };
+        yield return new object[] { new[] { "apply", "-Rf", System.IO.Path.GetDirectoryName(data)! } };   // 위 폴더 + 하위 폴더까지
+        yield return new object[] { new[] { "apply", "--filename", run } };
+        yield return new object[] { new[] { "apply", "--filename=ok.yaml," + run } };                   // 쉼표 목록 (StringSlice)
+        yield return new object[] { new[] { "apply", "--filename=\"" + run + "\"" } };   // CSV 따옴표
+        yield return new object[] { new[] { "patch", "deploy/web", "--patch-file", System.IO.Path.Combine(run, "a.yaml") } };
+        yield return new object[] { new[] { "patch", "--local", "-f", "web.yaml", "--patch_file=" + run, "-o", "yaml" } };
+        yield return new object[] { new[] { "apply", "-f", ssh } };
+        yield return new object[] { new[] { "apply", "-f", "." } };                                         // 작업 폴더(홈) = %APPDATA% 의 위
+        yield return new object[] { new[] { "apply", "-f", @"AppData\Roaming\Nubis" } };
+        yield return new object[] { new[] { "apply", "-f", @"\\localhost\c$\Users" } };
+        yield return new object[] { new[] { "apply", "-f", @"\\?\C:\x.yaml" } };
+        yield return new object[] { new[] { "apply", "-f", "C:x.yaml" } };
+        yield return new object[] { new[] { "apply", "-f", @"C:\x.yaml:stream" } };
+        yield return new object[] { new[] { "-n", "x", "get", "-f", run } };
+        yield return new object[] { new[] { "--bogus", "x", "logs", "-f", run } };   // 하위 명령을 확신할 수 없으면 -f 는 파일로 본다
+        // cobra 는 루트에 없는 -A 의 다음 인자(logs)를 값으로 건너뛰어 label 이 명령이 된다 — logs 로 보고 -f 를 --follow 로 넘기면 안 된다
+        yield return new object[] { new[] { "-A", "logs", "label", "--local", "-f", run, "-o", "yaml", "a=b" } };
+    }
+
+    [Theory]
+    [MemberData(nameof(ProtectedFileArgs))]
+    public void 보호_폴더를_가리키는_파일_인자는_거부(string[] args)
+    {
+        Assert.NotNull(KubectlArgs.Validate(args));
+        Assert.False(KubectlArgs.IsReadOnly(args));
+    }
+
+    [Theory]
+    [InlineData("apply -f deploy.yaml")]
+    [InlineData(@"apply -f manifests\web -R")]
+    [InlineData("apply -f https://example.com/web.yaml")]
+    [InlineData("apply -f -")]
+    [InlineData("create -f a.yaml,b.yaml")]
+    [InlineData("get -f deploy.yaml -o name")]
+    [InlineData("patch deploy/web --type merge --patch-file patch.yaml")]
+    [InlineData("logs -f web")]            // logs 의 -f 는 --follow (경로 아님 — 끝나지 않는 명령은 run_kubectl 에서 따로 거부)
+    [InlineData("-n x logs web -f")]
+    [InlineData("create configmap x --from-literal=a=b")]
+    [InlineData("create secret generic s --from-literal=password=x")]
+    [InlineData("set env deploy/web --from=configmap/x")]   // --from 은 --from-file 이 아니다 (pflag 는 축약을 받지 않는다)
+    [InlineData("get configmap cp-settings")]
+    [InlineData("describe clusterrole edit")]   // 기본 ClusterRole 'edit' — 하위 명령 자리가 아니면 edit 이 아니다
+    [InlineData("-n x get configmap diff -o yaml")]
+    [InlineData("get pods cp")]
+    public void 평범한_파일_인자와_리터럴은_허용(string line) => Assert.Null(KubectlArgs.Validate(A(line)));
+
+    [Fact]
+    public void 보호_폴더_검사는_링크와_위_폴더를_본다()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "Nubis.Tests", "kfile-" + Guid.NewGuid().ToString("N")[..6]);
+        var secret = System.IO.Path.Combine(root, "secret");
+        System.IO.Directory.CreateDirectory(secret);
+        try
+        {
+            var dirs = new[] { secret };
+            Assert.NotNull(KubectlArgs.FileArgReason(System.IO.Path.Combine(secret, "a.yaml"), dirs));
+            Assert.NotNull(KubectlArgs.FileArgReason(root, dirs));                                   // 위 폴더 (-R 이면 하위까지 읽는다)
+            Assert.NotNull(KubectlArgs.FileArgReason(System.IO.Path.Combine(root, "x", "..", "secret"), dirs));
+            Assert.Null(KubectlArgs.FileArgReason(System.IO.Path.Combine(root, "other.yaml"), dirs));
+            Assert.Null(KubectlArgs.FileArgReason(root + "-other", dirs));                            // 이름만 비슷한 옆 폴더
+            // 정션(관리자 권한 없이 만들 수 있다)으로 보호 폴더를 다른 이름으로 가리켜도 실제 경로로 비교한다
+            var link = System.IO.Path.Combine(root, "link");
+            var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{secret}\"") { CreateNoWindow = true, UseShellExecute = false };
+            using (var p = System.Diagnostics.Process.Start(psi)!) p.WaitForExit();
+            if (System.IO.Directory.Exists(link)) Assert.NotNull(KubectlArgs.FileArgReason(link, dirs));
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(System.IO.Path.Combine(root, "link")); } catch { }
+            System.IO.Directory.Delete(root, true);
+        }
+    }
+
+    // ---------------------------------------------------------------- 최종 검수: 하위 명령 찾기 · 대화형·끝나지 않는 명령
+
+    [Theory]
+    [InlineData("get pods", 0)]
+    [InlineData("-n default proxy", 2)]
+    [InlineData("--namespace default proxy", 2)]
+    [InlineData("--namespace=default proxy", 1)]
+    [InlineData("-ndefault proxy", 1)]
+    [InlineData("-n=default proxy", 1)]
+    [InlineData("-v 1 port-forward", 2)]
+    [InlineData("--v=1 port-forward", 1)]
+    [InlineData("--context c --cluster k --user u get", 6)]
+    [InlineData("-A get", -1)]          // cobra: -A 는 루트 옵션이 아니라 get 을 값으로 가져간다 (kubectl -A get pods 는 오류)
+    [InlineData("--all-namespaces get", -1)]
+    [InlineData("--request-timeout 5s attach", 2)]
+    [InlineData("-x proxy", -1)]       // 모르는 옵션: cobra 는 -x 의 값으로 proxy 를 건너뛸 수 있다 → 확신할 수 없음
+    [InlineData("--bogus get", -1)]
+    [InlineData("-n", -1)]
+    [InlineData("-- get", -1)]
+    public void 하위_명령_위치(string line, int index) => Assert.Equal(index, KubectlArgs.SubcommandIndex(A(line)));
+
+    [Theory]
+    // 값 받는 옵션 뒤에 숨긴 대화형·장시간 명령 (예전에는 '처음 나오는 - 아닌 인자' 를 명령으로 봐서 default · 1 · x 가 명령이 됐다)
+    [InlineData("-n default proxy --address=0.0.0.0 --accept-hosts=.* --disable-filter=true")]
+    [InlineData("-v 1 port-forward --address 0.0.0.0 svc/web 8080:80")]
+    [InlineData("-n x edit deploy/web")]
+    [InlineData("-n x debug web")]
+    [InlineData("-n x attach web")]
+    [InlineData("--request-timeout 5s attach web")]
+    [InlineData("-l -- proxy")]        // -- 가 -l 의 값이면 proxy 는 명령
+    [InlineData("--bogus x proxy")]
+    [InlineData("-A attach web")]      // -A 가 attach 를 값으로 가져갈지 cobra 해석에 달림 → 어디에 있든 거부
+    [InlineData("-x get proxy")]
+    // 끝나지 않는 명령: 짧은 옵션 묶음 · =값 · --watch* · events
+    [InlineData("logs web -pf")]
+    [InlineData("logs web -f=true")]
+    [InlineData("logs web --follow=true")]
+    [InlineData("logs web --follow")]
+    [InlineData("-n x logs web -f")]
+    [InlineData("--bogus x logs web -f")]
+    [InlineData("get pods -Aw")]
+    [InlineData("get pods -wA")]
+    [InlineData("get pods --watch-only")]
+    [InlineData("get pods --watch_only")]
+    [InlineData("get pods --watch=true")]
+    [InlineData("events --watch")]
+    [InlineData("events -w")]
+    [InlineData("-n x events -A --watch")]
+    [InlineData("rollout status deploy/web -w")]
+    // exec -i/-t (묶음 · =값 · 앞 옵션 뒤)
+    [InlineData("-n x exec -it web -- sh")]
+    [InlineData("exec web -ti -- sh")]
+    [InlineData("exec web -it=true -- sh")]
+    [InlineData("exec --tty web -- sh")]
+    [InlineData("exec --stdin=true web -- sh")]
+    public void 숨긴_대화형_장시간_명령도_run_kubectl_에서_거부(string line) =>
+        Assert.NotNull(MainWindow.KubectlInteractiveReason(A(line)));
+
+    [Theory]
+    [InlineData("get pods --watch=false")]
+    [InlineData("logs web --follow=false")]
+    [InlineData("logs web -c f")]           // -c 의 값 f 는 --follow 가 아니다
+    [InlineData("logs web --tail=10")]
+    [InlineData("apply -f deploy.yaml")]    // apply 의 -f 는 파일
+    [InlineData("get pods -l app=w")]       // -l 의 값 안의 w 는 --watch 가 아니다
+    [InlineData("exec web -c it -- ls")]
+    [InlineData("-n x exec web -- ls")]
+    [InlineData("describe clusterrole edit")]   // 리소스 이름 edit (하위 명령 자리가 아님)
+    [InlineData("get svc proxy -o yaml")]
+    [InlineData("-n x logs debug")]             // 파드 이름 debug
+    public void 끝나는_명령은_받는다(string line) =>
+        Assert.Null(MainWindow.KubectlInteractiveReason(A(line)));
+
+    [Fact]
+    public void 원격_셸은_같은_하위_명령_규칙으로_판정한다()
+    {
+        Assert.True(Sh("kubectl -v 6 get pods"));
+        Assert.True(Sh("kubectl -n kube-system --context c get pods"));
+        Assert.False(Sh("kubectl -n default proxy"));
+        Assert.False(Sh("kubectl -v 1 port-forward svc/web 8080:80"));
+        Assert.False(Sh("kubectl -x get pods"));     // 모르는 옵션이 앞에 있으면 승인 받기
+        Assert.False(Sh("kubectl -n get delete ns prod"));
+    }
 }

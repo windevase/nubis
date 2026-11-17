@@ -242,7 +242,9 @@ public partial class KubeconfigImportDialog : Window
         {
             _loadGen++;
             _pendingWork = null;
-            Apply(work());
+            // 백그라운드 읽기(StartLoad)와 같이 모든 예외를 화면 오류로 (경로 문자 오류 ArgumentException 등이 창 밖으로 새지 않게)
+            try { Apply(work()); }
+            catch (Exception ex) { Apply(Empty(ex.Message)); ShowError(ex.Message); return; }
         }
         var picked = _rows.Where(r => r.Selected && r.CanImport).ToList();
         if (picked.Count == 0) { ShowError(L.T("가져올 context 를 하나 이상 고르세요.")); return; }
@@ -252,7 +254,8 @@ public partial class KubeconfigImportDialog : Window
         foreach (var r in picked)
         {
             try { list.Add(KubeconfigImport.ToCluster(doc, r.Context, _loaded.BaseDir, group)); }
-            catch (FormatException ex) { ShowError($"{r.Context.Name}: {ex.Message}"); return; }
+            // FormatException 만이 아니라 경로 해석(ArgumentException·NotSupportedException·PathTooLongException) 등도 — 처리 안 된 예외로 앱이 죽지 않게
+            catch (Exception ex) { ShowError($"{r.Context.Name}: {ex.Message}"); return; }
         }
         _result = list;
         DialogResult = true;

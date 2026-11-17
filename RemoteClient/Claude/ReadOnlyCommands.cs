@@ -370,18 +370,24 @@ public static class ReadOnlyCommands
                 if (a.Contains("--")) return false;   // 조회 명령에는 -- 가 필요 없다 (값인지 끝 표시인지 해석이 엇갈릴 수 있어 승인 받기)
                 if (a.Any(x => (x.StartsWith("-s", StringComparison.Ordinal) && !x.StartsWith("--", StringComparison.Ordinal)) ||
                                KubectlArgs.ShortHas(x, "s") || LongPrefix(KubectlArgs.LongName(x), "server", "tls-server-name"))) return false;
-                if (!SubStart(a, out var i, new[] { "-A", "--all-namespaces" }, new[] { "-n", "--namespace", "--context", "--cluster", "--user" })) return false;
+                // 하위 명령 찾기는 run_kubectl 과 같은 규칙(KubectlArgs.SubcommandIndex): 값 받는 전역 옵션(-n x · -v 6 · --context x)은 값까지 건너뛰고,
+                // 모르는 옵션이 앞에 있으면 어디가 하위 명령인지 확신할 수 없어 승인 받기
+                var i = KubectlArgs.SubcommandIndex(a);
+                if (i < 0) return false;
                 var sub = At(a, i);
-                // --raw 는 config view 에서 클라이언트 키·토큰을 가리지 않고 출력한다 — config 판정보다 먼저 막는다
-                // (예전에는 config 를 먼저 허용하고 돌려줘 'kubectl config view --raw' 가 자동 승인됐다)
+                // --raw · --flatten 은 config view 에서 클라이언트 키·토큰을 가리지 않고 출력한다 (kubectl view.go: Flatten 이면 가리기를 건너뜀) —
+                // config 판정보다 먼저 막는다 (예전에는 config 를 먼저 허용하고 돌려줘 'kubectl config view --raw' 가 자동 승인됐다)
                 if (a.Any(x => x == "dump" || KubectlArgs.LongName(x).StartsWith("--raw", StringComparison.Ordinal) ||
+                               KubectlArgs.LongName(x).StartsWith("--flatten", StringComparison.Ordinal) ||
                                KubectlArgs.LongName(x).StartsWith("--output-directory", StringComparison.Ordinal))) return false;
                 // -f/--filename · -k/--kustomize 는 로컬 파일(또는 URL)을 읽는다 — 읽기 오류에 내용 일부가 찍힐 수 있다. logs 의 -f 는 --follow
                 if (sub != "logs" && a.Any(x => KubectlArgs.ShortHas(x, "fk") || LongPrefix(KubectlArgs.LongName(x), "filename", "kustomize"))) return false;
                 if (sub == "logs" && a.Any(x => KubectlArgs.ShortHas(x, "k") || LongPrefix(KubectlArgs.LongName(x), "filename", "kustomize"))) return false;
                 // Secret 내용(base64 값)을 출력에 담는 조회는 자동 승인하지 않는다 (get secret -o yaml, describe 는 값을 가리지만 같이 막는다)
                 if (a.Skip(i + 1).Any(KubectlSecretRef)) return false;
-                if (sub == "config") return At(a, i + 1) is "view" or "get-contexts" or "current-context" && NoMutating(a, i + 2);
+                // config view 는 옵션이 없어도 가리는 것이 *-data · token 뿐이라(client-go ShortenConfig) basic 인증 password ·
+                // auth-provider(OIDC) refresh-token · client-secret · exec env 는 그대로 나온다 → 자동 승인하지 않는다 (이름만 보이는 두 가지만)
+                if (sub == "config") return At(a, i + 1) is "get-contexts" or "current-context" && NoMutating(a, i + 2);
                 if (sub == "auth") return At(a, i + 1) == "can-i";   // can-i 는 권한 확인만 (뒤에 delete 등이 와도 실행 아님)
                 // --cache-dir 는 그 경로에 discovery 캐시 파일을 쓴다 (sudo 면 아무 폴더에나)
                 if (a.Any(x => x.StartsWith("--cache-dir", StringComparison.Ordinal))) return false;
