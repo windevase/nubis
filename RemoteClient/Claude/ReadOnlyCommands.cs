@@ -78,20 +78,27 @@ public static class ReadOnlyCommands
         return parts.Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
     }
 
-    /// <summary>공백 기준 토큰 (따옴표 안 공백 유지, 따옴표 제거)</summary>
+    /// <summary>
+    /// 공백 기준 토큰 (따옴표 안 공백 유지, 따옴표 제거).
+    /// - 빈 따옴표('' · "")도 빈 토큰으로 남긴다 — 셸은 빈 인자를 넘기므로(kubectl -n '' delete … 의 '' 가 -n 의 값), 버리면 하위 명령 판정이 어긋난다
+    /// - 단어는 공백·탭(·줄바꿈)에서만 나눈다 — sh 는 NBSP·U+3000 같은 유니코드 공백에서 나누지 않는다.
+    ///   그런 문자는 토큰에 그대로 남겨 "-n " 처럼 알아볼 수 없는 옵션이 되게 한다 (판정은 보수적으로 읽기 전용 아님)
+    /// </summary>
     private static List<string> Tokens(string s, string quotes)
     {
         var list = new List<string>();
         var sb = new StringBuilder();
+        var has = false;   // 지금 토큰이 시작됐는가 (빈 따옴표만 있어도 토큰)
         char quote = '\0';
         foreach (var c in s)
         {
             if (quote != '\0') { if (c == quote) quote = '\0'; else sb.Append(c); continue; }
-            if (quotes.IndexOf(c) >= 0) { quote = c; continue; }
-            if (char.IsWhiteSpace(c)) { if (sb.Length > 0) { list.Add(sb.ToString()); sb.Clear(); } continue; }
+            if (quotes.IndexOf(c) >= 0) { quote = c; has = true; continue; }
+            if (c is ' ' or '\t' or '\n' or '\r') { if (has || sb.Length > 0) { list.Add(sb.ToString()); sb.Clear(); has = false; } continue; }
             sb.Append(c);
+            has = true;
         }
-        if (sb.Length > 0) list.Add(sb.ToString());
+        if (has || sb.Length > 0) list.Add(sb.ToString());
         return list;
     }
 

@@ -497,4 +497,41 @@ public class KubectlArgsTests
         var p = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), dir, "config.json");
         Assert.NotNull(KubectlArgs.Validate(new List<string> { "apply", "-f", p, "--dry-run=client" }));
     }
+
+    // ---------------------------------------------------------------- 재검수 2회차: 빈 인자 · 유니코드 공백 · -- 뒤 원격 명령
+
+    [Theory]
+    [InlineData("kubectl -n '' delete events --all -A")]
+    [InlineData("kubectl -n \"\" run get --image=alpine --restart=Never")]
+    [InlineData("sudo kubectl -n '' delete events --all -A")]
+    [InlineData("kubectl -n\u00A0 delete events --all -A")]
+    [InlineData("kubectl -n\u3000 run get --image=alpine")]
+    public void 빈_따옴표_유니코드_공백으로_자동_승인_우회_불가(string line) => Assert.False(Sh(line));
+
+    [Fact]
+    public void run_kubectl_빈_인자는_거부()
+    {
+        var args = new List<string> { "-n", "", "run", "get", "--image=alpine" };
+        Assert.NotNull(KubectlArgs.Validate(args));
+        Assert.False(KubectlArgs.IsReadOnly(args));
+        Assert.False(KubectlArgs.IsReadOnly(new List<string> { "-n", "", "delete", "events", "--all", "-A" }));
+    }
+
+    [Fact]
+    public void 끝_표시_뒤_원격_명령의_줄바꿈_탭_끝_공백은_허용()
+    {
+        Assert.Null(KubectlArgs.Validate(new List<string> { "exec", "web", "--", "sh", "-c", "echo a\necho b" }));
+        Assert.Null(KubectlArgs.Validate(new List<string> { "exec", "web", "--", "sh", "-c", "echo\thi" }));
+        Assert.Null(KubectlArgs.Validate(new List<string> { "exec", "web", "--", "psql", "-c", "select 1; " }));
+        Assert.Null(KubectlArgs.Validate(new List<string> { "create", "configmap", "x", "--from-literal=k=a b ", "--dry-run=client" }));
+        Assert.Null(KubectlArgs.Validate(new List<string> { "get", "pods", "-l", "app in (a, b)" }));
+    }
+
+    [Fact]
+    public void 옵션_이름의_공백은_계속_거부()
+    {
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { "-n ", "get", "pods" }));
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { " -n", "kube-system", "get", "pods" }));
+        Assert.NotNull(KubectlArgs.Validate(new List<string> { "get", "pods", "--server =https://evil" }));
+    }
 }

@@ -146,9 +146,6 @@ public static class KubectlArgs
             return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", args[0]);
         if (args[0] == "create" && args.Count > 1 && !args[1].StartsWith('-') && !CreateSubs.Contains(args[1]))
             return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", "create " + args[1]);
-        // 앞뒤 공백·탭이 붙은 인자: kubectl 은 "-n " 을 -n 으로 보지 않아(다음 인자를 값으로 가져가지 않음) 하위 명령 판정이 어긋난다 — 받지 않는다
-        if (args.Any(x => x.Length > 0 && (char.IsWhiteSpace(x[0]) || char.IsWhiteSpace(x[^1]) || x.Any(char.IsControl))))
-            return L.T("kubectl 인자 앞뒤에 공백을 두거나 제어 문자를 넣을 수 없습니다.");
         var allowed = fixedCluster ? Array.Empty<string>() : ClusterSelect;
         var end = TerminatorIndex(args);
         if (end < args.Count)
@@ -159,6 +156,17 @@ public static class KubectlArgs
             if (si < 0 || si > end)
                 return L.T("kubectl 인자에 -- 를 쓸 때는 그 앞에 하위 명령(exec · run · debug 등)이 있어야 합니다.");
             if (!TerminatorVerbs.Contains(args[si])) end = args.Count;   // 그 밖의 하위 명령은 -- 뒤까지 모두 검사한다
+        }
+        // 옵션으로 해석되는 부분(끝 표시 앞)의 인자: 앞뒤 공백·제어 문자·빈 인자를 받지 않는다 — kubectl 은 "-n " 을 -n 으로 보지 않고(다음 인자를 값으로 가져가지 않음),
+        // -n "" 은 빈 값을 -n 이 가져가 다음 인자가 하위 명령이 된다. -- 뒤(exec 등의 원격 명령)는 여러 줄 스크립트·끝 공백이 정상이라 검사하지 않는다
+        for (var i = 0; i < end; i++)
+        {
+            var x = args[i];
+            if (x.Length == 0) return L.T("kubectl 인자에 빈 값을 넣을 수 없습니다.");
+            // 옵션처럼 보이는 인자만 (값·이름의 끝 공백은 kubectl 이 그대로 값으로 쓴다 — --from-literal=k=a b · -l "app in (a, b)")
+            var opt = x.TrimStart();
+            if (x.Any(char.IsControl) || opt.StartsWith('-') && (char.IsWhiteSpace(x[0]) || (opt.IndexOf('=') is var q && (q < 0 ? opt : opt[..q]).Any(char.IsWhiteSpace))))
+                return L.T("kubectl 인자 앞뒤에 공백을 두거나 제어 문자를 넣을 수 없습니다.");
         }
         if (fixedCluster && ConfigSecretReason(args, end) is { } secret) return secret;
         if (fixedCluster && (CommandIs(args, LocalVerbs) ?? VerbBeforeEnd(args, LocalSubVerbs)) is { } localVerb)
