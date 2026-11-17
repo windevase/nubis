@@ -556,4 +556,26 @@ public class KubectlArgsTests
     [InlineData("ip route show")]
     [InlineData("ls -la /var/log")]
     public void 일반_읽기_전용_명령은_그대로(string line) => Assert.True(Sh(line));
+
+    // ---------------------------------------------------------------- 재검수 4회차: 앞뒤 특수 공백 · PowerShell 5.1 따옴표 인자
+
+    [Theory]
+    [InlineData("net user administrator \u00A0", CommandShell.Cmd)]
+    [InlineData("net user administrator \u3000", CommandShell.Cmd)]
+    [InlineData("\u00A0net user", CommandShell.Cmd)]
+    [InlineData("uniq in.txt \u00A0", CommandShell.Sh)]
+    [InlineData("ls \u2003", CommandShell.Sh)]
+    public void 앞뒤_특수_공백도_거부(string line, CommandShell shell) => Assert.False(ReadOnlyCommands.IsReadOnly(line, shell));
+
+    [Theory]
+    [InlineData("net user 'administrator\" \"NewPassw0rd1\" \"/comment:x y'")]
+    [InlineData("net user 'bob\" \"Passw0rd1\" \"/add\" \"/comment:x y'")]
+    public void PowerShell_기본_명령_인자의_큰따옴표는_거부(string line) =>
+        Assert.False(ReadOnlyCommands.IsReadOnly(line, CommandShell.PowerShell));
+
+    [Theory]
+    [InlineData("net user")]
+    [InlineData("ipconfig /all")]
+    [InlineData("Get-Process -Name svchost")]
+    public void PowerShell_일반_조회는_그대로(string line) => Assert.True(ReadOnlyCommands.IsReadOnly(line, CommandShell.PowerShell));
 }

@@ -30,15 +30,16 @@ public static class ReadOnlyCommands
     public static bool IsReadOnly(string command, CommandShell shell, out string reason)
     {
         reason = "";
-        command = command.Trim();
+        // 특수 공백·제어 문자 검사는 다듬기 전 원문으로 한다 — Trim() 은 앞뒤의 NBSP·U+3000 등을 지우지만,
+        // 실제로 서버에 보내는 것은 원문이라 끝의 NBSP 가 인자가 된다 (cmd: net user administrator <NBSP> → 비밀번호 변경)
+        if (command.Any(c => char.IsWhiteSpace(c) && c is not ' ' and not '\t' and not '\r' and not '\n'))
+        { reason = "특수 공백 문자"; return false; }
+        command = command.Trim(' ', '\t', '\r', '\n');
         if (command.Length == 0 || command.Length > 4000) { reason = "빈 명령이거나 너무 김"; return false; }
         // 제어 문자: 줄바꿈(여러 명령)·Ctrl-U/Ctrl-W(줄 지우기)·ESC·DEL·C1 등은 보이는 글자와 실제 실행이 달라질 수 있다 (send_to_terminal 도 이 검사에 기댐). 탭만 허용
         if (command.Any(c => (c < 0x20 && c != '\t') || (c >= 0x7f && c <= 0x9f) || c is '\u2028' or '\u2029'))
         { reason = "제어 문자"; return false; }
-        // 공백·탭이 아닌 공백 문자(NBSP · U+3000 등): 셸마다 단어를 나누는 기준이 다르다 — sh·cmd 는 나누지 않고 PowerShell 은 나눈다.
-        // 판정기와 실제 셸의 인자 경계가 어긋나지 않게 아예 받지 않는다 (net user bob<NBSP>pw<NBSP>/add · kubectl -n<NBSP> delete …)
-        if (command.Any(c => char.IsWhiteSpace(c) && c is not ' ' and not '\t'))
-        { reason = "특수 공백 문자"; return false; }
+        // (특수 공백 문자 — NBSP · U+3000 등은 셸마다 단어를 나누는 기준이 달라(sh·cmd 는 나누지 않고 PowerShell 은 나눔) 맨 위에서 원문으로 거부했다)
         if (ApprovalDialog.IsDangerous(command)) { reason = "위험 명령 패턴"; return false; }
         return shell switch
         {
@@ -792,6 +793,10 @@ public static class ReadOnlyCommands
                 // 식으로 건너뛰어지므로 WinArgsOk 가 보지 못한다 — net user ('bob','pw','/add') · $a='bob','pw','/add'; net user $a · net user @a
                 if (bare.IndexOfAny(new[] { '$', '@', '(', ')', '{', '}', ',', '[' }) >= 0)
                 { reason = $"기본 명령에 식·변수·배열 인자: {seg}"; return false; }
+                // 인자 안의 큰따옴표: PowerShell 5.1 은 " 가 든 인자를 이스케이프 없이 통째로 감싸 넘겨, 받는 프로그램이 여러 인자로 나눈다
+                // (net user 'bob" "pw" "/add' → net.exe 는 bob · pw · /add 를 받음). 판정기가 본 인자 경계와 달라지므로 받지 않는다
+                if (t.Skip(1).Any(x => x.IndexOf('"') >= 0 || x.IndexOf('\\') >= 0 && x.IndexOf('\'') >= 0))
+                { reason = $"기본 명령 인자에 따옴표: {seg}"; return false; }
                 if (!WinArgsOk(exe, t.Skip(1).ToList())) { reason = $"쓰기 가능한 옵션: {seg}"; return false; }
                 continue;
             }
