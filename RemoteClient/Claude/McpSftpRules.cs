@@ -170,4 +170,140 @@ public static class McpSftpRules
     /// <summary>삭제 승인 창의 항목 수 문구 — 세다가 한도에 걸렸으면 "N개 이상"</summary>
     public static string CountText(int files, int dirs, int links, bool capped) =>
         $"파일 {files}개 · 폴더 {dirs}개 · 링크 {links}개{(capped ? " 이상 (너무 많아 세다 멈춤)" : "")}";
+
+    // ---------------- 여러 항목 (sftp_download paths · sftp_delete paths · sftp_upload local_paths) ----------------
+
+    /// <summary>한 번에 다룰 수 있는 최대 항목 수 (paths · local_paths) — 승인 창에 목록을 다 보일 수 있게</summary>
+    public const int MaxMultiPaths = 100;
+
+    /// <summary>
+    /// 단일 인자(single)와 목록 인자(many) 중 하나만 받아 목록으로. 둘 다 · 둘 다 없음 · 빈 항목 · 너무 많음은 사유를 돌려준다.
+    /// 앞뒤 공백은 지우고, 글자가 같은 항목(대소문자 구분은 ignoreCase)은 하나로 합친다 (순서 유지)
+    /// </summary>
+    public static string? CollectPaths(string singleName, string? single, string manyName, IReadOnlyList<string>? many, bool ignoreCase, out List<string> paths)
+    {
+        paths = new List<string>();
+        var hasSingle = !string.IsNullOrWhiteSpace(single);
+        if (hasSingle && many != null) return $"{singleName} 와 {manyName} 중 하나만 주세요.";
+        if (!hasSingle && (many == null || many.Count == 0)) return $"{singleName} 또는 {manyName} 가 필요합니다.";
+        var src = hasSingle ? new[] { single! } : many!;
+        if (src.Count > MaxMultiPaths) return $"{manyName} 는 한 번에 {MaxMultiPaths}개까지입니다 ({src.Count}개).";
+        var seen = new HashSet<string>(ignoreCase ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var raw in src)
+        {
+            var p = (raw ?? "").Trim();
+            if (p.Length == 0) return $"{manyName} 에 빈 항목이 있습니다.";
+            if (HasBadChars(p)) return $"경로에 제어 문자(줄바꿈 등)나 보이지 않는 문자(양방향 제어 등)가 있습니다: {McpHelpers.VisibleControlChars(p)}";
+            if (seen.Add(p)) paths.Add(p);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 정리된 원격 절대 경로 목록에서 하나가 다른 것을 품는가 (/a 와 /a/b) — 삭제 목록에서 거부한다
+    /// (앞 항목을 지우며 뒤 항목이 함께 지워져 승인 창의 수와 결과가 어긋나지 않게). 겹치면 사유
+    /// </summary>
+    public static string? NestedRemotePaths(IReadOnlyList<string> normalized)
+    {
+        for (var i = 0; i < normalized.Count; i++)
+            for (var j = 0; j < normalized.Count; j++)
+            {
+                if (i == j) continue;
+                var parent = normalized[i].TrimEnd('/');
+                if (normalized[j] == normalized[i] || normalized[j].StartsWith(parent + "/", StringComparison.Ordinal))
+                    return $"목록의 경로가 서로 겹칩니다: {normalized[i]} 안에 {normalized[j]} — 바깥 경로만 주세요.";
+            }
+        return null;
+    }
+
+    /// <summary>
+    /// 올릴 로컬 경로 목록 검사 (전체 경로, Windows 라 대소문자 무시): 한 항목이 다른 항목 안에 있거나,
+    /// 원격 폴더에서 같은 이름(마지막 이름)이 되는 항목이 둘 이상이면 사유 (같은 원격 경로에 두 번 쓰지 않게)
+    /// </summary>
+    public static string? LocalPathListProblem(IReadOnlyList<string> fullPaths)
+    {
+        static string Norm(string p) => p.TrimEnd('\\', '/');
+        var names = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < fullPaths.Count; i++)
+        {
+            var a = Norm(fullPaths[i]);
+            var name = System.IO.Path.GetFileName(a);
+            if (name.Length == 0) return $"드라이브 루트는 올릴 수 없습니다: {fullPaths[i]}";
+            if (names.TryGetValue(name, out var other)) return $"원격 폴더에서 이름이 겹칩니다: {other} 와 {fullPaths[i]} (이름 {name})";
+            names[name] = fullPaths[i];
+            for (var j = 0; j < fullPaths.Count; j++)
+            {
+                if (i == j) continue;
+                var b = Norm(fullPaths[j]);
+                if (b.StartsWith(a + "\\", StringComparison.OrdinalIgnoreCase))
+                    return $"목록의 경로가 서로 겹칩니다: {fullPaths[i]} 안에 {fullPaths[j]} — 바깥 경로만 주세요.";
+            }
+        }
+        return null;
+    }
+
+    /// <summary>sftp_upload 의 같은 이름 처리: overwrite = 덮어씀, skip = 건너뜀, fail = 하나라도 있으면 아무것도 올리지 않음. 폴더는 어느 경우든 병합</summary>
+    public static readonly string[] UploadConflictModes = { "overwrite", "skip", "fail" };
+
+    /// <summary>
+    /// on_conflict 와 예전 인자 overwrite 를 하나로. 둘 다 없으면 fail, overwrite=true 만 있으면 overwrite.
+    /// 둘이 어긋나면(overwrite=true 인데 on_conflict=skip 등) 사유를 돌려준다
+    /// </summary>
+    public static string? ResolveConflictMode(string? onConflict, bool? overwrite, out string mode)
+    {
+        mode = "fail";
+        var oc = (onConflict ?? "").Trim().ToLowerInvariant();
+        if (oc.Length == 0) { mode = overwrite == true ? "overwrite" : "fail"; return null; }
+        if (!UploadConflictModes.Contains(oc)) return $"on_conflict 는 {string.Join(" / ", UploadConflictModes)} 중 하나여야 합니다.";
+        if (overwrite == true && oc != "overwrite") return $"overwrite=true 와 on_conflict={oc} 가 어긋납니다. on_conflict 하나만 주세요.";
+        if (overwrite == false && oc == "overwrite") return "overwrite=false 와 on_conflict=overwrite 가 어긋납니다. on_conflict 하나만 주세요.";
+        mode = oc;
+        return null;
+    }
+
+    public enum UploadAction { Create, Merge, Overwrite, Skip, Conflict, Refuse }
+
+    /// <summary>
+    /// 올릴 항목 하나를 원격의 지금 상태(LSTAT)와 비교해 할 일을 정한다 — SFTP 패널 업로드의 같은 이름 덮어쓰기 / 건너뛰기, 폴더 병합과 같은 기준.
+    /// 단 심볼릭 링크에는 쓰지 않는다 (폴더 링크 안에 넣거나 파일 링크를 덮어쓰면 링크가 가리키는 다른 곳이 바뀜):
+    /// skip 이면 건너뛰고, 아니면 거부(Refuse — 아무것도 올리기 전에 멈춤). fail 에서 같은 이름 파일은 Conflict
+    /// </summary>
+    public static (UploadAction Action, string? Reason) UploadDecision(string mode, bool wantDir, bool exists, bool isLink, bool isDir, bool isRegular)
+    {
+        var skip = mode == "skip";
+        if (!exists) return (UploadAction.Create, null);
+        if (wantDir)
+        {
+            if (isLink) return skip ? (UploadAction.Skip, "폴더 자리에 심볼릭 링크") : (UploadAction.Refuse, "폴더를 올릴 자리에 심볼릭 링크가 있어 올리지 않았습니다 (링크를 따라 다른 곳에 쓰지 않게)");
+            if (isDir) return (UploadAction.Merge, null);
+            return skip ? (UploadAction.Skip, "폴더 자리에 파일") : (UploadAction.Refuse, "폴더를 올릴 자리에 같은 이름의 파일이 있습니다");
+        }
+        if (isLink)
+            return skip ? (UploadAction.Skip, "심볼릭 링크") : mode == "fail" ? (UploadAction.Conflict, "심볼릭 링크")
+                : (UploadAction.Refuse, "대상이 심볼릭 링크라 덮어쓰지 않았습니다 (링크가 가리키는 다른 파일이 바뀌는 것을 막기 위함)");
+        if (isDir) return skip ? (UploadAction.Skip, "같은 이름의 폴더") : (UploadAction.Refuse, "파일을 올릴 자리에 같은 이름의 폴더가 있습니다");
+        if (!isRegular) return skip ? (UploadAction.Skip, "일반 파일이 아님") : (UploadAction.Refuse, "같은 이름의 특수 파일(장치·FIFO·소켓 등)이 있습니다");
+        return mode switch
+        {
+            "overwrite" => (UploadAction.Overwrite, null),
+            "skip" => (UploadAction.Skip, "같은 이름의 파일"),
+            _ => (UploadAction.Conflict, "같은 이름의 파일"),
+        };
+    }
+
+    /// <summary>
+    /// sftp_panel_navigate 가 승인을 받아야 하는가 — sftp_list 와 같은 기준 (패널 목록은 화면 캡처로 읽을 수 있음):
+    /// 읽기 전용 자동 승인이 꺼져 있거나, 패널이 sudo 로 다른 사용자 권한이거나, 비밀이 든 경로면 승인
+    /// </summary>
+    public static bool PanelNavigateNeedsApproval(bool autoApproveReadOnly, bool elevated, bool sensitive) =>
+        !autoApproveReadOnly || elevated || sensitive;
+
+    /// <summary>목록 문구: 앞 max 개만 한 줄씩 (들여쓰기), 넘으면 "… 외 N개"</summary>
+    public static string ListText(IReadOnlyCollection<string> items, int max = 20, string indent = "  ")
+    {
+        var sb = new StringBuilder();
+        foreach (var x in items.Take(max)) sb.Append('\n').Append(indent).Append(x);
+        if (items.Count > max) sb.Append('\n').Append(indent).Append($"… 외 {items.Count - max}개");
+        return sb.ToString();
+    }
 }

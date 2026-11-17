@@ -1,0 +1,10 @@
+{
+  "Claude 가 {0} 화면의 조작 허용을 반납했습니다.": "Claude released its control permission for the {0} screen.",
+  "\n받을 항목: {0}개": "\nItems to download: {0}",
+  "승인하면 서버에서 아래 {0}개 항목을 삭제합니다. 폴더는 안의 내용까지 모두 지우며 되돌릴 수 없습니다. 심볼릭 링크는 링크만 지우고 가리키는 원본은 그대로 둡니다.": "If approved, the {0} items below are deleted from the server. Folders are deleted with all their contents, and this cannot be undone. Symbolic links are removed by themselves; their targets are left untouched.",
+  "\n원격에 같은 이름 파일이 있으면 덮어씁니다.": "\nFiles with the same name on the server are overwritten.",
+  "\n원격에 같은 이름이 있으면 건너뜁니다.": "\nItems with the same name on the server are skipped.",
+  "\n원격에 같은 이름 파일이 하나라도 있으면 아무것도 올리지 않습니다.": "\nIf any file with the same name exists on the server, nothing is uploaded.",
+  "Claude 가 SFTP 패널 폴더 이동을 요청합니다": "Claude is requesting to change the SFTP panel folder",
+  "승인하면 SFTP 패널이 아래 폴더의 목록을 보여 줍니다. 화면 캡처로 Claude 가 그 목록을 볼 수 있습니다.": "If approved, the SFTP panel shows the listing of the folder below. Claude can see that listing through screen capture."
+}

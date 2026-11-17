@@ -408,7 +408,7 @@ public sealed class XtermView : UserControl
 
             case "zoom":
                 // 이 탭의 글자 크기 조절(Ctrl+휠 등) — 렌더러 복구로 페이지를 다시 불러와도 유지
-                if (m.TryGetProperty("z", out var z) && z.TryGetInt32(out var zv)) _zoom = Math.Clamp(zv, -6, 24);
+                if (m.TryGetProperty("z", out var z) && z.TryGetInt32(out var zv)) _zoom = Math.Clamp(zv, MinZoom, MaxZoom);
                 break;
 
             case "hotkey":
@@ -520,6 +520,23 @@ public sealed class XtermView : UserControl
 
     /// <summary>이 탭의 글자 크기 조절값 (페이지가 알려 줌, 설정 글꼴 크기에 더한다)</summary>
     private int _zoom;
+
+    /// <summary>글자 크기 조절값 범위 (terminal.html 의 setZoom 과 같음)</summary>
+    public const int MinZoom = -6, MaxZoom = 24;
+
+    /// <summary>이 탭의 글자 크기 조절값 (0 = 설정 글꼴 크기 그대로)</summary>
+    public int Zoom => _zoom;
+
+    /// <summary>
+    /// 글자 크기 조절 (Ctrl+= / Ctrl+- / Ctrl+0 과 같은 페이지 함수 setZoom 을 부른다 — MCP set_terminal_zoom). 범위로 자른 값을 돌려준다.
+    /// 화면이 아직 준비되지 않았으면 기억해 두었다가 페이지를 불러올 때 적용된다 (ApplySettings includeZoom)
+    /// </summary>
+    public int SetZoom(int zoom)
+    {
+        _zoom = Math.Clamp(zoom, MinZoom, MaxZoom);
+        if (IsReady) Post(new { t = "setzoom", z = _zoom });
+        return _zoom;
+    }
 
     private void Post(object msg)
     {
