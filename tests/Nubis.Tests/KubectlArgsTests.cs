@@ -578,4 +578,27 @@ public class KubectlArgsTests
     [InlineData("ipconfig /all")]
     [InlineData("Get-Process -Name svchost")]
     public void PowerShell_일반_조회는_그대로(string line) => Assert.True(ReadOnlyCommands.IsReadOnly(line, CommandShell.PowerShell));
+
+    // ---------------------------------------------------------------- 재검수 5회차: Windows 기본 명령 인자 경계 (원격 서버 지정 숨기기)
+
+    [Theory]
+    [InlineData("query user 'x /server:evil.example'", CommandShell.PowerShell)]
+    [InlineData("query session 'x /server:evil.example'", CommandShell.PowerShell)]
+    [InlineData("query user \"x /server:evil.example\"", CommandShell.Cmd)]
+    [InlineData("quser 'a b\' 'c /server:evil.example'", CommandShell.PowerShell)]
+    [InlineData("schtasks /query /tn 'a b\' 'c /s evil.example'", CommandShell.PowerShell)]
+    [InlineData("query user x\\\" /server:evil.example \\\"", CommandShell.Cmd)]
+    [InlineData("schtasks /query /tn x\\\" /s evil.example \\\"", CommandShell.Cmd)]
+    [InlineData("net user bob\\\" pw /add \\\"", CommandShell.Cmd)]
+    public void 인자_경계를_흐려_원격_서버_지정을_숨길_수_없다(string line, CommandShell shell) =>
+        Assert.False(ReadOnlyCommands.IsReadOnly(line, shell));
+
+    [Theory]
+    [InlineData("query user", CommandShell.PowerShell)]
+    [InlineData("quser", CommandShell.Cmd)]
+    [InlineData("schtasks /query /tn \"My Task\"", CommandShell.Cmd)]
+    [InlineData("tasklist /v", CommandShell.Cmd)]
+    [InlineData("net user administrator", CommandShell.PowerShell)]
+    public void 일반_조회는_그대로_윈도우(string line, CommandShell shell) =>
+        Assert.True(ReadOnlyCommands.IsReadOnly(line, shell));
 }

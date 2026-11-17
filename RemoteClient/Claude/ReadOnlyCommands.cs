@@ -843,6 +843,15 @@ public static class ReadOnlyCommands
     /// <summary>Windows 기본 명령의 읽기 전용 사용 형태</summary>
     private static bool WinArgsOk(string exe, List<string> a)
     {
+        // 인자 경계: 판정기가 본 인자 하나가 받는 프로그램에서 여럿으로 나뉠 수 있다 —
+        // query.exe 는 quser·qwinsta 를 부르며 인자를 따옴표 없이 다시 이어 붙이고, PowerShell 5.1 은 끝이 \ 인 공백 포함 인자를
+        // "a b\" 로 감싸(\ 이스케이프 없음) 다음 인자와 합쳐지며, cmd 의 x\" … \" 는 받는 쪽에서 \" 가 글자 따옴표가 된다.
+        // 그래서 ① 경계를 흐리는 형태(큰따옴표, 공백이 있고 \ 로 끝남, \ 뒤 공백)는 받지 않고
+        // ② 아래 옵션 검사는 각 인자를 공백으로 나눈 조각으로 한다 (query user 'x /server:host' 의 /server 도 보이게)
+        if (a.Any(x => x.IndexOf('"') >= 0 || x.Contains("\\ ") || x.Contains("\\\t") ||
+                       x.EndsWith('\\') && x.Any(c => c is ' ' or '\t')))
+            return false;
+        a = a.SelectMany(x => x.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)).ToList();
         string A(int i) => i < a.Count ? a[i].ToLowerInvariant() : "";
         bool Has(params string[] xs) => a.Any(x => xs.Any(y => x.Equals(y, StringComparison.OrdinalIgnoreCase)));
         bool HasRx(string pattern) => a.Any(x => Regex.IsMatch(x, pattern, RegexOptions.IgnoreCase));
