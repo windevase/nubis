@@ -42,7 +42,12 @@ public partial class MainWindow
         string Group(K8sCluster c) =>
             c.CloudProfileId is { } pid && profiles.TryGetValue(pid, out var p) ? $"[{p.ProviderText}] {p.GroupName}"
             : c.Group.Length > 0 ? c.Group : L.T("직접 등록");
-        var rows = K8sStore.All()
+        var all = K8sStore.All();
+        // 지워진 클러스터의 인증 확인 캐시·연결 상태는 버린다 (프로필 제거·동기화로 사라진 것 포함)
+        var ids = all.Select(c => c.Id).ToHashSet();
+        foreach (var id in _k8sAuthCache.Keys.Where(id => !ids.Contains(id)).ToList()) _k8sAuthCache.Remove(id);
+        foreach (var id in _k8sHealth.Keys.Where(id => !ids.Contains(id)).ToList()) _k8sHealth.Remove(id);
+        var rows = all
             .OrderBy(c => c.IsCloud).ThenBy(Group, StringComparer.CurrentCultureIgnoreCase).ThenBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase)
             .Select(c => MakeK8sRow(c, Group(c))).ToList();
         var view = new ListCollectionView(rows);
@@ -52,10 +57,35 @@ public partial class MainWindow
         K8sCloudButton.IsEnabled = _profiles.Count > 0;
     }
 
+    /// <summary>
+    /// 클러스터별 인증 확인 결과 캐시 (암호문이 같으면 다시 풀지 않는다): 풀렸는지 + exec 명령.
+    /// 카드를 다시 그릴 때마다 카드당 DPAPI 해제·YAML 파싱을 UI 스레드에서 하지 않게
+    /// </summary>
+    private readonly Dictionary<Guid, (string? Blob, bool Ok, string? ExecCommand)> _k8sAuthCache = new();
+
+    private (bool Ok, string? ExecCommand) K8sAuthInfo(K8sCluster c)
+    {
+        if (_k8sAuthCache.TryGetValue(c.Id, out var hit) && hit.Blob == c.ProtectedKubeconfig) return (hit.Ok, hit.ExecCommand);
+        bool ok = true;
+        string? cmd = null;
+        if (!string.IsNullOrEmpty(c.ProtectedKubeconfig))
+        {
+            ok = Secret.TryUnprotect(c.ProtectedKubeconfig, out var yaml);
+            if (ok)
+            {
+                try { cmd = Kubeconfig.ExecCommand(yaml); }
+                catch (FormatException) { }
+            }
+        }
+        _k8sAuthCache[c.Id] = (c.ProtectedKubeconfig, ok, cmd);
+        return (ok, cmd);
+    }
+
     private K8sClusterRow MakeK8sRow(K8sCluster c, string group)
     {
         string warning = "", tip = "";
-        if (!string.IsNullOrEmpty(c.ProtectedKubeconfig) && !Secret.TryUnprotect(c.ProtectedKubeconfig, out _))
+        var (authOk, execCmd) = K8sAuthInfo(c);
+        if (!authOk)
         {
             warning = L.T("인증을 풀 수 없음");
             tip = L.T("다른 PC · Windows 계정에서 저장한 인증이라 이 PC 에서 풀리지 않습니다. 다시 가져오세요.");
@@ -65,17 +95,10 @@ public partial class MainWindow
             warning = c.State ?? "";
             tip = L.T("클라우드에서 실행 중이 아닌 클러스터입니다.");
         }
-        else
+        else if (execCmd is { } cmd && !Kubectl.CommandExists(cmd))
         {
-            try
-            {
-                if (Kubeconfig.ExecCommand(c.Kubeconfig) is { } cmd && !Kubectl.CommandExists(cmd))
-                {
-                    warning = L.F("{0} 없음", Path.GetFileName(cmd));
-                    tip = L.F("이 클러스터 인증에는 '{0}' 명령이 필요합니다. 설치한 뒤 PATH 에 넣으세요.", cmd) + "\n" + K8sPluginHint(c.AuthKind);
-                }
-            }
-            catch (FormatException) { }
+            warning = L.F("{0} 없음", Path.GetFileName(cmd));
+            tip = L.F("이 클러스터 인증에는 '{0}' 명령이 필요합니다. 설치한 뒤 PATH 에 넣으세요.", cmd) + "\n" + K8sPluginHint(c.AuthKind);
         }
         var parts = new List<string>();
         if (c.Endpoint.Length > 0) parts.Add(c.Endpoint);
@@ -208,37 +231,48 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>
+    /// 대화상자를 닫은 뒤 바꾼 필드만 최신 저장본에 적용해 저장한다 — 대화상자가 열려 있는 동안 동기화가 갱신한
+    /// 주소·상태·kubeconfig 를 되돌리거나, 그사이 지워진 클러스터를 되살리지 않게. 지워졌으면 알리고 저장하지 않는다
+    /// </summary>
+    private void UpdateK8s(Guid id, Action<K8sCluster> change)
+    {
+        if (K8sStore.Get(id) is not { } cur)
+        {
+            FlashHostStatus(L.T("그사이 목록에서 지워진 클러스터입니다."), ToastKind.Info);
+            RefreshK8s();
+            return;
+        }
+        var copy = cur.Clone();
+        change(copy);
+        SaveK8s(copy);
+    }
+
     private void RenameK8s(K8sCluster c)
     {
         if (PromptDialog.Ask(this, L.T("이름 바꾸기"), L.T("클러스터 이름"), c.Name) is not { } name) return;
         name = name.Trim();
         if (name.Length == 0 || name == c.Name) return;
-        var copy = c.Clone();
-        copy.Name = name;
-        SaveK8s(copy);
+        UpdateK8s(c.Id, x => x.Name = name);
     }
 
     private void SetK8sNamespace(K8sCluster c)
     {
         if (PromptDialog.Ask(this, L.T("기본 네임스페이스"), L.T("비우면 kubeconfig 의 값 (없으면 default)"), c.DefaultNamespace) is not { } ns) return;
         ns = ns.Trim();
-        // 네임스페이스 이름 규칙 (RFC 1123 label) — kubeconfig 에 그대로 들어가므로 다른 값은 받지 않는다
-        if (ns.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(ns, "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"))
+        if (ns.Length > 0 && !K8sCluster.IsValidNamespace(ns))
         {
             Dialog.Show(this, L.T("네임스페이스는 소문자·숫자·하이픈(-)만 쓸 수 있습니다."), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        var copy = c.Clone();
-        copy.DefaultNamespace = ns;
-        SaveK8s(copy);
+        UpdateK8s(c.Id, x => x.DefaultNamespace = ns);
     }
 
     private void SetK8sGroup(K8sCluster c)
     {
         if (PromptDialog.Ask(this, L.T("그룹"), L.T("비우면 그룹 없음"), c.Group) is not { } g) return;
-        var copy = c.Clone();
-        copy.Group = g.Trim();
-        SaveK8s(copy);
+        var group = g.Trim();
+        UpdateK8s(c.Id, x => x.Group = group);
     }
 
     private void ExportK8s(K8sCluster c)
@@ -248,6 +282,9 @@ public partial class MainWindow
         var safe = string.Concat(c.Name.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
         var dlg = new Microsoft.Win32.SaveFileDialog { Title = L.T("kubeconfig 내보내기"), FileName = safe + ".kubeconfig", Filter = "kubeconfig|*.kubeconfig;*.yaml|*.*|*.*" };
         if (dlg.ShowDialog(this) != true) return;
+        // 창이 열려 있는 동안 동기화가 kubeconfig 를 바꿨을 수 있다 — 최신 저장본으로 (지워졌으면 중단)
+        if (K8sStore.Get(c.Id) is not { } cur) { FlashHostStatus(L.T("그사이 목록에서 지워진 클러스터입니다."), ToastKind.Info); RefreshK8s(); return; }
+        c = cur;
         try
         {
             File.WriteAllText(dlg.FileName, c.Kubeconfig, new System.Text.UTF8Encoding(false));
