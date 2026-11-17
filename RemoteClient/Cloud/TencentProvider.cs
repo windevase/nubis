@@ -142,10 +142,15 @@ public sealed class TencentProvider : ICloudProvider
         return new CloudFetchResult(items, errors) { DeniedRegions = deniedRegions };
     }
 
-    /// <summary>CAM 정책으로 거부됐다는 오류 코드인지. 서명·키 자체의 문제(AuthFailure.SignatureFailure 등)는 포함하지 않는다</summary>
+    /// <summary>
+    /// CAM 정책으로 거부됐다는 오류 코드인지. 서명·키 자체의 문제(AuthFailure.SignatureFailure 등)는 포함하지 않는다.
+    /// TKE 는 CAM 권한 없음을 UnauthorizedOperation.CamNoAuth 외에 InternalError.CamNoAuth · FailedOperation.CamNoAuth 로도 준다
+    /// (tencentcloud-sdk tke/v20180525 errors: "没有权限" · "无该接口CAM权限") — 접두어와 상관없이 *.CamNoAuth 는 권한 거부로 본다
+    /// </summary>
     internal static bool IsAccessDenied(string? code) =>
         code is "UnauthorizedOperation" or "AuthFailure.UnauthorizedOperation" ||
-        (code?.StartsWith("UnauthorizedOperation.", StringComparison.Ordinal) ?? false);
+        (code?.StartsWith("UnauthorizedOperation.", StringComparison.Ordinal) ?? false) ||
+        (code?.EndsWith(".CamNoAuth", StringComparison.Ordinal) ?? false);
 
     // ----- TKE 클러스터 -----
 
@@ -156,7 +161,8 @@ public sealed class TencentProvider : ICloudProvider
 
         // 권한 거부 리전은 VM 조회와 같은 규칙으로 따로 모은다 (그 리전 클러스터는 지우지 않음)
         var denied = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
-        var kubeconfigErrors = new ConcurrentBag<string>();
+        // 목록에는 있지만 kubeconfig 를 못 받은 클러스터 (그 클러스터만 지우지 않음 — 프로필 전체를 부분 실패로 만들지 않는다)
+        var skipped = new ConcurrentBag<(string id, string error)>();
         var (items, errors) = await CloudProviders.ParallelCollect(regions, 8, async region =>
         {
             var clusters = new List<JsonElement>();
@@ -201,23 +207,29 @@ public sealed class TencentProvider : ICloudProvider
                     var kubeconfig = await KubeconfigAsync(cred, region, c.Str("ClusterId"), ct);
                     result.Add(MapTkeCluster(c, region, kubeconfig));
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
                 {
-                    // kubeconfig 를 못 받은 클러스터는 건너뛰고 오류로 남긴다 (부분 결과 → 아무것도 지우지 않음)
-                    kubeconfigErrors.Add($"{label}: {CloudProviders.FirstLine(ex.Message)}");
+                    // kubeconfig 를 못 받은 클러스터(비정상 상태·권한 없음 등)는 건너뛰고 그 클러스터만 보호한다 (기존 kubeconfig 유지)
+                    skipped.Add(("tke:" + c.Str("ClusterId"), $"{label}: {CloudProviders.FirstLine(ex.Message)}"));
                 }
             }
             return (IEnumerable<CloudCluster>)result;
         }, r => r, ct);
 
-        errors.AddRange(kubeconfigErrors.OrderBy(e => e, StringComparer.Ordinal));
-        if (items.Count == 0 && errors.Count > 0) throw new InvalidOperationException(errors[0]);
+        // 목록 조회 자체가 실패했고 보여 줄 것도 없으면 실패로 (kubeconfig 만 못 받은 경우는 조회 성공 — 보호 목록으로 넘긴다)
+        if (items.Count == 0 && skipped.IsEmpty && errors.Count > 0) throw new InvalidOperationException(errors[0]);
+        var skippedList = skipped.OrderBy(s => s.error, StringComparer.Ordinal).ToList();
+        errors.AddRange(skippedList.Select(s => s.error));
         if (items.Count == 0 && denied.Count == regions.Count)
             throw new InvalidOperationException(L.F("모든 리전에서 클러스터 조회 권한이 없습니다 (tke:DescribeClusters) — {0}", denied.Values.First()));
         var deniedRegions = denied.Keys.OrderBy(r => r, StringComparer.Ordinal).ToList();
         foreach (var r in deniedRegions)
             errors.Add(L.F("{0}: 권한 없음 (CAM 정책으로 거부 — 이 리전 클러스터는 유지) — {1}", r, denied[r]));
-        return new ClusterFetchResult(items, errors) { DeniedRegions = deniedRegions };
+        return new ClusterFetchResult(items, errors)
+        {
+            DeniedRegions = deniedRegions,
+            ProtectedIds = skippedList.Select(s => s.id).ToList(),
+        };
     }
 
     /// <summary>DescribeClusterKubeconfig (조회 API). 외부 주소(IsExtranet=true)를 먼저, 안 되면 내부 주소</summary>

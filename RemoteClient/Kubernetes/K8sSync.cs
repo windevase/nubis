@@ -68,9 +68,12 @@ public static class K8sSync
         if (!result.HasUnexpectedErrors)
         {
             var denied = new HashSet<string>(result.DeniedRegions, StringComparer.OrdinalIgnoreCase);
+            var kept = new HashSet<string>(result.ProtectedIds, StringComparer.Ordinal);
             foreach (var c in mine.Except(duplicates).ToList())
             {
                 if (c.CloudClusterId == null || seen.Contains(c.CloudClusterId)) continue;
+                // 목록에는 있었지만 kubeconfig 를 못 받은 클러스터 — 있는 것이므로 지우지 않는다 (kubeconfig 등은 그대로 둔다)
+                if (kept.Contains(c.CloudClusterId)) { c.MissCount = 0; continue; }
                 // 권한 거부 리전·리전을 모르는 클러스터는 이번에 보지 못한 것 — 남긴다
                 if (string.IsNullOrEmpty(c.Region) || denied.Contains(c.Region) || denied.Any(r => c.Region.StartsWith(r + "-", StringComparison.OrdinalIgnoreCase)))
                     continue;
