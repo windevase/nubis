@@ -149,13 +149,21 @@ public partial class MainWindow
     /// <summary>Settings 위쪽 바로가기: Tag 에 적힌 이름의 제목이 맨 위에 오게 스크롤</summary>
     private void OnSettingsJump(object sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.Tag is not string name || FindName(name) is not FrameworkElement target) return;
-        if (SettingsPage.Content is not Visual content) return;
-        _settingsJumpPicked = SettingsJumpBar.Children.IndexOf((UIElement)sender);
+        if ((sender as FrameworkElement)?.Tag is string name) JumpToSettingsSection(name);
+    }
+
+    /// <summary>
+    /// Settings 화면에서 이름(x:Name)의 요소가 맨 위에 오게 스크롤 (바로가기 버튼 · MCP open_app_page settings_* 공통).
+    /// 바로가기 칩이 있는 섹션이면 그 칩을 강조한다. above = 요소 위로 남길 여백 (섹션 제목이 아닌 입력란이면 넉넉히)
+    /// </summary>
+    private void JumpToSettingsSection(string name, double above = 8)
+    {
+        if (FindName(name) is not FrameworkElement target || SettingsPage.Content is not Visual content) return;
+        _settingsJumpPicked = SettingsJumpBar.Children.OfType<Button>().ToList().FindIndex(b => b.Tag as string == name);
         try
         {
             var y = target.TransformToAncestor(content).Transform(new Point(0, 0)).Y;
-            SettingsPage.ScrollToVerticalOffset(Math.Max(0, y - 8));
+            SettingsPage.ScrollToVerticalOffset(Math.Max(0, y - above));
         }
         catch (InvalidOperationException) { target.BringIntoView(); }
         // 이미 그 위치라 스크롤이 일어나지 않아도 강조는 맞춘다
@@ -312,13 +320,25 @@ public partial class MainWindow
     private void OnLanguageClick(object sender, RoutedEventArgs e)
     {
         var lang = LangEnglish.IsChecked == true ? L.English : L.Korean;
-        if (lang == (SettingsStore.Global.Language ?? L.Korean)) return;
-        SettingsStore.UpdateGlobal(s => s.Language = lang);
+        if (!SaveLanguage(lang)) return;
         // 새 언어로 안내 (아직 앱은 이전 언어로 떠 있음)
         var msg = lang == L.English
             ? "Language changed to English. Restart Nubis now to apply it?"
             : "언어를 한국어로 바꿨습니다. 지금 Nubis 를 다시 시작해 적용할까요?";
         if (Dialog.Show(this, msg, "Nubis", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes) App.Restart();
+    }
+
+    /// <summary>
+    /// 화면 언어 저장 (Settings 화면 · MCP set_language 공통). 모든 프로필이 함께 쓰는 공통 설정이라 반드시 UpdateGlobal.
+    /// 이미 같은 값이면 false. 적용은 다시 시작한 뒤 (지금 떠 있는 화면은 이전 언어 그대로)
+    /// </summary>
+    private bool SaveLanguage(string lang)
+    {
+        if (lang is not (L.Korean or L.English)) throw new ArgumentException(nameof(lang));
+        if (lang == (SettingsStore.Global.Language ?? L.Korean)) return false;
+        SettingsStore.UpdateGlobal(s => s.Language = lang);
+        (lang == L.English ? LangEnglish : LangKorean).IsChecked = true;   // MCP 로 바꿨을 때 Settings 화면 선택도 맞춘다
+        return true;
     }
 
     // ----- 시작 화면 로그인 -----

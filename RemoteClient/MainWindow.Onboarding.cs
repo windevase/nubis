@@ -82,32 +82,81 @@ public partial class MainWindow
     }
 
     /// <summary>
-    /// 앱 화면 열기 (시작하기 버튼 · MCP open_app_page). 알 수 없는 이름이면 false.
-    /// hosts · new_host · cloud · vault · known_hosts · settings · settings_language · settings_login · settings_sftp · settings_claude · onboarding
+    /// 앱 화면 열기 (시작하기 버튼 · MCP open_app_page). 알 수 없는 이름이면 false. 이름은 NormalizeAppPage 로 맞춘 뒤 판단한다.
+    /// hosts · new_host · cloud · kubernetes · vault · known_hosts · settings · settings_&lt;섹션&gt;(SettingsSectionFor) · onboarding
     /// </summary>
     internal bool OpenAppPage(string page)
     {
+        page = NormalizeAppPage(page);
+        var section = SettingsSectionFor(page);
+        if (section == null && page is not ("hosts" or "new_host" or "cloud" or "kubernetes" or "vault" or "known_hosts" or "settings" or "onboarding"))
+            return false;
         SelectHome();
         Dialog.RestoreIfMinimized(this);   // 최대화였으면 최대화로
         Activate();
-        FrameworkElement? scrollTo = null;
-        switch (page.Trim().ToLowerInvariant())
+        switch (page)
         {
             case "hosts": NavHosts.IsChecked = true; break;
             case "new_host": NavHosts.IsChecked = true; OpenEditor(null); break;
             case "cloud": NavCloud.IsChecked = true; break;
+            case "kubernetes": NavK8s.IsChecked = true; break;
             case "vault": NavVault.IsChecked = true; break;
             case "known_hosts": NavKnown.IsChecked = true; break;
-            case "settings": NavSettings.IsChecked = true; break;
-            case "settings_language": NavSettings.IsChecked = true; scrollTo = LangKorean; break;
-            case "settings_login": NavSettings.IsChecked = true; scrollTo = LoginNone; break;
-            case "settings_sftp": NavSettings.IsChecked = true; scrollTo = SftpAutoOpenBox; break;
-            case "settings_claude": NavSettings.IsChecked = true; scrollTo = AutoReadOnlyBox; break;
             case "onboarding": Dispatcher.BeginInvoke(ShowOnboarding, DispatcherPriority.Background); break;
-            default: return false;
+            default: NavSettings.IsChecked = true; break;   // settings · settings_<섹션>
         }
-        if (scrollTo != null)
-            Dispatcher.BeginInvoke(() => scrollTo.BringIntoView(new Rect(0, -40, 10, 400)), DispatcherPriority.Loaded);
+        if (section is { } s)
+        {
+            // 섹션 제목이 아닌 입력란(클라우드 자동 동기화)은 위의 제목·설명이 보이게 여백을 넉넉히
+            var above = s.StartsWith("Sec", StringComparison.Ordinal) ? 8 : 120;
+            Dispatcher.BeginInvoke(() => JumpToSettingsSection(s, above), DispatcherPriority.Loaded);
+        }
         return true;
     }
+
+    /// <summary>open_app_page 이름 정리: 소문자 · 앞뒤 공백 제거 · 별칭(k8s → kubernetes, settings_lang → settings_language 등)</summary>
+    internal static string NormalizeAppPage(string page)
+    {
+        var p = page.Trim().ToLowerInvariant().Replace('-', '_');
+        return p switch
+        {
+            "k8s" or "kube" => "kubernetes",
+            "settings_lang" => "settings_language",
+            "settings_ports_default" or "settings_default_ports" => "settings_ports",
+            "settings_terminal_use" => "settings_terminal",
+            "settings_cloud" or "settings_sync" => "settings_cloud_sync",
+            "settings_default_vault" => "settings_vault",
+            "settings_fonts" => "settings_font",
+            _ => p,
+        };
+    }
+
+    /// <summary>
+    /// Settings 섹션 바로가기 → 스크롤할 요소 이름 (x:Name). 섹션이 아니면 null.
+    /// Sec* 는 Settings 위쪽 바로가기 칩 11개와 같은 섹션, cloud_sync 는 칩이 없는 '클라우드 자동 동기화' 의 첫 입력란
+    /// </summary>
+    internal static string? SettingsSectionFor(string normalizedPage) => normalizedPage switch
+    {
+        "settings_language" => "SecLang",
+        "settings_vault" => "SecVault",
+        "settings_cloud_sync" => "CloudSyncStartBox",
+        "settings_theme" => "SecTheme",
+        "settings_font" => "SecFont",
+        "settings_terminal" => "SecTermUse",
+        "settings_ssh" => "SecSsh",
+        "settings_sftp" => "SecSftp",
+        "settings_ports" => "SecPorts",
+        "settings_login" => "SecLogin",
+        "settings_claude" => "SecClaude",
+        "settings_rdp" => "SecRdp",
+        _ => null,
+    };
+
+    /// <summary>open_app_page 가 아는 화면 이름 (입력 창 종류 제외) — 도구 설명 · 오류 안내용</summary>
+    internal static readonly string[] AppPageNames =
+    {
+        "hosts", "new_host", "cloud", "kubernetes", "vault", "known_hosts", "settings",
+        "settings_language", "settings_vault", "settings_cloud_sync", "settings_theme", "settings_font", "settings_terminal",
+        "settings_ssh", "settings_sftp", "settings_ports", "settings_login", "settings_claude", "settings_rdp", "onboarding",
+    };
 }
