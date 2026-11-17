@@ -107,6 +107,7 @@ public static class KubectlArgs
             return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", "create " + args[1]);
         var allowed = fixedCluster ? Array.Empty<string>() : ClusterSelect;
         var end = TerminatorIndex(args);
+        if (fixedCluster && ConfigSecretReason(args, end) is { } secret) return secret;
         for (var i = 0; i < end; i++)
         {
             var raw = args[i];
@@ -151,6 +152,38 @@ public static class KubectlArgs
                 }
             }
         }
+        return null;
+    }
+
+    /// <summary>
+    /// kubectl config view 에서 비밀값을 가리지 않고 내보내는 옵션. --raw 는 토큰·클라이언트 키·인증서를 그대로,
+    /// --flatten 은 파일을 *-data 로 넣으면서 가리기(ShortenConfig)를 건너뛴다 (kubectl view.go: Flatten 이면 Shorten 하지 않음)
+    /// </summary>
+    private static readonly string[] ConfigSecretFlags = { "--raw", "--flatten" };
+
+    /// <summary>
+    /// 앱이 저장한 kubeconfig(임시 파일로 KUBECONFIG 에 넘긴다)를 출력하는 형태인가 — run_kubectl 결과는 Claude 에게 가므로 막는다
+    /// (ClaudeGuard 원칙: 저장된 인증은 Claude 에게 넘기지 않는다). 끝 표시 앞 인자에 config 가 있고
+    /// · --raw · --flatten(=값 · _ 표기 · 대소문자 무관)이 있거나
+    /// · view 가 있으면 거부 — 옵션 없는 config view 도 가리는 것은 *-data · token 뿐이라(client-go ShortenConfig)
+    ///   basic 인증 password · auth-provider(OIDC) 의 refresh-token · client-secret · exec env 는 그대로 나온다.
+    ///   클러스터 주소·네임스페이스는 list_k8s_clusters 로 볼 수 있어 config view 가 필요 없다.
+    /// 어느 인자가 하위 명령인지까지 해석하지 않고 보수적으로 본다 — config 가 없는 get --raw /api 는 kube API 경로 조회라 허용
+    /// </summary>
+    private static string? ConfigSecretReason(IReadOnlyList<string> args, int end)
+    {
+        var before = args.Take(end).Select(x => x.Trim()).ToList();
+        if (!before.Contains("config", StringComparer.Ordinal)) return null;
+        foreach (var x in before)
+        {
+            if (!x.StartsWith("--", StringComparison.Ordinal) || x.Length == 2) continue;
+            var eq = x.IndexOf('=');
+            var name = LongName(eq < 0 ? x : x[..eq]);
+            if (Array.IndexOf(ConfigSecretFlags, name) >= 0)
+                return L.F("kubectl config view {0} 은(는) 쓸 수 없습니다 — Nubis 에 저장한 클러스터 인증(토큰·키)이 그대로 출력됩니다.", name);
+        }
+        if (before.Contains("view", StringComparer.Ordinal))
+            return L.T("kubectl config view 는 쓸 수 없습니다 — Nubis 에 저장한 kubeconfig 의 인증 일부(비밀번호·OIDC 토큰 등)는 가려지지 않고 출력됩니다. 클러스터 주소·네임스페이스는 Nubis 클러스터 목록에서 보세요.");
         return null;
     }
 

@@ -149,7 +149,7 @@ public class KubernetesTests
     [InlineData("apply -f x.yaml", false)]
     [InlineData("scale deploy web --replicas=0", false)]
     [InlineData("port-forward svc/web 8080:80", false)]
-    [InlineData("config view --raw", false)]
+    [InlineData("config get-contexts", true)]   // config view(--raw 포함)는 거부로 바뀜 (K8sMcpParityTests)
     public void 읽기_전용_판정(string line, bool readOnly)
     {
         var args = KubectlArgs.Split(line);

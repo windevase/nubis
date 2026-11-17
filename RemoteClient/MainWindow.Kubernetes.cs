@@ -54,7 +54,14 @@ public partial class MainWindow
         view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(K8sClusterRow.GroupLabel)));
         K8sList.ItemsSource = view;
         K8sEmpty.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        K8sCloudButton.IsEnabled = _profiles.Count > 0;
+        // 찾는 중에 다시 그려도(MCP 테스트·동기화 등) 버튼이 다시 켜지지 않게
+        K8sCloudButton.IsEnabled = _profiles.Count > 0 && !_k8sFinding;
+    }
+
+    /// <summary>Kubernetes 페이지가 보일 때만 다시 그린다 (MCP·동기화 경로 — 페이지를 열 때 RefreshK8s 가 다시 그린다)</summary>
+    private void RefreshK8sIfVisible()
+    {
+        if (K8sPage.Visibility == Visibility.Visible) RefreshK8s();
     }
 
     /// <summary>
@@ -160,14 +167,26 @@ public partial class MainWindow
     private void OnK8sImport(object sender, RoutedEventArgs e)
     {
         if (KubeconfigImportDialog.Ask(this) is not { Count: > 0 } list) return;
+        var (added, error) = AddK8sClusters(list);
+        if (error != null) Dialog.Show(this, L.F("저장 실패: {0}", error), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
+        RefreshK8s();
+        if (added > 0) FlashHostStatus(L.F("클러스터 {0}개를 추가했습니다", added), ToastKind.Success);
+    }
+
+    /// <summary>
+    /// 가져온 클러스터를 저장한다 (UI 가져오기 · MCP import_k8s_clusters 공용). 하나씩 저장하다 실패하면 멈추고 (추가한 수, 오류)를 돌려준다
+    /// </summary>
+    private (int Added, string? Error) AddK8sClusters(IEnumerable<K8sCluster> list)
+    {
         var added = 0;
+        string? error = null;
         foreach (var c in list)
         {
             try { K8sStore.Upsert(c); added++; }
-            catch (Exception ex) { Dialog.Show(this, L.F("저장 실패: {0}", ex.Message), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error); break; }
+            catch (Exception ex) { error = ex.Message; break; }
         }
-        RefreshK8s();
-        if (added > 0) FlashHostStatus(L.F("클러스터 {0}개를 추가했습니다", added), ToastKind.Success);
+        RefreshK8sIfVisible();
+        return (added, error);
     }
 
     private static K8sCluster? RowCluster(object sender) =>
@@ -237,15 +256,34 @@ public partial class MainWindow
     /// </summary>
     private void UpdateK8s(Guid id, Action<K8sCluster> change)
     {
-        if (K8sStore.Get(id) is not { } cur)
+        switch (ChangeK8s(id, change, out var error))
         {
-            FlashHostStatus(L.T("그사이 목록에서 지워진 클러스터입니다."), ToastKind.Info);
-            RefreshK8s();
-            return;
+            case K8sChange.Gone:
+                FlashHostStatus(L.T("그사이 목록에서 지워진 클러스터입니다."), ToastKind.Info);
+                RefreshK8s();
+                break;
+            case K8sChange.Failed:
+                Dialog.Show(this, L.F("저장 실패: {0}", error ?? ""), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
+                break;
         }
+    }
+
+    internal enum K8sChange { Saved, Gone, Failed }
+
+    /// <summary>
+    /// 바꾼 필드만 최신 저장본의 사본에 적용해 저장한다 (UI 이름·네임스페이스·그룹 · MCP update_k8s_cluster 공용, 알림은 부른 쪽이).
+    /// 지워졌으면 Gone, 저장 실패면 Failed + 오류 (저장소는 그대로)
+    /// </summary>
+    private K8sChange ChangeK8s(Guid id, Action<K8sCluster> change, out string? error)
+    {
+        error = null;
+        if (K8sStore.Get(id) is not { } cur) return K8sChange.Gone;
         var copy = cur.Clone();
         change(copy);
-        SaveK8s(copy);
+        try { K8sStore.Upsert(copy); }
+        catch (Exception ex) { error = ex.Message; return K8sChange.Failed; }
+        RefreshK8sIfVisible();
+        return K8sChange.Saved;
     }
 
     private void RenameK8s(K8sCluster c)
@@ -295,32 +333,74 @@ public partial class MainWindow
 
     private void DeleteK8s(K8sCluster c)
     {
-        var msg = L.F("클러스터 '{0}' 을(를) 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.", c.Name);
-        if (c.IsCloud) msg += "\n" + L.T("클라우드에서 가져온 클러스터는 다음 동기화 때 다시 나타날 수 있습니다.");
-        if (Dialog.Show(this, msg, "Kubernetes", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-        try { K8sStore.Remove(c.Id); }
-        catch (Exception ex) { Dialog.Show(this, L.F("저장 실패: {0}", ex.Message), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error); }
-        _k8sHealth.Remove(c.Id);
+        if (Dialog.Show(this, K8sDeleteMessage(c.Name, c.IsCloud), "Kubernetes", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (RemoveK8sCluster(c.Id) is { } error)
+            Dialog.Show(this, L.F("저장 실패: {0}", error), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
         RefreshK8s();
+    }
+
+    /// <summary>삭제 확인 문구 (UI 확인 창 · MCP delete_k8s_cluster 승인 창 공용)</summary>
+    internal static string K8sDeleteMessage(string name, bool isCloud)
+    {
+        var msg = L.F("클러스터 '{0}' 을(를) 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.", name);
+        if (isCloud) msg += "\n" + L.T("클라우드에서 가져온 클러스터는 다음 동기화 때 다시 나타날 수 있습니다.");
+        return msg;
+    }
+
+    /// <summary>
+    /// 클러스터를 저장소에서 지우고 연결 상태·인증 캐시를 정리한다 (UI 삭제 · MCP delete_k8s_cluster 공용). 저장 실패면 오류 문구 (클러스터는 남는다)
+    /// </summary>
+    private string? RemoveK8sCluster(Guid id)
+    {
+        string? error = null;
+        try { K8sStore.Remove(id); }
+        catch (Exception ex) { error = ex.Message; }
+        if (K8sStore.Get(id) == null)
+        {
+            _k8sHealth.Remove(id);
+            _k8sAuthCache.Remove(id);
+        }
+        RefreshK8sIfVisible();
+        return error;
     }
 
     /// <summary>연결 테스트: 서버 버전 + 파드 목록 권한. 결과를 알리고 버전을 저장한다</summary>
     private async Task TestK8sAsync(K8sCluster c)
     {
         FlashHostStatus(L.F("'{0}' 연결 확인 중...", c.Name), ToastKind.Info);
+        var r = await RunK8sTestAsync(c, CancellationToken.None);   // 상태 점·버전 반영과 다시 그리기는 안에서
+        if (r.Threw) { Dialog.Show(this, r.Error, "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+        if (!r.Ok)
+        {
+            Dialog.Show(this, L.F("'{0}' 에 연결하지 못했습니다.", c.Name), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error, r.Error);
+            return;
+        }
+        FlashHostStatus(L.F("'{0}' 연결됨 · 쿠버네티스 {1}", c.Name, r.Version ?? "") + (r.PodsOk ? "" : " · " + L.T("파드 목록 권한 없음")),
+            r.PodsOk ? ToastKind.Success : ToastKind.Info);
+    }
+
+    /// <summary>연결 테스트 결과. Error 는 화면에 보일 오류 (kubectl 출력 최대 2000자), Threw 는 kubectl 실행 자체가 실패한 경우</summary>
+    internal sealed record K8sTestResult(bool Ok, string? Version, bool PodsOk, string Error, bool TimedOut, bool Threw);
+
+    /// <summary>
+    /// 연결 테스트 핵심 (UI 연결 테스트 · MCP test_k8s_cluster 공용, UI 스레드에서): kubectl version + auth can-i list pods.
+    /// 상태 점(_k8sHealth)과 저장된 Version 을 반영하고 페이지가 보이면 다시 그린다. 40초 제한.
+    /// ct 로 취소하면 OperationCanceledException (상태 점은 바꾸지 않는다)
+    /// </summary>
+    private async Task<K8sTestResult> RunK8sTestAsync(K8sCluster c, CancellationToken ct)
+    {
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(40));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(40));
             var v = await Kubectl.RunAsync(c, new[] { "version", "-o", "json", "--request-timeout=20s" }, TimeSpan.FromSeconds(30), cts.Token);
             var server = K8sVersion(v.Output);
             if (server == null)
             {
                 _k8sHealth[c.Id] = false;
-                RefreshK8s();
+                RefreshK8sIfVisible();
                 var err = (v.Error.Length > 0 ? v.Error : v.Output).Trim();
-                Dialog.Show(this, L.F("'{0}' 에 연결하지 못했습니다.", c.Name), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error,
-                    v.TimedOut ? L.T("응답이 없습니다 (시간 초과).") : err.Length > 2000 ? err[..2000] : err);
-                return;
+                return new(false, null, false, v.TimedOut ? L.T("응답이 없습니다 (시간 초과).") : err.Length > 2000 ? err[..2000] : err, v.TimedOut, false);
             }
             var can = await Kubectl.RunAsync(c, new[] { "auth", "can-i", "list", "pods", "--request-timeout=20s" }, TimeSpan.FromSeconds(30), cts.Token);
             _k8sHealth[c.Id] = true;
@@ -330,16 +410,15 @@ public partial class MainWindow
                 copy.Version = server;
                 try { K8sStore.Upsert(copy); } catch { }
             }
-            RefreshK8s();
-            var podsOk = can.Output.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase);
-            FlashHostStatus(L.F("'{0}' 연결됨 · 쿠버네티스 {1}", c.Name, server) + (podsOk ? "" : " · " + L.T("파드 목록 권한 없음")),
-                podsOk ? ToastKind.Success : ToastKind.Info);
+            RefreshK8sIfVisible();
+            return new(true, server, can.Output.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase), "", false, false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _k8sHealth[c.Id] = false;
-            RefreshK8s();
-            Dialog.Show(this, ex.Message, "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
+            RefreshK8sIfVisible();
+            return new(false, null, false, ex.Message, false, true);
         }
     }
 

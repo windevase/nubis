@@ -11,6 +11,7 @@ public partial class MainWindow
 {
     // =================== Kubernetes: 클라우드에서 클러스터 찾기 · 동기화 ===================
 
+    /// <summary>클라우드에서 찾기가 진행 중 (UI 버튼 · MCP find_k8s_clusters 공용, UI 스레드에서만)</summary>
     private bool _k8sFinding;
 
     /// <summary>
@@ -34,7 +35,14 @@ public partial class MainWindow
             Dialog.Show(this, L.F("선택 해제한 프로필의 클러스터 {0}개를 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.", plan.Remove.Count),
                 "Kubernetes", MessageBoxButton.YesNo, MessageBoxImage.Warning, string.Join("\n", plan.Remove.Select(c => c.Name))) != MessageBoxResult.Yes)
             return;
-        ApplyUnselected(plan);
+        // 창이 열려 있는 동안 Claude(find_k8s_clusters)가 찾기를 시작했을 수 있다 — 겹쳐 반영하지 않는다
+        if (_k8sFinding)
+        {
+            FlashHostStatus(L.T("이미 클라우드에서 클러스터를 찾는 중입니다. 끝난 뒤 다시 하세요."), ToastKind.Info);
+            return;
+        }
+        if (ApplyUnselected(plan) is { } error)
+            Dialog.Show(this, L.F("저장 실패: {0}", error), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
         if (plan.Fetch.Count == 0)
         {
             RefreshK8s();
@@ -43,19 +51,32 @@ public partial class MainWindow
                 : L.T("고른 프로필이 없어 클러스터 동기화만 껐습니다."), ToastKind.Info);
             return;
         }
-        await FindClustersAsync(plan.Fetch);
+        FlashHostStatus(L.F("클라우드 프로필 {0}개에서 클러스터를 찾는 중...", plan.Fetch.Count), ToastKind.Info);
+        var r = await FindClustersAsync(plan.Fetch, CancellationToken.None);
+        if (r.Error != null)
+            Dialog.Show(this, L.F("클러스터 찾기 실패: {0}", r.Error), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
+        else if (r.SaveError != null)
+            Dialog.Show(this, L.F("클러스터 목록을 저장하지 못했습니다: {0}", r.SaveError), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error,
+                string.Join("\n", r.Lines));
+        else
+            Dialog.Show(this, r.Headline(), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Information,
+                r.Lines.Count > 0 ? string.Join("\n", r.Lines) : null);
     }
 
-    /// <summary>고르지 않은 프로필: 클러스터 동기화를 끄고, 요청했으면 그 클러스터 카드를 지운다</summary>
-    private void ApplyUnselected(K8sProfilePick.Plan plan)
+    /// <summary>
+    /// 고르지 않은 프로필: 계획의 Disable 프로필은 클러스터 동기화를 끄고, Remove 클러스터 카드를 지운다
+    /// (UI 찾기 · MCP find_k8s_clusters 공용 — MCP 는 인자에 따라 Disable·Remove 를 비운 계획을 넘긴다). 저장 실패면 오류 문구
+    /// </summary>
+    private string? ApplyUnselected(K8sProfilePick.Plan plan)
     {
         foreach (var p in plan.Disable) p.SyncClusters = false;
         if (plan.Disable.Count > 0) SaveProfiles();
-        if (plan.Remove.Count == 0) return;
+        if (plan.Remove.Count == 0) return null;
         var gone = plan.Remove.Select(c => c.Id).ToHashSet();
         try { K8sStore.ReplaceAll(K8sStore.All().Where(c => !gone.Contains(c.Id)).Select(c => c.Clone()).ToList()); }
-        catch (Exception ex) { Dialog.Show(this, L.F("저장 실패: {0}", ex.Message), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error); return; }
-        foreach (var id in gone) _k8sHealth.Remove(id);
+        catch (Exception ex) { return ex.Message; }
+        foreach (var id in gone) { _k8sHealth.Remove(id); _k8sAuthCache.Remove(id); }
+        return null;
     }
 
     /// <summary>
@@ -65,16 +86,31 @@ public partial class MainWindow
     /// </summary>
     private readonly HashSet<Guid> _k8sFindBusy = new();
 
-    /// <summary>프로필들의 클러스터를 조회해 반영하고 결과를 알린다 (동시 4개, 3분 제한, 저장은 한 번)</summary>
-    private async Task FindClustersAsync(List<CloudProfile> profiles)
+    /// <summary>
+    /// 찾기 결과 (UI 결과 창 · MCP 결과 요약 공용). Lines 는 프로필별 한 줄, SaveError 는 목록 저장 실패, Error 는 예상 못 한 오류
+    /// </summary>
+    internal sealed record K8sFindResult(int Profiles, int Total, int Added, List<string> Lines, string? SaveError, string? Error)
+    {
+        public string Headline() => Total == 0
+            ? L.F("프로필 {0}개에서 클러스터를 찾지 못했습니다.", Profiles)
+            : L.F("클러스터 {0}개를 찾았습니다 (새로 {1}개). 고른 프로필은 앞으로 동기화할 때 함께 갱신합니다.", Total, Added);
+    }
+
+    /// <summary>
+    /// 프로필들의 클러스터를 조회해 반영한다 (UI 찾기 · MCP find_k8s_clusters 공용, UI 스레드에서). 동시 4개, 3분 제한, 저장은 한 번.
+    /// 고른 프로필은 SyncClusters 를 켠다. ct 로 취소하면 끝나지 않은 프로필은 '취소' 로 남기고 끝난 프로필 결과만 반영한다.
+    /// 이미 찾는 중이면 부르지 않는다 (부른 쪽이 _k8sFinding 을 확인)
+    /// </summary>
+    private async Task<K8sFindResult> FindClustersAsync(List<CloudProfile> profiles, CancellationToken ct)
     {
         _k8sFinding = true;
         K8sCloudButton.IsEnabled = false;
-        FlashHostStatus(L.F("클라우드 프로필 {0}개에서 클러스터를 찾는 중...", profiles.Count), ToastKind.Info);
         foreach (var p in profiles) _k8sFindBusy.Add(p.Id);
+        var lines = new List<string>();
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromMinutes(3));
             using var gate = new SemaphoreSlim(4);
             // 사용자가 고른 프로필은 조회 결과와 상관없이(로그인 만료·시간 초과 등) 앞으로 동기화할 때 함께 갱신한다
             foreach (var p in profiles) p.SyncClusters = true;
@@ -108,14 +144,14 @@ public partial class MainWindow
                 }
                 catch (OperationCanceledException) when (cts.IsCancellationRequested)
                 {
-                    return (p, r: (ClusterFetchResult?)null, err: (string?)L.T("시간 안에 끝나지 않음 (3분)"));
+                    return (p, r: (ClusterFetchResult?)null,
+                        err: (string?)(ct.IsCancellationRequested ? L.T("요청이 취소됨") : L.T("시간 안에 끝나지 않음 (3분)")));
                 }
                 catch (Exception ex) { return (p, r: (ClusterFetchResult?)null, err: (string?)CloudProviders.FirstLine(ex.Message)); }
             }));
 
             // 결과를 사본 하나에 모아 한 번에 저장한다 (프로필마다 전체 복사 · DPAPI 저장 · 다시 그리기를 하지 않게)
             var list = K8sStore.All().Select(c => c.Clone()).ToList();
-            var lines = new List<string>();
             var applied = new List<CloudProfile>();
             int total = 0, added = 0;
             foreach (var (p, r, err) in results)
@@ -135,23 +171,14 @@ public partial class MainWindow
             if (applied.Count > 0)
             {
                 try { CommitClusters(list, applied); }
-                catch (Exception ex)
-                {
-                    Dialog.Show(this, L.F("클러스터 목록을 저장하지 못했습니다: {0}", ex.Message), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error,
-                        string.Join("\n", lines));
-                    return;
-                }
+                catch (Exception ex) { return new(profiles.Count, total, added, lines, ex.Message, null); }
             }
-            var head = total == 0
-                ? L.F("프로필 {0}개에서 클러스터를 찾지 못했습니다.", profiles.Count)
-                : L.F("클러스터 {0}개를 찾았습니다 (새로 {1}개). 고른 프로필은 앞으로 동기화할 때 함께 갱신합니다.", total, added);
-            Dialog.Show(this, head, "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Information,
-                lines.Count > 0 ? string.Join("\n", lines) : null);
+            return new(profiles.Count, total, added, lines, null, null);
         }
         catch (Exception ex)
         {
-            // 예상 못 한 오류 — async void 처리기로 올라가 앱이 죽지 않게
-            Dialog.Show(this, L.F("클러스터 찾기 실패: {0}", CloudProviders.FirstLine(ex.Message)), "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Error);
+            // 예상 못 한 오류 — UI(async void)·MCP 로 올라가 앱이 죽거나 상태가 남지 않게 결과로 돌려준다
+            return new(profiles.Count, 0, 0, lines, null, CloudProviders.FirstLine(ex.Message));
         }
         finally
         {
@@ -159,7 +186,8 @@ public partial class MainWindow
             // MissCount · SyncClusters 가 바뀌었으므로 저장 실패·중간 오류에도 프로필은 저장
             SaveProfiles();   // 실패는 SaveProfiles 가 알린다
             _k8sFinding = false;
-            RefreshK8s();
+            K8sCloudButton.IsEnabled = _profiles.Count > 0;
+            RefreshK8sIfVisible();
         }
     }
 
