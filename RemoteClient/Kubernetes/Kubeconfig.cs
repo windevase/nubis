@@ -350,7 +350,9 @@ public static class Kubeconfig
             if (rule.FileKey == null) { copy.Add(k, v); continue; }
             // 같은 맵에 내용 키가 이미 있으면 그것이 우선 (kubectl 과 같음) — 파일 키는 버린다
             if (m.Children.ContainsKey(new YamlScalarNode(rule.DataKey))) continue;
-            var path = (v as YamlScalarNode)?.Value ?? "";
+            // 빈 값(certificate-authority: "")·스칼라가 아닌 값은 kubectl 처럼 없는 것으로 본다 (ReferencedFiles 와 같은 규칙) —
+            // 그대로 읽으면 기준 폴더 자체를 파일로 읽으려다 가져오기가 실패한다
+            if (v is not YamlScalarNode { Value: { Length: > 0 } path }) continue;
             var bytes = ReadReferenced(path, baseDir);
             copy.Add(rule.DataKey, Q(rule.Base64 ? Convert.ToBase64String(bytes) : System.Text.Encoding.UTF8.GetString(bytes).Trim()));
         }
@@ -399,7 +401,8 @@ public static class Kubeconfig
             if (info.Length > MaxChars) throw new FormatException(L.F("인증 파일이 너무 큽니다: {0}", path));
             return File.ReadAllBytes(expanded);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        // ArgumentException·NotSupportedException: 경로에 쓸 수 없는 문자 등 — 호출하는 쪽(가져오기 창·MCP)이 FormatException 만 받아도 되게 바꾼다
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             throw new FormatException(L.F("kubeconfig 가 가리키는 파일을 읽지 못했습니다: {0} ({1})", path, ex.Message));
         }

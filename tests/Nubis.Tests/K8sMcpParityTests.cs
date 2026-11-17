@@ -81,12 +81,16 @@ public class K8sMcpParityTests
     }
 
     [Fact]
-    public void 원격_셸의_kubectl_config_view_판정은_그대로()
+    public void 원격_셸의_kubectl_config_view_는_승인_대상()
     {
-        // 원격 서버의 kubeconfig 는 그 서버 것 — run_command 판정(Check fixedCluster=false)은 기존 규칙(--raw 는 자동 승인 안 함)을 따른다
+        // 원격 서버의 kubeconfig 는 그 서버 것이라 인자 검사(Check fixedCluster=false)는 통과하지만, 자동 승인(읽기 전용)은 하지 않는다 —
+        // 옵션 없는 config view 도 basic 인증 password · OIDC refresh-token · exec env 를 가리지 않고(client-go ShortenConfig),
+        // --flatten 은 가리기 자체를 건너뛴다. 이름만 보이는 get-contexts · current-context 는 그대로 자동 승인
         Assert.Null(KubectlArgs.Check(A("config view"), fixedCluster: false));
-        Assert.True(ReadOnlyCommands.IsReadOnly("kubectl config view", CommandShell.Sh));
+        Assert.False(ReadOnlyCommands.IsReadOnly("kubectl config view", CommandShell.Sh));
         Assert.False(ReadOnlyCommands.IsReadOnly("kubectl config view --raw", CommandShell.Sh));
+        Assert.False(ReadOnlyCommands.IsReadOnly("kubectl config view --flatten", CommandShell.Sh));
+        Assert.True(ReadOnlyCommands.IsReadOnly("kubectl config get-contexts", CommandShell.Sh));
     }
 
     [Theory]

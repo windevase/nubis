@@ -24,7 +24,9 @@ public partial class MainWindow
 
         yield return new McpTool("run_kubectl",
             "등록된 클러스터 하나에 kubectl 을 실행하고 출력을 돌려준다 (이 PC 의 kubectl, 셸을 거치지 않음). 클러스터·인증은 앱이 고정하므로 " +
-            "--kubeconfig · --context · --cluster · --user · -s/--server · --token · --as 는 쓸 수 없고, config view(--raw · --flatten 포함)도 저장된 인증이 나오므로 쓸 수 없다(주소·네임스페이스는 list_k8s_clusters). 대화형 명령(exec -it, attach, port-forward, proxy, edit, logs -f)은 안 된다 — " +
+            "--kubeconfig · --context · --cluster · --user · -s/--server · --token · --as 는 쓸 수 없고, config view(--raw · --flatten 포함)도 저장된 인증이 나오므로 쓸 수 없다(주소·네임스페이스는 list_k8s_clusters). " +
+            "이 PC 의 파일·프로그램을 쓰는 cp · kustomize · diff · edit · -k/--kustomize · --from-file · --from-env-file · --cert/--key 도 안 되고, -f 는 Nubis 데이터 폴더·~/.ssh 밖의 파일만. " +
+            "대화형·끝나지 않는 명령(exec -it, attach, port-forward, proxy, debug, logs -f, --watch)은 안 된다 — " +
             "파드 셸·로그는 open_k8s_session 으로 탭을 연다. 실행 전에 앱이 사용자 승인을 받는다 (사용자가 읽기 전용 자동 승인을 켰고 get·describe·logs·top 등 읽기 전용이면 승인 생략, 감사 로그는 항상). " +
             "Secret 값 조회(get secret -o yaml 등)는 꼭 필요할 때만.",
             Schema(new
@@ -158,17 +160,35 @@ public partial class MainWindow
         else sb.AppendLine("주의: 이 PC 에서 kubectl 을 찾지 못했습니다 — run_kubectl 은 실패합니다. 사용자에게 설치(winget install Kubernetes.kubectl)를 안내하세요.");
     }
 
-    /// <summary>run_kubectl 에서 받지 않는 대화형·장시간 명령 (결과가 끝나지 않거나 편집기·포트를 연다)</summary>
+    /// <summary>
+    /// run_kubectl 에서 받지 않는 대화형·장시간 명령 (결과가 끝나지 않거나 편집기·포트를 연다).
+    /// 하위 명령은 KubectlArgs.SubcommandIndex(cobra 처럼 루트의 값 받는 옵션 -n x · -v 6 등을 건너뜀)로 찾는다 (-n default proxy · -v 1 port-forward).
+    /// 자리를 정할 수 없으면(모르는 옵션이 앞에 있음: -l -- edit · -A attach) 막을 명령이 끝 표시 앞 어디에 있든 거부한다.
+    /// 옵션은 짧은 묶음(-pf · -Aw)·=값·_ 표기까지 본다
+    /// </summary>
     internal static string? KubectlInteractiveReason(IReadOnlyList<string> args)
     {
-        var before = args.TakeWhile(x => x != "--").ToList();
-        var verb = before.FirstOrDefault(x => !x.StartsWith("-", StringComparison.Ordinal)) ?? "";
-        if (verb is "attach" or "port-forward" or "proxy" or "edit" or "debug")
+        if (KubectlArgs.CommandIs(args, "attach", "port-forward", "proxy", "edit", "debug") is { } verb)
             return $"'{verb}' 는 대화형·장시간 명령이라 run_kubectl 로 실행할 수 없습니다.";
-        if (verb == "exec" && before.Any(x => x is "-i" or "-t" or "-it" or "-ti" or "--stdin" or "--tty" || x.StartsWith("--stdin=", StringComparison.Ordinal) || x.StartsWith("--tty=", StringComparison.Ordinal)))
+        var before = args.Take(KubectlArgs.TerminatorIndex(args)).Select(x => x.Trim()).ToList();
+        var at = KubectlArgs.SubcommandIndex(args);
+        // 하위 명령을 확신할 수 없으면(모르는 옵션이 앞에 있음) 어디에든 있으면 그 명령으로 본다
+        bool Is(string v) => at >= 0 ? args[at].Trim() == v : before.Contains(v);
+        static (string Name, string? Value) Long(string x)
+        {
+            if (!x.StartsWith("--", StringComparison.Ordinal) || x.Length == 2) return ("", null);
+            var eq = x.IndexOf('=');
+            return (KubectlArgs.LongName(eq < 0 ? x : x[..eq]), eq < 0 ? null : x[(eq + 1)..]);
+        }
+        // pflag 의 bool 거짓 값 (--watch=false 는 끝나는 명령)
+        static bool False(string? v) => v is "false" or "False" or "FALSE" or "f" or "F" or "0";
+        if (Is("exec") && before.Any(x => KubectlArgs.ShortHas(x, "it") || Long(x) is { Name: "--stdin" or "--tty" } o && !False(o.Value)))
             return "exec -i/-t 는 대화형이라 run_kubectl 로 실행할 수 없습니다 — 비대화형 exec(예: exec pod -- ls /) 는 됩니다. 셸은 open_k8s_session kind=shell.";
-        if ((verb == "logs" || verb == "get") && before.Any(x => x is "-f" or "--follow" or "-w" or "--watch" or "--watch-only" || x.StartsWith("--follow=", StringComparison.Ordinal) || x.StartsWith("--watch", StringComparison.Ordinal)))
-            return "-f/--follow/--watch 는 끝나지 않아 run_kubectl 로 실행할 수 없습니다. 로그 탭은 open_k8s_session kind=logs.";
+        // --follow · --watch · --watch-only (어느 하위 명령이든: get · events · rollout status …), -w 묶음(-Aw), logs 의 -f 묶음(-pf · -f=true)
+        if (before.Any(x => KubectlArgs.ShortHas(x, "w") ||
+                            Long(x) is var o && (o.Name.StartsWith("--follow", StringComparison.Ordinal) || o.Name.StartsWith("--watch", StringComparison.Ordinal)) && !False(o.Value)) ||
+            Is("logs") && before.Any(x => KubectlArgs.ShortHas(x, "f")))
+            return "-f/--follow/-w/--watch 는 끝나지 않아 run_kubectl 로 실행할 수 없습니다. 로그 탭은 open_k8s_session kind=logs.";
         return null;
     }
 
@@ -186,12 +206,10 @@ public partial class MainWindow
             }
             if (list.Count == 0) throw new McpToolException("args 또는 command 가 필요합니다.");
             var ns = Arg(a, "namespace").Trim();
-            var before = list.TakeWhile(x => x != "--").ToList();
-            if (ns.Length > 0 && !before.Any(x => x is "-n" or "-A" or "--all-namespaces" || x.StartsWith("--namespace", StringComparison.Ordinal) || x.StartsWith("-n=", StringComparison.Ordinal)))
-            {
-                var at = list.IndexOf("--");
-                list.InsertRange(at < 0 ? list.Count : at, new[] { "-n", ns });
-            }
+            var end = KubectlArgs.TerminatorIndex(list);
+            var before = list.Take(end).ToList();
+            if (ns.Length > 0 && !before.Any(x => KubectlArgs.ShortHas(x, "nA") || x.StartsWith("--namespace", StringComparison.Ordinal) || x.StartsWith("--all-namespaces", StringComparison.Ordinal)))
+                list.InsertRange(end, new[] { "-n", ns });
             return (c, list);
         });
         if (KubectlArgs.Validate(args) is { } bad) throw new McpToolException(bad);

@@ -217,6 +217,25 @@ public class KubernetesTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task run_kubectl_로도_임시_kubeconfig_폴더를_읽지_못한다()
+    {
+        // ClaudeGuard 의 Read 규칙을 kubectl 로 돌아가는 길: 폴더 전체를 configmap 으로 만들어 출력 · --local -f 로 그대로 출력
+        var run = SecureTempFile.K8sDir;
+        foreach (var args in new[]
+                 {
+                     new[] { "create", "configmap", "x", "--from-file=" + run, "--dry-run=client", "-o", "yaml" },
+                     new[] { "create", "secret", "generic", "x", "--from-file", run, "--dry-run=client", "-o", "yaml" },
+                     new[] { "label", "--local", "-f", run, "-o", "yaml", "a=b" },
+                     new[] { "label", "--local", "-Rf", Path.GetDirectoryName(run)!, "-o", "yaml", "a=b" },
+                     new[] { "cp", "web:/x", Path.Combine(run, "a.yaml") },
+                 })
+        {
+            Assert.NotNull(KubectlArgs.Validate(args));
+            await Assert.ThrowsAsync<ArgumentException>(() => Kubectl.RunAsync(new K8sCluster(), args, TimeSpan.FromSeconds(1), default));
+        }
+    }
+
+    [Fact]
     public void 추가_환경변수가_자식_환경_블록에_들어간다()
     {
         var block = ChildEnvironment.Build(new Dictionary<string, string> { ["KUBECONFIG"] = @"C:\x\a.yaml" });
