@@ -92,7 +92,6 @@
   "이름 복사": "Copy name",
   "이전 컨테이너 로그 (재시작 전)": "Previous container logs (before restart)",
   "자동 새로고침 꺼짐 — 누르면 켬": "Auto refresh is off. Click to turn it on.",
-  "자동 새로고침 켜짐 (5초) — 누르면 끔": "Auto refresh is on (5 s). Click to turn it off.",
   "재시작": "Restarts",
   "찾는 이름이 없습니다.": "No matching names.",
   "항목이 없습니다.": "Nothing here.",

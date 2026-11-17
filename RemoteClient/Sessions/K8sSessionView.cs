@@ -106,7 +106,7 @@ public sealed class K8sSessionView : UserControl, ISessionView
                 _panel.ShellRequested += (pod, c) => ShellRequested?.Invoke(_cluster, pod, c);
                 _panel.LogsRequested += (pod, c, prev) => LogsRequested?.Invoke(_cluster, pod, c, prev);
                 // describe · YAML 은 오른쪽 터미널에 입력해 실행 (출력을 스크롤·검색·복사할 수 있게)
-                _panel.TerminalCommand += cmd => { if (_term.SendText(cmd + "\r")) _term.FocusSession(); };
+                _panel.TerminalCommand += cmd => _ = RunInTerminalAsync(cmd);
                 Grid.SetColumn(_panel, 1);
                 ((Grid)Content).Children.Add(_panel);
             }
@@ -124,6 +124,33 @@ public sealed class K8sSessionView : UserControl, ISessionView
             if (_panel != null) _panel.Visibility = Visibility.Collapsed;
             _term.FocusSession();
         }
+    }
+
+    /// <summary>
+    /// 패널의 describe · YAML 명령을 터미널에 입력해 실행한다. PowerShell 프롬프트가 보일 때만 보낸다 —
+    /// k9s · kubectl logs -f · 파드 셸 · 입력하던 글자가 있을 때 Enter 까지 보내면 그 프로그램에 들어가므로,
+    /// 그때는 보내지 않고 명령을 클립보드에 복사해 알린다 (프롬프트를 바꿔 알아보지 못하는 경우에도 붙여 넣어 쓸 수 있게)
+    /// </summary>
+    private async Task RunInTerminalAsync(string cmd)
+    {
+        if (_term.Status != SessionStatus.Connected)
+        {
+            Toast.Show(L.T("kubectl 터미널이 연결되어 있지 않아 명령을 보내지 못했습니다."), ToastKind.Warning);
+            return;
+        }
+        bool atPrompt;
+        try { atPrompt = await _term.IsAtPromptAsync(); }
+        catch { atPrompt = false; }
+        if (atPrompt && _term.SendText(cmd + "\r"))
+        {
+            _term.FocusSession();
+            return;
+        }
+        var copied = false;
+        try { Clipboard.SetText(cmd); copied = true; } catch { }
+        Toast.Show(copied
+            ? L.T("터미널이 명령을 기다리는 상태가 아니어서(실행 중인 프로그램 · 입력 중인 글자) 보내지 않고 클립보드에 복사했습니다.")
+            : L.T("터미널이 명령을 기다리는 상태가 아니어서(실행 중인 프로그램 · 입력 중인 글자) 보내지 않았습니다."), ToastKind.Warning, 6000);
     }
 
     // ----- ISessionView: 터미널에 맡긴다 -----
