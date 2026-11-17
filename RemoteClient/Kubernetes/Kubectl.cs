@@ -105,7 +105,11 @@ public static class KubectlArgs
 /// <summary>kubectl 찾기·실행 (클러스터의 kubeconfig 를 보안 임시 파일로 넘긴다)</summary>
 public static class Kubectl
 {
-    public sealed record Result(int ExitCode, string Output, string Error, bool TimedOut);
+    public sealed record Result(int ExitCode, string Output, string Error, bool TimedOut)
+    {
+        /// <summary>표준 출력이 maxOutput 을 넘어 가운데를 잘랐다 (JSON 이면 깨진 것)</summary>
+        public bool Truncated { get; init; }
+    }
 
     /// <summary>kubectl.exe 경로. 설정 → PATH → 흔한 설치 위치 순. 없으면 null</summary>
     public static string? Locate(string? configured = null)
@@ -205,10 +209,10 @@ public static class Kubectl
         }
         var output = await outTask;
         var error = await errTask;
-        return new Result(timedOut ? -1 : p.ExitCode, output, error, timedOut);
+        return new Result(timedOut ? -1 : p.ExitCode, output.Text, error.Text, timedOut) { Truncated = output.Truncated };
     }
 
-    private static async Task<string> ReadCappedAsync(StreamReader reader, int max)
+    internal static async Task<(string Text, bool Truncated)> ReadCappedAsync(TextReader reader, int max)
     {
         // 앞부분과 뒷부분만 남긴다 (SshExec.ClipOutput 과 같은 모양)
         var head = new StringBuilder();
@@ -224,6 +228,6 @@ public static class Kubectl
             if (tail.Length > keep * 2) { dropped += tail.Length - keep; tail.Remove(0, tail.Length - keep); }
         }
         if (tail.Length > max - max / 4) { dropped += tail.Length - (max - max / 4); tail.Remove(0, tail.Length - (max - max / 4)); }
-        return dropped > 0 ? head + $"\n... (출력이 길어 가운데 {dropped}자 생략) ...\n" + tail : head.ToString() + tail;
+        return dropped > 0 ? (head + $"\n... (출력이 길어 가운데 {dropped}자 생략) ...\n" + tail, true) : (head.ToString() + tail, false);
     }
 }

@@ -131,7 +131,7 @@
                 </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
                     <DataTemplate>
-                        <Grid ToolTip="{Binding ToolTipText, Mode=OneTime}">
+                        <Grid ToolTip="{Binding ToolTipText}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="52"/>
@@ -139,14 +139,14 @@
                                 <ColumnDefinition Width="44"/>
                                 <ColumnDefinition Width="40"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock Text="{Binding DisplayName, Mode=OneTime}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="1" Text="{Binding Item.Ready, Mode=OneTime}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                            <TextBlock Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Text="{Binding Ready}" Foreground="{StaticResource TextSecondary}" FontSize="12"
                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="2" Text="{Binding Item.Status, Mode=OneTime}" Foreground="{Binding StatusBrush, Mode=OneTime}" FontSize="12"
+                            <TextBlock Grid.Column="2" Text="{Binding Status}" Foreground="{Binding StatusBrush}" FontSize="12"
                                        TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="3" Text="{Binding Item.Restarts, Mode=OneTime}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                            <TextBlock Grid.Column="3" Text="{Binding Restarts}" Foreground="{StaticResource TextSecondary}" FontSize="12"
                                        TextTrimming="CharacterEllipsis" HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                            <TextBlock Grid.Column="4" Text="{Binding Item.Age, Mode=OneTime}" Foreground="{StaticResource TextSecondary}" FontSize="12"
+                            <TextBlock Grid.Column="4" Text="{Binding Age}" Foreground="{StaticResource TextSecondary}" FontSize="12"
                                        HorizontalAlignment="Right" VerticalAlignment="Center"/>
                         </Grid>
                     </DataTemplate>
