@@ -91,6 +91,9 @@ public partial class MainWindow
         var (kind, target) = page.IndexOf(':') is var i and > 0 ? (page[..i].Trim().ToLowerInvariant(), page[(i + 1)..].Trim()) : (page.ToLowerInvariant(), "");
         if (kind is "vault_new" or "vault_edit" or "cloud_profile" or "kubeconfig_import" && _mcpEditDialogOpen)
             throw new McpToolException("open_app_page 로 연 입력 창이 아직 열려 있습니다. 사용자가 그 창을 저장하거나 닫은 뒤 다시 시도하세요.");
+        // 사용자가 직접 연 대화상자(가져오기·Vault 수정 등)나 승인 창이 떠 있으면 그 위에 같은 창을 겹쳐 띄우지 않는다
+        if (kind is "vault_new" or "vault_edit" or "cloud_profile" or "kubeconfig_import" or "host_edit" && System.Windows.Interop.ComponentDispatcher.IsThreadModal)
+            throw new McpToolException("앱에 다른 창(대화상자)이 열려 있습니다. 사용자가 그 창을 닫은 뒤 다시 시도하세요.");
         Action? open = null;
         string result;
         switch (kind)

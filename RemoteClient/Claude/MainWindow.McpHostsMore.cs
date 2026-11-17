@@ -303,6 +303,14 @@ public partial class MainWindow
         // update_host 와 같은 항목을 복사본에 적용 (같은 ApplyHostArgs — 검사·프로토콜 전용 값 정리·지우기 규칙이 같다).
         // 원본 지정(host)과 이름·그룹(label·group, 위 MakeDuplicate 에서 처리)은 뺀다
         var changes = ApplyHostArgs(copy, McpHostParity.Without(a, "host", "label", "group"), isNew: false);
+        // 주소를 바꾼 복사본은 다른 서버 — update_host·편집 창과 같게 사설 IP 를 새 주소로 맞추고(접속은 PrimaryAddress = 사설 IP 우선),
+        // 원본 서버의 SSH 배너·OS 판별은 지운다 (새 서버를 sh 로 잘못 보고 읽기 전용 자동 승인하지 않게)
+        if (!string.Equals(copy.Address, src.Address, StringComparison.OrdinalIgnoreCase))
+        {
+            if (copy.PrivateIp != null) copy.PrivateIp = copy.Address;
+            copy.SshBannerOs = null;
+            if (src.IsCloud) { copy.Os = null; copy.Purpose = null; }
+        }
 
         // 비밀번호는 있음/없음만 (값·암호문은 결과·로그·승인 창에 넣지 않는다)
         var hasPw = !string.IsNullOrEmpty(copy.ProtectedPassword);

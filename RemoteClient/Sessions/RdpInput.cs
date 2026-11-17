@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 namespace Nubis;
 
 /// <summary>입력을 보낼 RDP 입력 창과, 아직 같은 탭·같은 연결인지 확인하는 함수 (UI 스레드에서 부른다)</summary>
-internal readonly record struct RdpTarget(IntPtr Hwnd, Func<bool> Alive);
+internal readonly record struct RdpTarget(IntPtr Hwnd, Func<bool> Alive, Func<bool> CanRelease);
 
 /// <summary>원격으로 보낼 키 하나의 누름/뗌 (스캔코드 기준 — RDP 는 스캔코드를 보내고 원격의 자판 배열이 글자를 정한다)</summary>
 internal readonly record struct RdpKeyEvent(ushort Vk, byte Scan, bool Extended, bool Up);
@@ -283,20 +283,21 @@ internal static class RdpInputSender
 
     /// <summary>
     /// 메시지 하나마다 대상이 아직 같은 탭·같은 연결인지 확인한다 — 긴 입력 도중 탭을 닫거나(컨트롤은 풀로 돌아가 다른 탭이 다시 쓸 수 있음)
-    /// 다시 연결하면 남은 입력을 다른 서버·새 세션에 보내지 않고 멈춘다
+    /// 다시 연결하면 남은 입력을 다른 서버·새 세션에 보내지 않고 멈춘다.
+    /// release = 이미 누른 키·버튼을 떼는 메시지 — 같은 탭·같은 연결이면(자동 재연결 중·안내 화면이어도) 보낸다 (눌린 채 남지 않게)
     /// </summary>
-    private static void Send(RdpTarget ih, uint msg, IntPtr w, IntPtr l)
+    private static void Send(RdpTarget ih, uint msg, IntPtr w, IntPtr l, bool release = false)
     {
-        if (!IsWindow(ih.Hwnd) || !ih.Alive())
+        if (!IsWindow(ih.Hwnd) || !(release ? ih.CanRelease() : ih.Alive()))
             throw new InvalidOperationException("탭이 닫혔거나 연결이 바뀌어 입력을 멈췄습니다.");
         SendMessage(ih.Hwnd, msg, w, l);
     }
 
-    private static void SendKey(RdpTarget ih, RdpKeyEvent e, ref bool alt, ref bool ctrl)
+    private static void SendKey(RdpTarget ih, RdpKeyEvent e, ref bool alt, ref bool ctrl, bool release = false)
     {
         var (msg, w, l) = BuildKeyMessage(e, alt, ctrl);
         if (w == IntPtr.Zero) w = (IntPtr)MapVirtualKey(e.Scan, 1 /* MAPVK_VSC_TO_VK */);
-        Send(ih, msg, w, l);
+        Send(ih, msg, w, l, release);
         if (e.Vk == 0x12) alt = !e.Up;
         if (e.Vk == 0x11) ctrl = !e.Up;
     }
@@ -323,7 +324,7 @@ internal static class RdpInputSender
             for (var i = held.Count - 1; i >= 0; i--)
             {
                 var h = held[i];
-                try { SendKey(ih, h with { Up = true }, ref alt, ref ctrl); } catch { break; }
+                try { SendKey(ih, h with { Up = true }, ref alt, ref ctrl, release: true); } catch { break; }
             }
         }
     }
@@ -342,7 +343,7 @@ internal static class RdpInputSender
         {
             Send(ih, down, (IntPtr)mk, XY(x, y));
             try { await Task.Delay(30, ct); }
-            finally { try { Send(ih, up, IntPtr.Zero, XY(x, y)); } catch { } }   // 취소돼도 버튼은 뗀다
+            finally { try { Send(ih, up, IntPtr.Zero, XY(x, y), release: true); } catch { } }   // 취소돼도 버튼은 뗀다
             if (i + 1 < count) await Task.Delay(60, ct);   // 더블 클릭 간격 안
         }
     }
@@ -367,7 +368,7 @@ internal static class RdpInputSender
         finally
         {
             // 취소·실패해도 왼쪽 버튼은 뗀다 (원격에 끌기 상태가 남지 않게) — 그때까지 옮긴 위치에서
-            try { Send(ih, 0x202, IntPtr.Zero, XY(last.X, last.Y)); } catch { }
+            try { Send(ih, 0x202, IntPtr.Zero, XY(last.X, last.Y), release: true); } catch { }
         }
     }
 

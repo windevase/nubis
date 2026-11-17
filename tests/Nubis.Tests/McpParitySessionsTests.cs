@@ -246,4 +246,18 @@ public class McpParitySessionsTests
         while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
         return d?.FullName ?? throw new InvalidOperationException("repo root not found");
     }
+
+    [Theory]
+    [InlineData(@"C:\tmp\a\..", "tmp")]          // 정리하면 C:\tmp — ".." 가 원격 이름이 되지 않는다
+    [InlineData(@"C:\tmp\a\.", "a")]
+    [InlineData(@"C:\tmp\a\", "a")]
+    [InlineData(@"C:\tmp\file.txt", "file.txt")]
+    public void 업로드_원격_이름은_정리한_경로의_마지막_이름(string local, string expected) =>
+        Assert.Equal(expected, McpSftpRules.UploadTopName(local));
+
+    [Theory]
+    [InlineData(@"C:\")]
+    [InlineData(@"C:\tmp\..\..")]
+    public void 업로드_원격_이름이_없으면_null(string local) =>
+        Assert.Null(McpSftpRules.UploadTopName(local));
 }

@@ -91,6 +91,9 @@ public partial class MainWindow
             ShowTabWithoutFocus(tab);
             await Task.Delay(700);
         }
+        // 기다리는 동안 창이 최소화됐으면(사용자·set_window_state) 빈 화면을 정상 결과로 돌려주지 않는다
+        if (WindowState == WindowState.Minimized)
+            throw new McpToolException("캡처하는 동안 Nubis 창이 최소화되어 화면을 캡처하지 못했습니다. 창을 열어 달라고 사용자에게 요청하세요.");
 
         var view = tab.View;
         if (view.ActualWidth < 10 || view.ActualHeight < 10) throw new McpToolException("탭 화면 크기를 알 수 없습니다.");

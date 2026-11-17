@@ -69,7 +69,17 @@ public partial class MainWindow
         // 취소·저장 실패 때 원본이 그대로 남는다
         var copy = VaultStore.Get(id)?.Clone();
         if (copy == null) { RefreshVault(); return false; }
-        var saved = VaultEntryDialog.Edit(this, copy) && SaveVault(copy);
+        var openedAt = copy.Updated;
+        var ok = VaultEntryDialog.Edit(this, copy);
+        // 창이 열린 동안 다른 곳(Claude 의 vault_update 등)에서 이 계정이 저장됐으면 창의 옛 값으로 덮어쓰지 않는다
+        if (ok && VaultStore.Get(id) is { } now && now.Updated != openedAt)
+        {
+            Dialog.Show(this, L.T("이 창이 열려 있는 동안 다른 곳에서 이 계정이 바뀌어 저장하지 않았습니다. 다시 열어 수정하세요."), "Vault",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            RefreshVault();
+            return false;
+        }
+        var saved = ok && SaveVault(copy);
         if (saved) RefreshHosts();   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
         RefreshVault();
         return saved;

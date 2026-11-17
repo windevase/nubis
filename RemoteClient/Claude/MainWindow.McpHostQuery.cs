@@ -141,6 +141,12 @@ public partial class MainWindow
             AuditLog.Write("open_session", new[] { target }, command, "거부");
             throw new McpToolException("사용자가 빠른 연결을 거부했습니다.");
         }
+        // 승인 창이 큐에서 기다리는 사이 설정의 기본 Vault 계정이 바뀌었으면 사용자가 본 것과 다른 계정이 이 주소로 간다 — 실행하지 않는다
+        if (McpHelpers.CredentialSourceForAudit(host, null) != credAudit)
+        {
+            AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(대기 중 접속 계정이 바뀜)");
+            throw new McpToolException("승인을 기다리는 동안 접속에 쓰일 기본 계정이 바뀌어 접속하지 않았습니다. 다시 요청하세요.");
+        }
         var tab = Connect(host);
         AuditLog.Write("open_session", new[] { target }, command + $" (session {tab.Id})", "승인·실행");
         return tab;

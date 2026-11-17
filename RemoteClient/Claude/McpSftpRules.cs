@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using System.Text;
 
 namespace Nubis;
@@ -214,6 +215,19 @@ public static class McpSftpRules
                     return $"목록의 경로가 서로 겹칩니다: {normalized[i]} 안에 {normalized[j]} — 바깥 경로만 주세요.";
             }
         return null;
+    }
+
+    /// <summary>
+    /// 올릴 로컬 항목이 원격 폴더 안에서 가질 이름 — 정리하지 않은 "C:\a\.." 는 ".." 가 되어 원격 지정 폴더 밖에 쓰이므로
+    /// 전체 경로로 정리한 뒤 마지막 이름을 쓰고, 드라이브 루트·빈 이름·"."·".."·구분자가 남으면 null (올리지 않음)
+    /// </summary>
+    public static string? UploadTopName(string local)
+    {
+        string full;
+        try { full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(local)); }
+        catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
+        var name = Path.GetFileName(full);
+        return string.IsNullOrEmpty(name) || name is "." or ".." || name.IndexOfAny(new[] { '/', '\\' }) >= 0 ? null : name;
     }
 
     /// <summary>

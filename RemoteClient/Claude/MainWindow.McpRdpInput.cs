@@ -30,6 +30,8 @@ public partial class MainWindow
         public DateTime Until { get; } = until;
         public int Generation { get; } = generation;
         public CancellationTokenSource Stop { get; } = new();
+        /// <summary>허용이 끝나 입력이 멈췄을 때 결과·감사 로그에 쓸 사유 (사용자 해제 / Claude 반납)</summary>
+        public string? StopReason { get; set; }
     }
 
     // 탭별 허용 · 입력 잠금 — 약한 참조라 닫힌 탭은 함께 사라진다
@@ -62,10 +64,19 @@ public partial class MainWindow
     /// </summary>
     internal bool RevokeRdpControl(SessionTab tab, bool byClaude = false)
     {
-        if (_rdpActiveInput.TryGetValue(tab, out var running)) { try { running.Cancel(); } catch (ObjectDisposedException) { } }
+        // 사용자가 끝내면 진행 중인 입력(허용과 무관한 rdp_type 포함)도 멈춘다. Claude 반납은 허용으로 하던 입력만 멈춘다 (허용 토큰 취소)
+        if (!byClaude && _rdpActiveInput.TryGetValue(tab, out var running)) { try { running.Cancel(); } catch (ObjectDisposedException) { } }
         if (!_rdpGrants.TryGetValue(tab, out var g)) return false;
+        var wasActive = ActiveGrant(tab) != null;
         _rdpGrants.Remove(tab);
+        g.StopReason = byClaude ? "Claude 가 화면 조작 허용을 반납해" : "사용자가 화면 조작 허용을 끝내";
         try { g.Stop.Cancel(); } catch (ObjectDisposedException) { }
+        if (!wasActive)
+        {
+            // 이미 만료됐거나 다시 연결돼 쓸 수 없던 허용 — 기록만 지운다 (끝냈다는 알림은 띄우지 않음)
+            AuditLog.Write(byClaude ? "rdp_release_control" : "rdp_control", new[] { SessionAuditTarget(tab) }, "(만료된 화면 조작 허용 기록 지움)", "정리");
+            return true;
+        }
         AuditLog.Write(byClaude ? "rdp_release_control" : "rdp_control", new[] { SessionAuditTarget(tab) }, "(화면 조작 허용 끝냄)", byClaude ? "Claude 반납" : "사용자 해제");
         Toast.Show(byClaude ? L.F("Claude 가 {0} 화면의 조작 허용을 반납했습니다.", tab.Title) : L.F("{0} 화면의 Claude 조작 허용을 끝냈습니다.", tab.Title));
         return true;
@@ -257,8 +268,9 @@ public partial class MainWindow
             // 승인을 묻기 전 연결 번호 — 승인 창이 떠 있는 사이 다시 연결됐으면 승인하지 않은 새 연결에 입력하지 않는다
             var view = (RdpSessionView)tab.View;
             var gen = view.SessionGeneration;
+            RdpGrant? grantObj = null;
             CancellationToken grantStop = default;
-            if (grant) grantStop = (await EnsureRdpControlAsync(tab, tool, action, gen)).Stop.Token;
+            if (grant) { grantObj = await EnsureRdpControlAsync(tab, tool, action, gen); grantStop = grantObj.Stop.Token; }
             else if (approval is { } ap && !await AskApprovalAsync(tool, ap.Title, ap.Description, new[] { target }, ap.Shown))
             {
                 AuditLog.Write(tool, new[] { target }, action, "거부");
@@ -282,7 +294,10 @@ public partial class MainWindow
                 var hwnd = view.FindInputWindow();
                 if (hwnd == IntPtr.Zero) throw new McpToolException("RDP 입력 창을 찾지 못했습니다 (연결 중이거나 끊김). list_sessions 로 상태를 확인하세요.");
                 // 메시지마다 확인: 같은 탭이 열려 있고 · 같은 연결이고 · 입력 창이 그대로인가 (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게)
-                ih = new RdpTarget(hwnd, () => _tabs.Contains(tab) && view.SessionGeneration == gen && view.FindInputWindow() == hwnd);
+                ih = new RdpTarget(hwnd,
+                    () => _tabs.Contains(tab) && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
+                    // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
+                    () => _tabs.Contains(tab) && view.SessionGeneration == gen);
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
@@ -296,7 +311,9 @@ public partial class MainWindow
             try { await act(tab, ih, linked.Token); }
             catch (OperationCanceledException)
             {
-                var why = userStop.IsCancellationRequested || grantStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰" : "요청이 취소되어";
+                var why = userStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰"
+                    : grantStop.IsCancellationRequested ? grantObj?.StopReason ?? "화면 조작 허용이 끝나"
+                    : "요청이 취소되어";
                 AuditLog.Write(tool, new[] { target }, action, $"중단({why}) — 일부 입력됐을 수 있음");
                 throw new McpToolException($"{why} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것).");
             }

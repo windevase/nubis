@@ -7,5 +7,6 @@
   "메모: {0} → {1}": "Note: {0} → {1}",
   "Vault 계정 '{0}' 의 정보를 바꿉니다. 비밀번호·SSH 키는 바뀌지 않습니다.": "Change the details of Vault account '{0}'. The password and SSH key are not changed.",
   "사용자명을 바꾸면 이 계정으로 로그인하는 호스트 {0}개의 로그인 계정이 바뀝니다:": "Changing the username changes the login account of {0} hosts that sign in with this account:",
-  "Claude 가 Vault 계정 정보 변경을 요청합니다": "Claude requests a Vault account change"
+  "Claude 가 Vault 계정 정보 변경을 요청합니다": "Claude requests a Vault account change",
+  "이 창이 열려 있는 동안 다른 곳에서 이 계정이 바뀌어 저장하지 않았습니다. 다시 열어 수정하세요.": "This account was changed elsewhere while this window was open, so it wasn't saved. Open it again to edit."
 }

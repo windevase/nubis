@@ -171,9 +171,14 @@ public partial class MainWindow
     {
         var tops = new List<UploadTop>();
         var counted = 0;
-        foreach (var local in locals)
+        foreach (var raw in locals)
         {
-            if (!Path.IsPathFullyQualified(local)) throw new McpToolException($"local_path 는 절대 경로여야 합니다: {local}");
+            if (!Path.IsPathFullyQualified(raw)) throw new McpToolException($"local_path 는 절대 경로여야 합니다: {raw}");
+            // 정리한 경로로 다룬다 — "C:\a\.." 의 이름이 ".." 가 되어 원격 지정 폴더 밖(상위)에 쓰이지 않게.
+            // 원격 최상위 이름도 이 값에서 구하므로 승인 창에도 정리된 경로가 보인다
+            var local = Path.TrimEndingDirectorySeparator(Path.GetFullPath(raw));
+            if (McpSftpRules.UploadTopName(local) is null)
+                throw new McpToolException($"이 경로는 올릴 수 없습니다 (드라이브 루트이거나 이름이 없음): {raw}");
             if (McpHelpers.BlockedUploadReason(local, AppPaths.DataDir, AppPaths.RootDir) is { } why) throw new McpToolException(why);
             var isDir = Directory.Exists(local);
             if (!isDir && !File.Exists(local)) throw new McpToolException($"로컬 경로가 없습니다: {local}");
@@ -294,7 +299,8 @@ public partial class MainWindow
             }
             foreach (var t in tops)
             {
-                var root = SftpPanel.Combine(remoteDir, Path.GetFileName(t.Local.TrimEnd('\\', '/')));
+                var root = SftpPanel.Combine(remoteDir, McpSftpRules.UploadTopName(t.Local)
+                    ?? throw new McpToolException($"이 경로는 올릴 수 없습니다: {t.Local}"));
                 roots.Add($"{t.Local} → {root}");
                 if (!t.IsDir) { ct.ThrowIfCancellationRequested(); DecideFile(t.Local, root, t.Files[0].Size); continue; }
                 string RemoteOf(string f) => SftpPanel.Combine(root, Path.GetRelativePath(t.Local, f).Replace('\\', '/'));
