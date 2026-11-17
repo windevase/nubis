@@ -272,7 +272,7 @@ public partial class MainWindow
             _ => "로컬 PowerShell",
         };
         var host = address != null ? $" · {address}:{port}" : "";
-        var how = protocol == Protocol.Rdp ? "capture_screen" : "get_terminal_info(현재 폴더·사용자) / read_terminal / get_selection / capture_screen";
+        var how = protocol == Protocol.Rdp ? "capture_screen(조작은 rdp_click / rdp_key / rdp_type)" :"get_terminal_info(현재 폴더·사용자) / read_terminal / get_selection / capture_screen";
         var safeTitle = SafeContextTitle(title);
         return $"[Nubis 현재 화면] 사용자가 지금 보고 있는 탭: session_id={id} · \"{safeTitle}\" · {kind}{host} · {StatusText(status)}. " +
                $"'이 화면 / 지금 터미널 / 이 에러' 는 이 탭을 뜻합니다. 화면 내용은 {how} 를 session_id={id} 로 호출해 확인하세요 " +

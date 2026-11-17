@@ -70,6 +70,9 @@ public partial class MainWindow
         if (tab.Protocol == Protocol.Local) Add(L.T("새 PowerShell 탭"), OpenLocalTerminal, gesture: "Ctrl+Shift+T");
         if (tab.View is RdpSessionView rdp)
             Add(L.T("전체 화면"), () => { if (!_tabs.Contains(tab)) return; SelectTab(tab); rdp.EnterFullScreen(); }, rdp.IsConnected);
+        // Claude 에게 준 화면 조작 허용(10분)을 바로 끝낸다 — 허용 중일 때만 보인다
+        if (tab.View is RdpSessionView && HasRdpControl(tab))
+            Add(L.T("Claude 화면 조작 허용 끝내기"), () => RevokeRdpControl(tab));
         Add(L.T("탭 이름 바꾸기..."), () =>
         {
             // 공백만 넣으면 탭 제목이 비어 탭을 알아볼 수 없다 — 앞뒤 공백을 떼고 빈 이름은 무시

@@ -285,6 +285,9 @@ public partial class MainWindow
             }),
             a => OnUiAsync(async () => (object)await CaptureSessionAsync(FindSession(a), IntArg(a, "max_width") ?? 1600)));
 
+        // RDP 화면 조작 (클릭·끌기·스크롤·키 조합·글자 입력 — MainWindow.McpRdpInput.cs)
+        foreach (var t in RdpInputTools()) yield return t;
+
         yield return new McpTool("run_command",
             "여러 서버에 같은 명령을 병렬 실행하고 서버별 출력·종료 코드를 반환한다. " +
             "리눅스(SSH 호스트)는 SSH 로 셸 명령을, Windows(RDP 호스트)는 WinRM(5986 HTTPS 우선, 실패 시 5985)으로 PowerShell(기본) 또는 cmd 명령을 실행한다. " +

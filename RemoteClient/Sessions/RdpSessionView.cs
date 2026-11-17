@@ -8,7 +8,7 @@ using System.Windows.Threading;
 namespace Nubis;
 
 /// <summary>RDP 세션 탭: WindowsFormsHost 안에 mstscax ActiveX 를 띄운다.</summary>
-public sealed class RdpSessionView : UserControl, ISessionView
+public sealed partial class RdpSessionView : UserControl, ISessionView
 {
     private readonly HostEntry _host;
     private RdpAxHost _rdp = RdpAxHost.Acquire();   // 풀에서 재사용 (핸들·스레드 누수 방지). 치명적 오류 뒤에는 새 컨트롤로 바꾼다
@@ -296,6 +296,7 @@ public sealed class RdpSessionView : UserControl, ISessionView
         SetStatus(SessionStatus.Connecting);
         _loggedIn = false;
         _appliedDisplay = default;   // 새 세션 — 로그인 뒤 한 번은 반드시 맞춘다
+        _sessionGeneration++;        // Claude 화면 조작 허용은 이 연결에만 (다시 연결하면 새로 승인)
 
         try
         {

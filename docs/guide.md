@@ -248,6 +248,7 @@ Nubis hosts the Windows built-in Remote Desktop engine (`mstscax`, the same one 
 - **Entra ID (Azure AD) joined PCs** — use the username `AzureAD\user@domain` and check **Don't use NLA (CredSSP)** under RD Gateway in the host editor (the same as `enablecredsspsupport:i:0` in an .rdp file). This is needed when this PC is not joined to the same Entra tenant. With NLA off, the connection reaches the remote sign-in screen before the account is checked, so turn it on only for the PCs that need it. If `Default.rdp` has `enablecredsspsupport:i:0`, NLA is off for every RDP host. Claude can set it with `rdp_disable_nla` on `add_host` / `update_host` (approval required).
 - Only the server certificate warning follows a Nubis setting ([Settings → RDP](#1213-rdp)).
 - **Full screen** — right-click the tab → **Full screen** (available while connected; there is no keyboard shortcut). The remote resolution matches the monitor, and in full screen the Windows key and Alt+Tab go to the remote computer. Use the connection bar at the top to come back; the session then resizes back to the tab.
+- **Claude can work the remote screen** — it looks with `capture_screen` and clicks or types with the `rdp_*` tools. See **RDP screen** in [10.5](#105-mcp-tools).
 
 ---
 
@@ -427,6 +428,7 @@ Click **Claude** in the title bar (or press `Ctrl+Shift+A`) to open the official
 | Groups | "Rename the On-prem / Web group to Web" · "Set the default SSH account for PRODUCTION to ops" |
 | Tabs | "Reconnect all disconnected tabs" |
 | Remote files | "Create a folder /tmp/x on demo-sftp" |
+| RDP screen | (on an RDP tab) "Open PowerShell and check the status of the Spooler service" |
 | App settings | "Set the terminal theme to dracula and the font size to 16" · "Turn on copy-on-select" |
 | Setup help | "Walk me through setting up GitHub sign-in" |
 
@@ -448,6 +450,8 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 | Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env`, and reading with the tab's sudo rights, always ask) |
 | Running commands on several servers (`run_command`) | Approval prompt (with read-only auto-approve on, only read-only commands skip it; SSH servers that look like Windows or whose OS is unknown always ask) |
 | Typing into a terminal (`send_to_terminal`) | Approval prompt (with read-only auto-approve on, a one-line read-only command skips it while the screen shows a shell prompt — password prompts, vim, local PowerShell tabs and Windows or unknown-OS servers always ask) |
+| RDP screen: clicking, dragging, scrolling and key combinations (`rdp_click`, `rdp_drag`, `rdp_scroll`, `rdp_key`) | Approval prompt the first time on each tab, then allowed on that tab for 10 minutes (written to the audit log) |
+| RDP screen: typing text (`rdp_type`) | **Always an approval prompt** (shows the text to be typed) |
 | Hosts and groups: adding, changing, duplicating or deleting hosts, bulk edits (`bulk_update_hosts`), group defaults (`set_group_defaults`), renaming a group (`rename_group`) | **Always an approval prompt** |
 | Remote files: uploading, downloading, creating folders, renaming, deleting and saving (`sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`, `sftp_write`) | **Always an approval prompt** (deletes show the item count; saving shows a summary of the changes) |
 | Cloud: adding, changing or removing profiles, cloud CLI sign-in | **Always an approval prompt** |
@@ -469,7 +473,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 61 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 66 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -505,6 +509,22 @@ Claude has 61 tools. Anything you can do by hand in the app, Claude can do too. 
 | `get_terminal_info` | The terminal's current folder, sign-in account and sudo switch (answers instantly, no command sent) |
 | `wait_for_output` | Wait until some text appears, the prompt returns or output goes quiet |
 | `send_to_terminal` | Type into a terminal |
+
+**RDP screen**
+
+| Tool | Purpose |
+|---|---|
+| `rdp_click` | Click at (x, y) on the last `capture_screen` image (left, right or middle button; double-click) |
+| `rdp_drag` | Drag from one point on the image to another (moving or resizing windows) |
+| `rdp_scroll` | Scroll the wheel at a point |
+| `rdp_key` | Key combinations in order (`win+r`, `alt+f4`, `ctrl+shift+esc`, `enter`, `tab`, `f5`, `hangul` and so on). A letter key on its own is refused (use `rdp_type`), and so is pasting (`ctrl+v`, `shift+insert`), which would send your clipboard to the server |
+| `rdp_type` | Type text, optionally followed by Enter (`press_enter`) |
+
+Claude looks at the screen with `capture_screen` and works it like a person would, for example Win+R → `powershell` → a command → a new capture to read the result. Each tool captures the screen again afterwards and returns it with the result (`capture_after`, on by default). This is useful on servers where only 3389 is open (WinRM blocked) or for GUI work that needs the signed-in desktop session. When WinRM is reachable, `run_command` is more accurate because it returns the output as text.
+
+- **Approval** — clicks, drags, scrolls and key combinations ask once per tab and are then allowed on that tab for 10 minutes; after that Claude asks again. To end it early, right-click the tab → **End Claude screen control**. Typing (`rdp_type`) asks every time and shows the text. Everything is written to the audit log.
+- **Your mouse and keyboard stay yours** — input is sent as messages to the RDP control's own input window, so your cursor and keyboard focus don't move. The target tab is brought to the front so you can watch.
+- **Limits** — text is English letters, digits and symbols only (US keyboard layout). If the remote input method is in Korean mode, the text comes out in Korean, so Claude switches with the `hangul` key. Claude sees results only on screen, not as text. Capturing and controlling don't work while the Nubis window is minimized.
 
 **Remote commands**
 
@@ -858,7 +878,7 @@ Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · 
 
 **Approval prompt** — `Esc` rejects.
 
-**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
+**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
 
 ---
 
