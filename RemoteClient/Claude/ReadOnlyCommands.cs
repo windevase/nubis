@@ -35,6 +35,10 @@ public static class ReadOnlyCommands
         // 제어 문자: 줄바꿈(여러 명령)·Ctrl-U/Ctrl-W(줄 지우기)·ESC·DEL·C1 등은 보이는 글자와 실제 실행이 달라질 수 있다 (send_to_terminal 도 이 검사에 기댐). 탭만 허용
         if (command.Any(c => (c < 0x20 && c != '\t') || (c >= 0x7f && c <= 0x9f) || c is '\u2028' or '\u2029'))
         { reason = "제어 문자"; return false; }
+        // 공백·탭이 아닌 공백 문자(NBSP · U+3000 등): 셸마다 단어를 나누는 기준이 다르다 — sh·cmd 는 나누지 않고 PowerShell 은 나눈다.
+        // 판정기와 실제 셸의 인자 경계가 어긋나지 않게 아예 받지 않는다 (net user bob<NBSP>pw<NBSP>/add · kubectl -n<NBSP> delete …)
+        if (command.Any(c => char.IsWhiteSpace(c) && c is not ' ' and not '\t'))
+        { reason = "특수 공백 문자"; return false; }
         if (ApprovalDialog.IsDangerous(command)) { reason = "위험 명령 패턴"; return false; }
         return shell switch
         {
@@ -281,6 +285,8 @@ public static class ReadOnlyCommands
         foreach (var seg in SplitSegments(command, BothQuotes, singleAmpIsSeparator: false))
         {
             var t = Tokens(seg, BothQuotes);
+            // 빈 인자('' "")는 읽기 전용으로 보지 않는다 — 하위 명령 자리의 빈 인자를 "인자 없음" 과 구분하지 못하는 판정이 있다 (ip '' add …)
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             // sudo / timeout / nice 앞부분 건너뛰기
             while (t.Count > 0)
             {
@@ -767,6 +773,7 @@ public static class ReadOnlyCommands
             if (lead is '$' or '@' or '[' or '\'' or '"' or '-' or '!' || char.IsDigit(lead)) continue;   // 식 모드 (명령 이름 아님)
             if (Regex.IsMatch(s, @"^\.[A-Za-z_]\w*(\s|$)")) continue;   // (…).Count 같은 속성 접근 (메서드 호출은 위에서 거부)
             var t = Tokens(s, BothQuotes);
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             if (t.Count == 0) continue;
             var first = t[0];
             if (first is "%" || first.Equals("foreach", StringComparison.OrdinalIgnoreCase) || first.Equals("ForEach-Object", StringComparison.OrdinalIgnoreCase))
@@ -812,6 +819,7 @@ public static class ReadOnlyCommands
         foreach (var seg in SplitSegments(command, DoubleQuoteOnly, singleAmpIsSeparator: true))
         {
             var t = Tokens(seg, DoubleQuoteOnly);
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             if (t.Count == 0) continue;
             var first = t[0].EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? t[0][..^4] : t[0];
             var args = t.Skip(1).ToList();

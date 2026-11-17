@@ -534,4 +534,26 @@ public class KubectlArgsTests
         Assert.NotNull(KubectlArgs.Validate(new List<string> { " -n", "kube-system", "get", "pods" }));
         Assert.NotNull(KubectlArgs.Validate(new List<string> { "get", "pods", "--server =https://evil" }));
     }
+
+    // ---------------------------------------------------------------- 재검수 3회차: PowerShell 유니코드 공백 · ip 빈 인자
+
+    [Theory]
+    [InlineData("net user bob\u00A0Passw0rd1\u00A0/add")]
+    [InlineData("net localgroup administrators\u3000bob\u3000/add")]
+    public void PowerShell_유니코드_공백으로_인자를_붙여도_자동_승인_안_됨(string line) =>
+        Assert.False(ReadOnlyCommands.IsReadOnly(line, CommandShell.PowerShell));
+
+    [Theory]
+    [InlineData("ip '' add 10.9.9.9/24 dev eth0")]
+    [InlineData("ip -4 '' add 10.9.9.9/24 dev eth0")]
+    [InlineData("ip addr '' 10.9.9.9/24 dev eth0")]
+    [InlineData("ip route '' 0.0.0.0/0 via 10.0.0.1")]
+    [InlineData("ip link \"\" dummy0 type dummy")]
+    public void 빈_인자는_읽기_전용이_아니다(string line) => Assert.False(Sh(line));
+
+    [Theory]
+    [InlineData("ip addr")]
+    [InlineData("ip route show")]
+    [InlineData("ls -la /var/log")]
+    public void 일반_읽기_전용_명령은_그대로(string line) => Assert.True(Sh(line));
 }
