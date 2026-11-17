@@ -248,7 +248,7 @@ Nubis hosts the Windows built-in Remote Desktop engine (`mstscax`, the same one 
 - **Entra ID (Azure AD) joined PCs** — use the username `AzureAD\user@domain` and check **Don't use NLA (CredSSP)** under RD Gateway in the host editor (the same as `enablecredsspsupport:i:0` in an .rdp file). This is needed when this PC is not joined to the same Entra tenant. With NLA off, the connection reaches the remote sign-in screen before the account is checked, so turn it on only for the PCs that need it. If `Default.rdp` has `enablecredsspsupport:i:0`, NLA is off for every RDP host. Claude can set it with `rdp_disable_nla` on `add_host` / `update_host` (approval required).
 - Only the server certificate warning follows a Nubis setting ([Settings → RDP](#1213-rdp)).
 - **Full screen** — right-click the tab → **Full screen** (available while connected; there is no keyboard shortcut). The remote resolution matches the monitor, and in full screen the Windows key and Alt+Tab go to the remote computer. Use the connection bar at the top to come back; the session then resizes back to the tab.
-- **Claude can work the remote screen** — it looks with `capture_screen` and clicks or types with the `rdp_*` tools. See **RDP screen** in [10.5](#105-mcp-tools).
+- **Claude can work the remote screen** — it looks with `capture_screen` and clicks or types with the `rdp_*` tools (not while the tab is in full screen). See **RDP screen** in [10.5](#105-mcp-tools).
 
 ---
 
@@ -440,25 +440,29 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 |---|---|
 | Lookups (host, group, tab, closed-tab, cloud-profile and Vault lists, reading the screen, terminal state (current folder, user), screen capture, connection diagnosis, reading settings, finding import sources), cloud re-sync | None |
 | Showing a Vault account's public key (`vault_get_public_key`) or the stored host keys (`list_known_hosts`) | None (written to the audit log) |
-| Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), starring a host, cancelling a cloud sync | None (written to the audit log) |
+| Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), moving a tab (`move_session`), a terminal tab's font size (`set_terminal_zoom`), the main window state (`set_window_state`), Claude giving back RDP screen control (`rdp_release_control`), starring a host, cancelling a cloud sync | None (written to the audit log) |
 | Display and convenience settings (theme, font, copy-on-select, auto reconnect and so on) | None (written to the audit log) |
 | Kubernetes: listing clusters (`list_k8s_clusters`, no credentials included) | None |
 | Kubernetes: opening a cluster tab, a pod shell tab or a log tab (`open_k8s_session`) | None (written to the audit log) |
+| Kubernetes: finding clusters in the cloud (`find_k8s_clusters`) | None (written to the audit log); removing the clusters of unselected profiles asks first |
+| Kubernetes: testing a cluster connection (`test_k8s_cluster`) | Approval prompt (skipped when read-only auto-approve is on) |
+| Kubernetes: changing or deleting a cluster, importing from a kubeconfig (`update_k8s_cluster`, `delete_k8s_cluster`, `import_k8s_clusters`) | **Always an approval prompt** (imports are previewed first) |
 | Running `kubectl` on a cluster (`run_kubectl`) | Approval prompt (with read-only auto-approve on, only read-only commands such as `get`, `describe`, `logs` and `top` skip it; reading Secrets always asks and the prompt warns that the output may contain passwords or tokens) |
-| Closing connected tabs (`close_session`, `close_sessions`) | Approval prompt (disconnected tabs close right away; closing several tabs takes one approval) |
+| Closing connected tabs (`close_session`, `close_sessions`) | Approval prompt (disconnected tabs close right away unless files from them are open for SFTP editing; closing several tabs takes one approval) |
 | Connecting more than 8 hosts at once (`connect_hosts`) | Approval prompt |
-| Reading remote files (`sftp_list`, `sftp_read`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env`, and reading with the tab's sudo rights, always ask) |
+| Reading remote files (`sftp_list`, `sftp_read`), moving the SFTP panel to a folder (`sftp_panel_navigate`) | Approval prompt (skipped when read-only auto-approve is on; sensitive files such as private keys, `/etc/shadow` or `.env`, and reading with the tab's sudo rights, always ask) |
 | Running commands on several servers (`run_command`) | Approval prompt (with read-only auto-approve on, only read-only commands skip it; SSH servers that look like Windows or whose OS is unknown always ask) |
 | Typing into a terminal (`send_to_terminal`) | Approval prompt (with read-only auto-approve on, a one-line read-only command skips it while the screen shows a shell prompt — password prompts, vim, local PowerShell tabs and Windows or unknown-OS servers always ask) |
-| RDP screen: clicking, dragging, scrolling and key combinations (`rdp_click`, `rdp_drag`, `rdp_scroll`, `rdp_key`) | Approval prompt the first time on each tab, then allowed on that tab for 10 minutes (written to the audit log) |
+| RDP screen: clicking, dragging, scrolling and key combinations (`rdp_click`, `rdp_drag`, `rdp_scroll`, `rdp_key`) | Approval prompt the first time on each tab, then allowed on that connection for 10 minutes — reconnecting asks again (written to the audit log) |
 | RDP screen: typing text (`rdp_type`) | **Always an approval prompt** (shows the text to be typed) |
 | Hosts and groups: adding, changing, duplicating or deleting hosts, bulk edits (`bulk_update_hosts`), group defaults (`set_group_defaults`), renaming a group (`rename_group`) | **Always an approval prompt** |
+| Quick connect to an address that is not in the list (`open_session` with `target_address`) | **Always an approval prompt** (the default Vault account may be sent to that address) |
 | Remote files: uploading, downloading, creating folders, renaming, deleting and saving (`sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`, `sftp_write`) | **Always an approval prompt** (deletes show the item count; saving shows a summary of the changes) |
 | Cloud: adding, changing or removing profiles, cloud CLI sign-in | **Always an approval prompt** |
-| Vault and known hosts: setting or clearing the default Vault account, deleting a Vault account, deleting a stored host key | **Always an approval prompt** (the prompt lists what is affected) |
+| Vault and known hosts: setting or clearing the default Vault account, changing a Vault account's name, username or note (`vault_update`), deleting a Vault account, deleting a stored host key | **Always an approval prompt** (the prompt lists what is affected) |
 | Adding imported hosts | **Always an approval prompt** (previewed first and added with one approval) |
 | Querying Active Directory for an import with a Vault account, another domain or a named domain controller | Approval prompt before the query |
-| Changing security settings (RDP certificate warning, host-key prompt, auto-approve), or a default-port change that moves cloud hosts | **Approval prompt.** Claude can never turn auto-approve on, only off |
+| Changing security settings (RDP certificate warning, host-key prompt, auto-approve), a default-port change that moves cloud hosts, or the app language (`set_language`, applied after restarting Nubis) | **Approval prompt.** Claude can never turn auto-approve on, only off |
 | Passwords, keys and key passphrases; sign-in screen settings (owner only); the SFTP editor path; cloud credential paths; turning read-only auto-approve on | **Claude can never do these.** For passwords, keys and sign-in, Claude only opens the right dialog or page (`open_app_page`) and you fill it in yourself |
 
 The approval prompt shows the target servers and the full command. It flags risky commands (`rm -rf`, `reboot`, `Stop-Service` and so on), and the run button stays locked for 1.5 seconds after the prompt appears. Only one prompt is shown at a time, and if Claude cancels the request the prompt closes as rejected. Esc rejects. Every request is written to the audit log (the document icon in the panel header).
@@ -473,15 +477,16 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 66 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 79 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
 | Tool | Purpose |
 |---|---|
-| `list_groups` · `list_hosts` | Search groups and hosts |
-| `add_host` · `update_host` · `delete_host` | Add, change (name, tags, address, account and so on) and delete hosts (starring a host needs no approval) |
-| `duplicate_host` | Copy a host as a new one, account settings included |
+| `list_groups` · `list_hosts` | Search groups (with whether each is collapsed) and hosts. Each host row shows the Vault account actually used and where it comes from (the host, the profile default or the settings default). `vault` keeps only hosts that sign in with that account; `selected_only` returns only the cards you selected |
+| `get_host` | One host's full settings: address, cloud details, account and its source, jump host, RD Gateway, tags, open tabs and so on (only whether a password or key path is saved, never the values) |
+| `add_host` · `update_host` · `delete_host` | Add, change (name, tags, address, account and so on) and delete hosts (starring a host needs no approval). A cloud host's protocol can be changed too. `clear_password` · `clear_key_path` remove a password or key path saved on the host — Claude can never set them |
+| `duplicate_host` | Copy a host as a new one, account settings included. Takes the same fields as `update_host` to change the copy, saved with one approval |
 | `bulk_update_hosts` | Change several hosts at once, with the same rules as bulk edit |
 | `set_group_defaults` | A group's SSH/RDP Vault account and public-IP choice, like the group right-click menu |
 | `rename_group` | Rename a group you created (merges into a group of the same name; cloud groups are renamed in the profile) |
@@ -492,12 +497,14 @@ Claude has 66 tools. Anything you can do by hand in the app, Claude can do too. 
 
 | Tool | Purpose |
 |---|---|
-| `list_sessions` · `open_session` · `close_session` | List, open and close tabs |
+| `list_sessions` · `open_session` · `close_session` | List, open and close tabs. `open_session` can also quick-connect to an address that is not in the list (`target_address`, `protocol`, `port`, `username`; always approved, nothing is saved) |
 | `select_session` | Show a tab, or the host list (home) |
 | `rename_session` | Rename a tab |
 | `reconnect_session` | Reconnect one tab or all disconnected tabs |
 | `close_sessions` | Close other tabs, tabs to the right, or all disconnected tabs |
-| `list_closed_tabs` · `reopen_closed_tab` | Closed-tab history and reopening (`Ctrl+Shift+R`) |
+| `move_session` | Move a tab to a position or before another tab, like dragging it |
+| `set_terminal_zoom` | One terminal tab's font size, like `Ctrl+=` · `Ctrl+-` · `Ctrl+0` |
+| `list_closed_tabs` · `reopen_closed_tab` | Closed-tab history (Kubernetes cluster tabs included) and reopening (`Ctrl+Shift+R`) |
 | `open_local_terminal` | Open a local PowerShell tab |
 | `toggle_sftp_panel` | Show or hide an SSH tab's SFTP panel |
 
@@ -517,14 +524,15 @@ Claude has 66 tools. Anything you can do by hand in the app, Claude can do too. 
 | `rdp_click` | Click at (x, y) on the last `capture_screen` image (left, right or middle button; double-click) |
 | `rdp_drag` | Drag from one point on the image to another (moving or resizing windows) |
 | `rdp_scroll` | Scroll the wheel at a point |
-| `rdp_key` | Key combinations in order (`win+r`, `alt+f4`, `ctrl+shift+esc`, `enter`, `tab`, `f5`, `hangul` and so on). A letter key on its own is refused (use `rdp_type`), and so is pasting (`ctrl+v`, `shift+insert`), which would send your clipboard to the server |
+| `rdp_key` | Key combinations in order (`win+r`, `alt+f4`, `ctrl+shift+esc`, `enter`, `tab`, `f5`, `hangul` and so on). A letter key on its own is refused (use `rdp_type`), and so is pasting (`ctrl+v`, `shift+insert`, `win+v`), which would send your clipboard to the server. `win`+letter works only for `r e d x l i s m` and digits |
 | `rdp_type` | Type text, optionally followed by Enter (`press_enter`) |
+| `rdp_release_control` | Give back the screen-control permission when done (the same as ending it from the tab menu); the next action asks again |
 
 Claude looks at the screen with `capture_screen` and works it like a person would, for example Win+R → `powershell` → a command → a new capture to read the result. Each tool captures the screen again afterwards and returns it with the result (`capture_after`, on by default). This is useful on servers where only 3389 is open (WinRM blocked) or for GUI work that needs the signed-in desktop session. When WinRM is reachable, `run_command` is more accurate because it returns the output as text.
 
-- **Approval** — clicks, drags, scrolls and key combinations ask once per tab and are then allowed on that tab for 10 minutes; after that Claude asks again. To end it early, right-click the tab → **End Claude screen control**. Typing (`rdp_type`) asks every time and shows the text. Everything is written to the audit log.
+- **Approval** — clicks, drags, scrolls and key combinations ask once per tab and are then allowed on that connection for 10 minutes; after that, or once the tab reconnects, Claude asks again. To end it early, right-click the tab → **End Claude screen control**; while Claude is typing, **Stop Claude's input** stops just the input in progress. Typing (`rdp_type`) asks every time and shows the text. Everything is written to the audit log.
 - **Your mouse and keyboard stay yours** — input is sent as messages to the RDP control's own input window, so your cursor and keyboard focus don't move. The target tab is brought to the front so you can watch.
-- **Limits** — text is English letters, digits and symbols only (US keyboard layout). If the remote input method is in Korean mode, the text comes out in Korean, so Claude switches with the `hangul` key. Claude sees results only on screen, not as text. Capturing and controlling don't work while the Nubis window is minimized.
+- **Limits** — text is English letters, digits and symbols only (US keyboard layout). If the remote input method is in Korean mode, the text comes out in Korean, so Claude switches with the `hangul` key. Claude sees results only on screen, not as text. Capturing and controlling don't work while the Nubis window is minimized or the RDP tab is in full screen.
 
 **Remote commands**
 
@@ -538,18 +546,19 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 | Tool | Purpose |
 |---|---|
 | `sftp_list` · `sftp_read` | Browse folders and read text files |
-| `sftp_download` · `sftp_upload` | Transfer files and folders (downloads go to `Downloads\Nubis\<host>`) |
-| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | Create a folder; rename or delete a file, folder or symbolic link (only the link itself, never its target) |
+| `sftp_download` · `sftp_upload` | Transfer files and folders (downloads go to `Downloads\Nubis\<host>`). Several items at once with `paths` / `local_paths` (one approval). An uploaded folder merges into a folder of the same name; files of the same name follow `on_conflict`: `overwrite`, `skip` or `fail` (default — nothing is uploaded if any file name already exists) |
+| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | Create a folder; rename or delete a file, folder or symbolic link (only the link itself, never its target). `sftp_delete` takes several items with `paths` (one approval) |
 | `sftp_write` | Save a text file (refused if the file changed on the server after Claude read it) |
+| `sftp_panel_navigate` | Show a folder in an SSH tab's SFTP panel (on your screen only; Claude reads lists with `sftp_list`) |
 
 **Cloud**
 
 | Tool | Purpose |
 |---|---|
 | `discover_sources` | Find what can be imported: cloud profiles on this PC (and whether sign-in is needed), `~/.ssh/config`, mRemoteNG and the AD domain |
-| `cloud_list_profiles` | Cloud profiles and their settings (a default password only shows as set or unset) |
+| `cloud_list_profiles` | Cloud profiles and their settings, including Kubernetes cluster sync (`sync_clusters`) and the cluster count (a default password only shows as set or unset) |
 | `cloud_add_profile` · `cloud_login` | Add cloud profiles (synced right away), run a CLI sign-in in a new console window |
-| `cloud_update_profile` · `cloud_remove_profile` | Change profile settings (ports, public IP, stopped servers, default Vault accounts); remove a profile and its hosts from Nubis (the cloud servers are untouched) |
+| `cloud_update_profile` · `cloud_remove_profile` | Change profile settings (ports, public IP, stopped servers, default Vault accounts, cluster sync `sync_clusters`); remove a profile with its hosts and Kubernetes clusters from Nubis (the cloud servers and clusters are untouched) |
 | `cloud_sync` · `cloud_sync_cancel` | Re-sync, cancel a running sync |
 
 **Vault and known hosts**
@@ -558,6 +567,7 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 |---|---|
 | `list_vault` | Vault accounts (never passwords or keys) |
 | `vault_set_default` | Set or clear the default SSH/RDP account in Settings |
+| `vault_update` | Change a Vault account's name, username or note (never its password or key) |
 | `vault_get_public_key` | The public-key line of an SSH-key account, for `authorized_keys` |
 | `vault_delete` | Delete a Vault account (hosts, profiles and settings that use it are unlinked) |
 | `list_known_hosts` · `delete_known_host` | Stored host keys; delete one after a server is reinstalled (rejected keys cannot be deleted) |
@@ -566,8 +576,10 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 
 | Tool | Purpose |
 |---|---|
-| `get_settings` · `update_settings` | App settings |
-| `get_setup_status` · `open_app_page` | Setup status; open screens and dialogs, including the Vault, host and cloud-profile dialogs where you type passwords yourself |
+| `get_settings` · `update_settings` | App settings. With `move_cloud_hosts=false`, a default-port change leaves cloud hosts' ports as they are |
+| `set_language` | Change the app language (takes effect after a restart) |
+| `set_window_state` | Restore, maximize or minimize the main window |
+| `get_setup_status` · `open_app_page` | Setup status; open screens (including the Kubernetes page, its kubeconfig import window, and Settings sections such as `settings_language`, `settings_vault`, `settings_ports` or `settings_rdp`) and dialogs, including the Vault, host and cloud-profile dialogs where you type passwords yourself |
 | `diagnostics` | App memory and handles |
 
 **Import**
@@ -580,9 +592,13 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 
 | Tool | Purpose |
 |---|---|
-| `list_k8s_clusters` | Registered clusters (never credentials), and whether `kubectl` was found on this PC |
-| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead |
+| `list_k8s_clusters` | Registered clusters (never credentials), and the path of the `kubectl` found on this PC |
+| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead. Also refused: `kubectl config view` in any form, options that read or write local files (`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` and so on) and kubectl plugins |
 | `open_k8s_session` | Open a cluster tab, a pod shell tab or a pod log tab ([16.6](#166-cluster-tab)) |
+| `update_k8s_cluster` · `delete_k8s_cluster` | Change a cluster's name, default namespace or group; delete it from Nubis (the cluster itself is untouched) |
+| `test_k8s_cluster` | Connection test, like **Test connection** on the page |
+| `find_k8s_clusters` | **Find in cloud** with the profiles you name ([16.3](#163-finding-clusters-in-the-cloud)) |
+| `import_k8s_clusters` | Import contexts from a kubeconfig file — preview first, then add with one approval |
 
 ### 10.6 Running commands on several servers (SSH / WinRM)
 
@@ -878,7 +894,7 @@ Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · 
 
 **Approval prompt** — `Esc` rejects.
 
-**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
+**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Stop Claude's input (RDP, while Claude is typing) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
 
 ---
 
@@ -915,8 +931,8 @@ The **Kubernetes** page in the sidebar (between Cloud and Vault) keeps your Kube
 |---|---|
 | kubectl | Required. The page shows the path where `kubectl` was found. If it is not found, **Copy install command** copies `winget install Kubernetes.kubectl`, or pick `kubectl.exe` with **Set path...** |
 | EKS (AWS) | AWS CLI (`winget install Amazon.AWSCLI`) |
-| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) |
-| AKS (Azure) | `kubelogin` (`winget install Microsoft.Azure.Kubelogin`) for clusters that use Microsoft Entra (AAD) sign-in. Clusters with local accounts need nothing more |
+| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) and Application Default Credentials (`gcloud auth application-default login` or `GOOGLE_APPLICATION_CREDENTIALS`) — the `gcloud auth login` account is not used |
+| AKS (Azure) | `kubelogin` (`winget install Microsoft.Azure.Kubelogin`) for clusters that use Microsoft Entra (AAD) sign-in; it signs in to the profile's tenant. Clusters with local accounts need nothing more |
 | OKE (OCI) | OCI CLI (`pip install oci-cli`) |
 | TKE (Tencent) | Nothing more |
 
@@ -926,11 +942,11 @@ If a cluster needs a command that is not on this PC, its row shows a warning bad
 
 **Import kubeconfig** reads contexts from one of these:
 
-- `~/.kube/config` — or the first file in the `KUBECONFIG` environment variable when it is set
+- `~/.kube/config` — or the files in the `KUBECONFIG` environment variable when it is set (several files are merged the way kubectl does: when names clash, the earlier file wins)
 - **File...** — a kubeconfig file you choose
 - **Paste** — kubeconfig YAML pasted into the box
 
-Pick the contexts to import (optionally with a group). Each selected context is saved separately with only that cluster's credentials. Certificates and tokens that the kubeconfig points to by file path are read and stored inline, so the cluster keeps working if those files move; a pasted kubeconfig that points to files must be imported from a file instead. The original file is never changed. Contexts you have already imported are marked **Exists**.
+Pick the contexts to import (optionally with a group). Each selected context is saved separately with only that cluster's credentials. Certificates and tokens that the kubeconfig points to by file path are read and stored inline, so the cluster keeps working if those files move; a pasted kubeconfig that points to files must be imported from a file instead. The original file is never changed. Contexts you have already imported are marked **Exists**. A context's namespace becomes the cluster's default namespace.
 
 ### 16.3 Finding clusters in the cloud
 
@@ -943,8 +959,8 @@ Pick the contexts to import (optionally with a group). Each selected context is 
 | Cloud | Clusters | Authentication |
 |---|---|---|
 | AWS | EKS | exec plugin `aws eks get-token`, with `AWS_PROFILE` set to the profile |
-| GCP | GKE | exec plugin `gke-gcloud-auth-plugin` |
-| Azure | AKS | Microsoft Entra (AAD) clusters: exec plugin `kubelogin` (Azure CLI sign-in). Local-account clusters: the kubeconfig Azure returns (certificates and token included) is stored encrypted |
+| GCP | GKE | exec plugin `gke-gcloud-auth-plugin --use_application_default_credentials` (ADC, the same credentials the sync uses). Clusters reachable only through the DNS endpoint are supported |
+| Azure | AKS | Microsoft Entra (AAD) clusters: exec plugin `kubelogin` (Azure CLI sign-in, pinned to the profile's tenant). Local-account clusters: the kubeconfig Azure returns (certificates and token included) is stored encrypted |
 | OCI | OKE | exec plugin `oci ce cluster generate-token` with `--profile` (and `--auth security_token` for session profiles) |
 | Tencent | TKE | The kubeconfig Tencent Cloud returns (certificates and token included) is stored encrypted |
 
@@ -958,6 +974,7 @@ Profiles picked in **Find in cloud** update their clusters together with that pr
 |---|---|
 | Partial failure | If some lookups fail, **nothing is removed in that sync** |
 | Permission denied | Clusters in regions denied by permissions are kept |
+| One cluster fails | If one cluster's kubeconfig cannot be fetched, only that cluster is kept as it was; the rest of the sync is applied |
 | Removed clusters | A cluster is removed only after it is missing from **two syncs in a row** |
 | Your changes | A name or default namespace you changed is kept |
 
@@ -979,16 +996,16 @@ Clusters are grouped as **Added manually** and one group per cloud profile (`[AW
 
 Opening a cluster opens a tab with two parts.
 
-- **Left: resource panel** — **Pods** · **Deploy** · **Svc** · **Nodes**, a namespace picker (including **All namespaces**), **Find by name**, auto refresh every 5 seconds (click to turn it off or on) and `F5` to refresh.
+- **Left: resource panel** — **Pods** · **Deploy** · **Svc** · **Nodes**, a namespace picker (including **All namespaces**), **Find by name**, auto refresh every 5 seconds (click to turn it off or on; it pauses while the window is minimized or the tab is hidden) and `F5` to refresh. If a list is too large to load, the panel says so and stops auto refresh — pick a namespace to narrow it.
 - **Right: kubectl terminal** — a PowerShell whose `KUBECONFIG` is this cluster, so `kubectl`, `k9s` and `helm` all point at it.
 
 | Resource | Actions |
 |---|---|
-| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
+| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** (also a submenu when there are several containers) · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
 | Deployment | describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
 | Service · Node | describe · **View YAML** |
 
-describe and YAML run in the terminal on the right. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
+describe and YAML run in the terminal on the right, but only while it shows a prompt; otherwise the command is copied to the clipboard instead. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
 
 ### 16.7 Security
 

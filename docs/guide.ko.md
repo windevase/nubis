@@ -248,7 +248,7 @@ Windows 내장 원격 데스크톱 엔진(mstsc 와 같은 `mstscax`)을 앱 안
 - **Entra ID(Azure AD) 가입 PC** — 사용자명을 `AzureAD\사용자@도메인` 으로 넣고, 호스트 편집의 RD 게이트웨이 아래 **NLA(CredSSP) 사용 안 함** 을 체크합니다 (.rdp 파일의 `enablecredsspsupport:i:0` 과 같음). 이 PC 가 같은 Entra 테넌트에 가입돼 있지 않을 때 필요합니다. NLA 를 끄면 계정을 확인하기 전에 원격 로그인 화면까지 연결되므로 필요한 PC 에만 켜세요. `Default.rdp` 에 `enablecredsspsupport:i:0` 이 있으면 모든 RDP 호스트에 NLA 를 쓰지 않습니다. Claude 는 `add_host` / `update_host` 의 `rdp_disable_nla` 로 바꿀 수 있습니다 (승인 필요).
 - 서버 인증서 경고만 Nubis 설정을 따릅니다 ([Settings → RDP](#1213-rdp))
 - **전체 화면** — 탭 우클릭 → **전체 화면** (연결된 동안만, 단축키는 없음). 원격 해상도를 모니터에 맞추고, 전체 화면에서는 Win 키·Alt+Tab 이 원격으로 갑니다. 위쪽 연결 표시줄로 돌아오면 탭 크기에 다시 맞춥니다
-- **Claude 의 화면 조작** — Claude 가 `capture_screen` 으로 화면을 보고 `rdp_*` 도구로 클릭·입력합니다. [10.5](#105-mcp-도구-목록) 의 **RDP 화면** 참고
+- **Claude 의 화면 조작** — Claude 가 `capture_screen` 으로 화면을 보고 `rdp_*` 도구로 클릭·입력합니다 (탭이 전체 화면일 때는 안 됨). [10.5](#105-mcp-도구-목록) 의 **RDP 화면** 참고
 
 ---
 
@@ -440,25 +440,29 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 |---|---|
 | 조회 (호스트·그룹·탭·닫은 탭·클라우드 프로필·Vault 목록, 화면 읽기, 터미널 상태(현재 폴더·사용자), 화면 캡처, 접속 진단, 설정 조회, 가져올 곳 찾기), 클라우드 다시 동기화 | 없음 |
 | Vault 계정의 공개키 보기 (`vault_get_public_key`), 저장된 호스트키 목록 (`list_known_hosts`) | 없음 (감사 로그에 기록) |
-| 화면·탭 조작: 탭 열기·전환·이름 바꾸기·다시 연결·닫은 탭 다시 열기 (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), 로컬 PowerShell 탭 열기, SFTP 패널 열고 닫기, 그룹 접기, 앱 화면 열기 (`open_app_page`), 호스트 8개까지 한 번에 접속 (`connect_hosts`), 즐겨찾기, 클라우드 동기화 취소 | 없음 (감사 로그에 기록) |
+| 화면·탭 조작: 탭 열기·전환·이름 바꾸기·다시 연결·닫은 탭 다시 열기 (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), 로컬 PowerShell 탭 열기, SFTP 패널 열고 닫기, 그룹 접기, 앱 화면 열기 (`open_app_page`), 호스트 8개까지 한 번에 접속 (`connect_hosts`), 탭 순서 바꾸기 (`move_session`), 터미널 탭 글자 크기 (`set_terminal_zoom`), 메인 창 상태 (`set_window_state`), Claude 의 RDP 화면 조작 허용 반납 (`rdp_release_control`), 즐겨찾기, 클라우드 동기화 취소 | 없음 (감사 로그에 기록) |
 | 화면·편의 설정 (테마, 글꼴, 선택하면 바로 복사, 자동 재연결 등) | 없음 (감사 로그에 기록) |
 | 쿠버네티스: 클러스터 목록 (`list_k8s_clusters`, 인증 정보는 포함하지 않음) | 없음 |
 | 쿠버네티스: 클러스터 탭 · 파드 셸 탭 · 로그 탭 열기 (`open_k8s_session`) | 없음 (감사 로그에 기록) |
+| 쿠버네티스: 클라우드에서 클러스터 찾기 (`find_k8s_clusters`) | 없음 (감사 로그에 기록). 선택 해제한 프로필의 클러스터를 지울 때만 승인 창 |
+| 쿠버네티스: 클러스터 연결 테스트 (`test_k8s_cluster`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략) |
+| 쿠버네티스: 클러스터 변경·삭제, kubeconfig 에서 가져오기 (`update_k8s_cluster`, `delete_k8s_cluster`, `import_k8s_clusters`) | **항상 승인 창** (가져오기는 먼저 미리 봄) |
 | 클러스터에 `kubectl` 실행 (`run_kubectl`) | 승인 창 (읽기 전용 자동 승인을 켜면 `get`·`describe`·`logs`·`top` 같은 조회 명령만 생략. Secret 조회는 항상 승인이며, 출력에 비밀번호·토큰이 담길 수 있다고 승인 창에 경고) |
-| 연결 중인 탭 닫기 (`close_session`, `close_sessions`) | 승인 창 (끊긴 탭은 바로 닫음. 여러 탭은 승인 한 번) |
+| 연결 중인 탭 닫기 (`close_session`, `close_sessions`) | 승인 창 (끊긴 탭은 바로 닫음 — 단 SFTP 로 편집 중인 파일이 있으면 승인. 여러 탭은 승인 한 번) |
 | 호스트 8개 넘게 한 번에 접속 (`connect_hosts`) | 승인 창 |
-| 원격 파일 읽기 (`sftp_list`, `sftp_read`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략. 개인키·`/etc/shadow`·`.env` 같은 민감한 파일과 탭의 sudo 권한으로 읽을 때는 항상 승인) |
+| 원격 파일 읽기 (`sftp_list`, `sftp_read`), SFTP 패널 폴더 이동 (`sftp_panel_navigate`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략. 개인키·`/etc/shadow`·`.env` 같은 민감한 파일과 탭의 sudo 권한으로 읽을 때는 항상 승인) |
 | 여러 서버 명령 실행 (`run_command`) | 승인 창 (읽기 전용 자동 승인을 켜면 조회 명령만 생략. Windows 로 보이거나 OS 를 모르는 SSH 서버는 항상 승인) |
 | 터미널 입력 (`send_to_terminal`) | 승인 창 (읽기 전용 자동 승인을 켜면, 화면이 셸 프롬프트일 때 한 줄 조회 명령만 생략 — 비밀번호 질문·vim, 로컬 PowerShell 탭, Windows·OS 를 모르는 서버는 항상 승인) |
-| RDP 화면: 클릭·끌기·스크롤·키 조합 (`rdp_click`, `rdp_drag`, `rdp_scroll`, `rdp_key`) | 탭마다 처음 한 번 승인 창, 이후 그 탭에서 10분 동안 생략 (감사 로그에 기록) |
+| RDP 화면: 클릭·끌기·스크롤·키 조합 (`rdp_click`, `rdp_drag`, `rdp_scroll`, `rdp_key`) | 탭마다 처음 한 번 승인 창, 이후 그 연결에서 10분 동안 생략 — 다시 연결하면 새로 승인 (감사 로그에 기록) |
 | RDP 화면: 글자 입력 (`rdp_type`) | **항상 승인 창** (입력할 글자를 보여 줌) |
 | 호스트·그룹: 호스트 추가·수정·복제·삭제, 일괄 편집 (`bulk_update_hosts`), 그룹 기본값 (`set_group_defaults`), 그룹 이름 바꾸기 (`rename_group`) | **항상 승인 창** |
+| 목록에 없는 주소로 빠른 연결 (`open_session` 의 `target_address`) | **항상 승인 창** (설정의 기본 Vault 계정이 그 주소로 쓰일 수 있음) |
 | 원격 파일: 업로드·다운로드·폴더 만들기·이름 바꾸기·삭제·저장 (`sftp_upload`, `sftp_download`, `sftp_mkdir`, `sftp_rename`, `sftp_delete`, `sftp_write`) | **항상 승인 창** (삭제는 지울 항목 수, 저장은 바뀐 내용 요약을 보여 줌) |
 | 클라우드: 프로필 추가·변경·제거, 클라우드 CLI 로그인 | **항상 승인 창** |
-| Vault·호스트키: 기본 Vault 계정 지정·해제, Vault 계정 삭제, 저장된 호스트키 삭제 | **항상 승인 창** (영향받는 항목을 함께 보여 줌) |
+| Vault·호스트키: 기본 Vault 계정 지정·해제, Vault 계정 이름·사용자명·메모 변경 (`vault_update`), Vault 계정 삭제, 저장된 호스트키 삭제 | **항상 승인 창** (영향받는 항목을 함께 보여 줌) |
 | 가져온 호스트 등록 | **항상 승인 창** (먼저 미리 보고, 승인 한 번으로 등록) |
 | 가져오기용 Active Directory 조회 중 Vault 계정 사용, 다른 도메인, 도메인 컨트롤러 직접 지정 | 조회 전에 승인 창 |
-| 보안 설정 변경 (RDP 인증서 경고, 호스트키 확인 창, 자동 승인), 클라우드 호스트까지 바뀌는 기본 포트 변경 | **승인 창**. 자동 승인은 Claude 가 켤 수 없고 끄기만 가능 |
+| 보안 설정 변경 (RDP 인증서 경고, 호스트키 확인 창, 자동 승인), 클라우드 호스트까지 바뀌는 기본 포트 변경, 앱 언어 변경 (`set_language`, Nubis 를 다시 시작해야 적용) | **승인 창**. 자동 승인은 Claude 가 켤 수 없고 끄기만 가능 |
 | 비밀번호·키·키 암호, 시작 화면 로그인 설정(소유자 전용), SFTP 편집기 경로, 클라우드 인증 파일 경로, 읽기 전용 자동 승인 켜기 | **Claude 는 절대 할 수 없음.** 비밀번호·키·로그인은 Claude 가 알맞은 창이나 화면만 열어 주고(`open_app_page`) 입력은 사용자가 직접 |
 
 승인 창은 대상 서버와 명령 전체를 보여 주고, 위험한 명령(`rm -rf`, `reboot`, `Stop-Service` 등)을 경고하며, 뜬 직후 1.5초 동안 실행 버튼이 잠깁니다. 승인 창은 한 번에 하나씩만 뜨고, Claude 가 요청을 취소하면 거부로 닫힙니다. Esc 는 거부입니다. 모든 요청은 감사 로그(패널 헤더의 문서 아이콘)에 기록됩니다.
@@ -473,15 +477,16 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 
 ### 10.5 MCP 도구 목록
 
-Claude 가 쓰는 도구는 66개입니다. 앱에서 손으로 할 수 있는 일은 Claude 도 할 수 있습니다. 예외는 비밀 값(비밀번호·키)과 몇 가지 보호된 설정입니다 (10.3 · 10.4 참고).
+Claude 가 쓰는 도구는 79개입니다. 앱에서 손으로 할 수 있는 일은 Claude 도 할 수 있습니다. 예외는 비밀 값(비밀번호·키)과 몇 가지 보호된 설정입니다 (10.3 · 10.4 참고).
 
 **호스트 · 그룹**
 
 | 도구 | 기능 |
 |---|---|
-| `list_groups` · `list_hosts` | 그룹 · 호스트 검색 |
-| `add_host` · `update_host` · `delete_host` | 호스트 추가 · 수정(이름·태그·주소·계정 등) · 삭제 (즐겨찾기만 바꿀 때는 승인 없음) |
-| `duplicate_host` | 호스트를 계정 설정까지 그대로 복제 |
+| `list_groups` · `list_hosts` | 그룹(접힘 여부 포함) · 호스트 검색. 호스트 줄마다 실제로 쓰이는 Vault 계정과 출처(직접 · 프로필 기본 · 설정 기본)를 보여 줌. `vault` 로 그 계정으로 로그인하는 호스트만, `selected_only` 로 화면에서 고른 카드만 |
+| `get_host` | 호스트 1개의 자세한 설정: 주소 · 클라우드 정보 · 계정과 출처 · 점프 서버 · RD 게이트웨이 · 태그 · 열린 탭 등 (비밀번호·키 파일 경로는 저장 여부만, 값은 포함하지 않음) |
+| `add_host` · `update_host` · `delete_host` | 호스트 추가 · 수정(이름·태그·주소·계정 등) · 삭제 (즐겨찾기만 바꿀 때는 승인 없음). 클라우드 호스트도 프로토콜은 바꿀 수 있음. `clear_password` · `clear_key_path` 로 호스트에 저장된 비밀번호 · 키 파일 경로를 지우기만 할 수 있음 (넣기는 불가) |
+| `duplicate_host` | 호스트를 계정 설정까지 그대로 복제. `update_host` 와 같은 항목을 함께 넘기면 복사본에 적용해 승인 한 번으로 저장 |
 | `bulk_update_hosts` | 여러 호스트를 한 번에 수정 (일괄 편집과 같은 규칙) |
 | `set_group_defaults` | 그룹의 SSH/RDP Vault 계정 · 공인 IP 접속 여부 (그룹 우클릭 메뉴와 같음) |
 | `rename_group` | 직접 만든 그룹 이름 바꾸기 (같은 이름의 그룹이 있으면 합쳐짐. 클라우드 그룹은 프로필 설정에서) |
@@ -492,12 +497,14 @@ Claude 가 쓰는 도구는 66개입니다. 앱에서 손으로 할 수 있는 �
 
 | 도구 | 기능 |
 |---|---|
-| `list_sessions` · `open_session` · `close_session` | 탭 목록 · 열기 · 닫기 |
+| `list_sessions` · `open_session` · `close_session` | 탭 목록 · 열기 · 닫기. `open_session` 은 목록에 없는 주소로 빠른 연결도 함 (`target_address` · `protocol` · `port` · `username`, 항상 승인, 목록에 저장하지 않음) |
 | `select_session` | 탭 또는 호스트 목록(홈) 화면 보여 주기 |
 | `rename_session` | 탭 이름 바꾸기 |
 | `reconnect_session` | 탭 하나 또는 끊긴 탭 전부 다시 연결 |
 | `close_sessions` | 다른 탭 · 오른쪽 탭 · 끊긴 탭 모두 닫기 |
-| `list_closed_tabs` · `reopen_closed_tab` | 닫은 탭 기록 · 다시 열기 (`Ctrl+Shift+R`) |
+| `move_session` | 탭을 원하는 자리 또는 다른 탭 앞으로 옮기기 (끌어서 옮기는 것과 같음) |
+| `set_terminal_zoom` | 터미널 탭 하나의 글자 크기 (`Ctrl+=` · `Ctrl+-` · `Ctrl+0` 과 같음) |
+| `list_closed_tabs` · `reopen_closed_tab` | 닫은 탭 기록(쿠버네티스 클러스터 탭 포함) · 다시 열기 (`Ctrl+Shift+R`) |
 | `open_local_terminal` | 로컬 PowerShell 탭 열기 |
 | `toggle_sftp_panel` | SSH 탭의 SFTP 패널 열기 · 닫기 |
 
@@ -517,14 +524,15 @@ Claude 가 쓰는 도구는 66개입니다. 앱에서 손으로 할 수 있는 �
 | `rdp_click` | 마지막 `capture_screen` 이미지의 좌표(x, y)를 클릭 (왼쪽·오른쪽·가운데 버튼, 더블클릭) |
 | `rdp_drag` | 이미지의 한 좌표에서 다른 좌표로 끌기 (창 이동·크기 조절) |
 | `rdp_scroll` | 좌표 위치에서 휠 스크롤 |
-| `rdp_key` | 키 조합을 차례로 (`win+r`, `alt+f4`, `ctrl+shift+esc`, `enter`, `tab`, `f5`, `hangul` 등). 글자 키 단독은 안 됨(`rdp_type` 사용), 붙여넣기(`ctrl+v`·`shift+insert`)는 사용자 클립보드가 서버로 가므로 막음 |
+| `rdp_key` | 키 조합을 차례로 (`win+r`, `alt+f4`, `ctrl+shift+esc`, `enter`, `tab`, `f5`, `hangul` 등). 글자 키 단독은 안 됨(`rdp_type` 사용), 붙여넣기(`ctrl+v`·`shift+insert`·`win+v`)는 사용자 클립보드가 서버로 가므로 막음. `win`+글자는 `r e d x l i s m` 과 숫자만 |
 | `rdp_type` | 글자 입력 (`press_enter` 로 끝에 Enter) |
+| `rdp_release_control` | 화면 작업을 마치면 조작 허용을 반납 (탭 메뉴에서 끝내는 것과 같음). 다음 조작은 다시 승인 |
 
 Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다. 예: Win+R → `powershell` 입력 → 명령 입력 → 다시 캡처해 결과 확인. 도구마다 동작 뒤 화면을 다시 캡처해 함께 돌려줍니다 (`capture_after`, 기본 켬). WinRM 포트가 막혀 3389 만 열린 서버나, 로그인한 화면 세션에서 해야 하는 GUI 작업에 씁니다. WinRM 이 열려 있으면 결과를 글자로 받는 `run_command` 가 더 정확합니다.
 
-- **승인** — 클릭·끌기·스크롤·키 조합은 탭마다 처음 한 번 승인하면 그 탭에서 10분 동안 다시 묻지 않고, 10분이 지나면 다시 묻습니다. 바로 끝내려면 탭 우클릭 → **Claude 화면 조작 허용 끝내기**. 글자 입력(`rdp_type`)은 입력할 글자를 보여 주고 매번 승인받습니다. 모든 동작은 감사 로그에 남습니다
+- **승인** — 클릭·끌기·스크롤·키 조합은 탭마다 처음 한 번 승인하면 그 연결에서 10분 동안 다시 묻지 않고, 10분이 지나거나 탭을 다시 연결하면 다시 묻습니다. 바로 끝내려면 탭 우클릭 → **Claude 화면 조작 허용 끝내기**, Claude 가 입력하는 중에는 **Claude 입력 멈추기** 로 진행 중인 입력만 멈출 수 있습니다. 글자 입력(`rdp_type`)은 입력할 글자를 보여 주고 매번 승인받습니다. 모든 동작은 감사 로그에 남습니다
 - **사용자의 마우스·키보드는 그대로** — 입력은 RDP 컨트롤 내부 입력 창에 메시지로 보내므로 실제 마우스 커서와 키보드 포커스는 움직이지 않습니다. 조작을 볼 수 있게 대상 탭을 화면에 띄웁니다
-- **한계** — 글자는 영문·숫자·기호만 됩니다 (US 자판). 원격 입력기가 한글 모드면 한글로 찍히므로 Claude 가 `hangul` 키로 전환합니다. 결과는 글자가 아니라 화면으로만 확인합니다. Nubis 창이 최소화되어 있으면 캡처·조작이 안 됩니다
+- **한계** — 글자는 영문·숫자·기호만 됩니다 (US 자판). 원격 입력기가 한글 모드면 한글로 찍히므로 Claude 가 `hangul` 키로 전환합니다. 결과는 글자가 아니라 화면으로만 확인합니다. Nubis 창이 최소화되어 있거나 RDP 탭이 전체 화면이면 캡처·조작이 안 됩니다
 
 **원격 명령**
 
@@ -538,18 +546,19 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 | 도구 | 기능 |
 |---|---|
 | `sftp_list` · `sftp_read` | 폴더 목록 · 텍스트 파일 읽기 |
-| `sftp_download` · `sftp_upload` | 파일 · 폴더 주고받기 (다운로드는 `다운로드\Nubis\<호스트>` 폴더로) |
-| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | 폴더 만들기, 파일 · 폴더 · 심볼릭 링크 이름 바꾸기 · 삭제 (링크는 링크 자체만, 가리키는 대상은 건드리지 않음) |
+| `sftp_download` · `sftp_upload` | 파일 · 폴더 주고받기 (다운로드는 `다운로드\Nubis\<호스트>` 폴더로). 여러 개는 `paths` / `local_paths` 로 한 번에 (승인 한 번). 올리는 폴더는 같은 이름 폴더에 병합되고, 같은 이름 파일은 `on_conflict` 를 따름: `overwrite` · `skip` · `fail` (기본 — 같은 이름 파일이 하나라도 있으면 아무것도 올리지 않음) |
+| `sftp_mkdir` · `sftp_rename` · `sftp_delete` | 폴더 만들기, 파일 · 폴더 · 심볼릭 링크 이름 바꾸기 · 삭제 (링크는 링크 자체만, 가리키는 대상은 건드리지 않음). `sftp_delete` 는 `paths` 로 여러 개 (승인 한 번) |
 | `sftp_write` | 텍스트 파일 저장 (Claude 가 읽은 뒤 서버에서 파일이 바뀌었으면 저장하지 않음) |
+| `sftp_panel_navigate` | SSH 탭 SFTP 패널에 보이는 폴더 바꾸기 (사용자 화면만 바뀜. 목록은 Claude 가 `sftp_list` 로 읽음) |
 
 **클라우드**
 
 | 도구 | 기능 |
 |---|---|
 | `discover_sources` | 가져올 곳 찾기: 이 PC 의 클라우드 프로필(로그인 필요 여부 포함), `~/.ssh/config`, mRemoteNG, AD 도메인 |
-| `cloud_list_profiles` | 클라우드 프로필 목록과 설정 (기본 비밀번호는 설정 여부만 표시) |
+| `cloud_list_profiles` | 클라우드 프로필 목록과 설정, 쿠버네티스 클러스터 동기화(`sync_clusters`) 여부와 클러스터 수 (기본 비밀번호는 설정 여부만 표시) |
 | `cloud_add_profile` · `cloud_login` | 클라우드 프로필 추가(바로 동기화) · 새 콘솔 창에서 CLI 로그인 |
-| `cloud_update_profile` · `cloud_remove_profile` | 프로필 설정 변경 (포트, 공인 IP, 중지된 서버 포함, 기본 Vault 계정) · 프로필과 그 호스트를 Nubis 에서 제거 (클라우드의 서버는 그대로) |
+| `cloud_update_profile` · `cloud_remove_profile` | 프로필 설정 변경 (포트, 공인 IP, 중지된 서버 포함, 기본 Vault 계정, 클러스터 동기화 `sync_clusters`) · 프로필과 그 호스트 · 쿠버네티스 클러스터를 Nubis 에서 제거 (클라우드의 서버 · 클러스터는 그대로) |
 | `cloud_sync` · `cloud_sync_cancel` | 다시 동기화 · 진행 중인 동기화 취소 |
 
 **Vault · 호스트키**
@@ -558,6 +567,7 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 |---|---|
 | `list_vault` | Vault 계정 목록 (비밀번호 · 키는 포함하지 않음) |
 | `vault_set_default` | 설정의 SSH/RDP 기본 계정 지정 · 해제 |
+| `vault_update` | Vault 계정의 이름 · 사용자명 · 메모 변경 (비밀번호 · 키는 제외) |
 | `vault_get_public_key` | SSH 키 계정의 공개키 한 줄 (`authorized_keys` 에 넣는 값) |
 | `vault_delete` | Vault 계정 삭제 (이 계정을 쓰던 호스트 · 프로필 · 설정의 연결도 함께 해제) |
 | `list_known_hosts` · `delete_known_host` | 저장된 호스트키 목록 · 서버를 다시 설치했을 때 키 지우기 (거부한 키는 지울 수 없음) |
@@ -566,8 +576,10 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 
 | 도구 | 기능 |
 |---|---|
-| `get_settings` · `update_settings` | 앱 설정 |
-| `get_setup_status` · `open_app_page` | 설정 상태 · 화면과 입력 창 열기 (비밀번호를 사용자가 직접 넣는 Vault · 호스트 · 클라우드 프로필 창 포함) |
+| `get_settings` · `update_settings` | 앱 설정. `move_cloud_hosts=false` 면 기본 포트만 바꾸고 클라우드 호스트의 포트는 그대로 |
+| `set_language` | 앱 언어 변경 (다시 시작해야 적용) |
+| `set_window_state` | 메인 창 이전 크기 · 최대화 · 최소화 |
+| `get_setup_status` · `open_app_page` | 설정 상태 · 화면 열기 (Kubernetes 페이지와 kubeconfig 가져오기 창, `settings_language` · `settings_vault` · `settings_ports` · `settings_rdp` 같은 Settings 섹션 포함)와 입력 창 열기 (비밀번호를 사용자가 직접 넣는 Vault · 호스트 · 클라우드 프로필 창 포함) |
 | `diagnostics` | 앱 메모리 · 핸들 |
 
 **가져오기**
@@ -580,9 +592,13 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 
 | 도구 | 기능 |
 |---|---|
-| `list_k8s_clusters` | 등록된 클러스터 목록 (인증 정보는 포함하지 않음)과 이 PC 에서 `kubectl` 을 찾았는지 여부 |
-| `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session` |
+| `list_k8s_clusters` | 등록된 클러스터 목록 (인증 정보는 포함하지 않음)과 이 PC 에서 찾은 `kubectl` 경로 |
+| `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session`. `kubectl config view`(모든 형태), 로컬 파일을 읽고 쓰는 옵션(`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` 등), kubectl 플러그인 실행도 거부 |
 | `open_k8s_session` | 클러스터 탭 · 파드 셸 탭 · 파드 로그 탭 열기 ([16.6](#166-클러스터-탭)) |
+| `update_k8s_cluster` · `delete_k8s_cluster` | 클러스터 이름 · 기본 네임스페이스 · 그룹 변경, Nubis 에서 삭제 (클러스터 자체는 그대로) |
+| `test_k8s_cluster` | 연결 테스트 (페이지의 **연결 테스트** 와 같음) |
+| `find_k8s_clusters` | 지정한 프로필로 **클라우드에서 찾기** ([16.3](#163-클라우드에서-찾기)) |
+| `import_k8s_clusters` | kubeconfig 파일에서 context 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
 
 ### 10.6 여러 서버 명령 실행 (SSH / WinRM)
 
@@ -878,7 +894,7 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 
 **승인 창** — `Esc` 는 거부.
 
-**탭 우클릭 메뉴** — 다시 연결 · 같은 호스트로 새 탭 · 새 PowerShell 탭(로컬 탭) · 전체 화면(RDP) · Claude 화면 조작 허용 끝내기(RDP, 허용 중일 때) · 탭 이름 바꾸기... · 호스트 편집 · 닫기 · 다른 탭 모두 닫기 · 오른쪽 탭 모두 닫기 · 끊긴 탭 모두 다시 연결 · 끊긴 탭 모두 닫기 · 닫은 탭 다시 열기. 탭은 끌어서 순서를 바꾸고, 넘치면 휠로 넘기거나 ▾(**모든 탭 보기**)로 전체 목록을 봅니다.
+**탭 우클릭 메뉴** — 다시 연결 · 같은 호스트로 새 탭 · 새 PowerShell 탭(로컬 탭) · 전체 화면(RDP) · Claude 화면 조작 허용 끝내기(RDP, 허용 중일 때) · Claude 입력 멈추기(RDP, Claude 가 입력하는 중일 때) · 탭 이름 바꾸기... · 호스트 편집 · 닫기 · 다른 탭 모두 닫기 · 오른쪽 탭 모두 닫기 · 끊긴 탭 모두 다시 연결 · 끊긴 탭 모두 닫기 · 닫은 탭 다시 열기. 탭은 끌어서 순서를 바꾸고, 넘치면 휠로 넘기거나 ▾(**모든 탭 보기**)로 전체 목록을 봅니다.
 
 ---
 
@@ -915,8 +931,8 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 |---|---|
 | kubectl | 필수. 페이지에 `kubectl` 을 찾은 경로가 보입니다. 찾지 못하면 **설치 명령 복사** 로 `winget install Kubernetes.kubectl` 을 복사하거나 **경로 지정...** 으로 `kubectl.exe` 를 고릅니다 |
 | EKS (AWS) | AWS CLI (`winget install Amazon.AWSCLI`) |
-| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) |
-| AKS (Azure) | Microsoft Entra(AAD) 로그인을 쓰는 클러스터는 `kubelogin` (`winget install Microsoft.Azure.Kubelogin`). 로컬 계정 클러스터는 따로 필요 없음 |
+| GKE (GCP) | `gke-gcloud-auth-plugin` (`gcloud components install gke-gcloud-auth-plugin`) 과 ADC(애플리케이션 기본 사용자 인증 정보: `gcloud auth application-default login` 또는 `GOOGLE_APPLICATION_CREDENTIALS`) — `gcloud auth login` 계정은 쓰지 않음 |
+| AKS (Azure) | Microsoft Entra(AAD) 로그인을 쓰는 클러스터는 `kubelogin` (`winget install Microsoft.Azure.Kubelogin`, 프로필의 테넌트로 로그인). 로컬 계정 클러스터는 따로 필요 없음 |
 | OKE (OCI) | OCI CLI (`pip install oci-cli`) |
 | TKE (Tencent) | 따로 필요 없음 |
 
@@ -926,11 +942,11 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 
 **kubeconfig 가져오기** 는 아래에서 context 를 읽습니다.
 
-- `~/.kube/config` — 환경변수 `KUBECONFIG` 가 있으면 그 첫 번째 파일
+- `~/.kube/config` — 환경변수 `KUBECONFIG` 가 있으면 그 파일들 (여러 개면 kubectl 규칙대로 합침: 이름이 겹치면 앞 파일 우선)
 - **파일...** — 고른 kubeconfig 파일
 - **붙여넣기** — kubeconfig YAML 을 칸에 붙여 넣기
 
-가져올 context 를 고르면(그룹은 선택) context 마다 그 클러스터의 인증만 담아 따로 저장합니다. kubeconfig 가 파일 경로로 가리키는 인증서·토큰은 내용을 읽어 함께 넣으므로(인라인), 그 파일을 옮겨도 계속 쓸 수 있습니다. 붙여 넣은 kubeconfig 가 파일을 가리키면 파일로 가져와야 합니다. 원본 파일은 바꾸지 않습니다. 이미 가져온 context 는 **이미 있음** 으로 표시됩니다.
+가져올 context 를 고르면(그룹은 선택) context 마다 그 클러스터의 인증만 담아 따로 저장합니다. kubeconfig 가 파일 경로로 가리키는 인증서·토큰은 내용을 읽어 함께 넣으므로(인라인), 그 파일을 옮겨도 계속 쓸 수 있습니다. 붙여 넣은 kubeconfig 가 파일을 가리키면 파일로 가져와야 합니다. 원본 파일은 바꾸지 않습니다. 이미 가져온 context 는 **이미 있음** 으로 표시됩니다. context 의 namespace 는 클러스터의 기본 네임스페이스가 됩니다.
 
 ### 16.3 클라우드에서 찾기
 
@@ -943,8 +959,8 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 | 클라우드 | 클러스터 | 인증 |
 |---|---|---|
 | AWS | EKS | exec 플러그인 `aws eks get-token` (`AWS_PROFILE` = 그 프로필) |
-| GCP | GKE | exec 플러그인 `gke-gcloud-auth-plugin` |
-| Azure | AKS | Microsoft Entra(AAD) 클러스터: exec 플러그인 `kubelogin` (Azure CLI 로그인 사용). 로컬 계정 클러스터: Azure 에서 받은 kubeconfig(인증서·토큰 포함)를 암호화해 저장 |
+| GCP | GKE | exec 플러그인 `gke-gcloud-auth-plugin --use_application_default_credentials` (ADC — 동기화와 같은 인증). DNS 엔드포인트로만 접속하는 클러스터도 지원 |
+| Azure | AKS | Microsoft Entra(AAD) 클러스터: exec 플러그인 `kubelogin` (Azure CLI 로그인 사용, 프로필의 테넌트로 고정). 로컬 계정 클러스터: Azure 에서 받은 kubeconfig(인증서·토큰 포함)를 암호화해 저장 |
 | OCI | OKE | exec 플러그인 `oci ce cluster generate-token` (`--profile`, 세션 프로필이면 `--auth security_token` 도) |
 | Tencent | TKE | Tencent Cloud 에서 받은 kubeconfig(인증서·토큰 포함)를 암호화해 저장 |
 
@@ -958,6 +974,7 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 |---|---|
 | 일부 실패 | 일부 조회가 실패하면 **그 동기화에서는 지우지 않음** |
 | 권한 거부 | 권한이 없어 거부된 리전의 클러스터는 그대로 둠 |
+| 클러스터 하나 실패 | 한 클러스터의 kubeconfig 를 받지 못하면 그 클러스터만 그대로 두고 나머지 동기화는 반영 |
 | 사라진 클러스터 | **두 번 연속** 안 보여야 제거 |
 | 사용자가 바꾼 값 | 바꾼 이름과 기본 네임스페이스는 유지 |
 
@@ -979,16 +996,16 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 
 클러스터를 열면 두 부분으로 된 탭이 열립니다.
 
-- **왼쪽: 리소스 패널** — **Pods** · **Deploy** · **Svc** · **Nodes**, 네임스페이스 선택(**모든 네임스페이스** 포함), **이름으로 찾기**, 5초 자동 새로고침(눌러서 끄고 켬), `F5` 새로고침.
+- **왼쪽: 리소스 패널** — **Pods** · **Deploy** · **Svc** · **Nodes**, 네임스페이스 선택(**모든 네임스페이스** 포함), **이름으로 찾기**, 5초 자동 새로고침(눌러서 끄고 켬, 창이 최소화되거나 탭이 가려지면 멈춤), `F5` 새로고침. 목록이 너무 커서 받지 못하면 안내하고 자동 새로고침을 멈춥니다 — 네임스페이스를 골라 범위를 줄이세요.
 - **오른쪽: kubectl 터미널** — `KUBECONFIG` 가 이 클러스터인 PowerShell 이라, `kubectl` · `k9s` · `helm` 이 모두 이 클러스터를 가리킵니다.
 
 | 리소스 | 동작 |
 |---|---|
-| 파드 | 더블클릭 · `Enter`: 셸 탭 (`kubectl exec -it`, bash 가 없으면 sh). 우클릭: **셸 열기** · **로그 보기** (`logs -f --tail=500`, 컨테이너가 여럿이면 하위 메뉴) · **이전 컨테이너 로그** · describe · **YAML 보기** · **이름 복사** · **삭제** (확인 창, 컨트롤러가 관리하는 파드는 다시 만들어짐) |
+| 파드 | 더블클릭 · `Enter`: 셸 탭 (`kubectl exec -it`, bash 가 없으면 sh). 우클릭: **셸 열기** · **로그 보기** (`logs -f --tail=500`, 컨테이너가 여럿이면 하위 메뉴) · **이전 컨테이너 로그** (컨테이너가 여럿이면 하위 메뉴) · describe · **YAML 보기** · **이름 복사** · **삭제** (확인 창, 컨트롤러가 관리하는 파드는 다시 만들어짐) |
 | 디플로이먼트 | describe · **YAML 보기** · **다시 시작** (`rollout restart`, 확인 창) |
 | 서비스 · 노드 | describe · **YAML 보기** |
 
-describe 와 YAML 은 오른쪽 터미널에서 실행됩니다. 셸·로그 탭을 닫으면 `kubectl` 과 하위 프로세스도 끝납니다. 닫은 클러스터 탭은 `Ctrl+Shift+R` 로 다시 열고, 명령 팔레트(`Ctrl+K`)에서도 클러스터와 **Kubernetes 페이지** 를 찾을 수 있습니다.
+describe 와 YAML 은 터미널이 프롬프트일 때만 오른쪽 터미널에 입력해 실행하고, 아니면 명령을 클립보드에 복사합니다. 셸·로그 탭을 닫으면 `kubectl` 과 하위 프로세스도 끝납니다. 닫은 클러스터 탭은 `Ctrl+Shift+R` 로 다시 열고, 명령 팔레트(`Ctrl+K`)에서도 클러스터와 **Kubernetes 페이지** 를 찾을 수 있습니다.
 
 ### 16.7 보안
 
