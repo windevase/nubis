@@ -830,7 +830,8 @@ public static class ReadOnlyCommands
             var args = t.Skip(1).ToList();
             if (first.Equals("dir", StringComparison.OrdinalIgnoreCase) || first.Equals("type", StringComparison.OrdinalIgnoreCase) ||
                 first.Equals("echo", StringComparison.OrdinalIgnoreCase) ||
-                first.Equals("sort", StringComparison.OrdinalIgnoreCase) && !args.Any(x => x.StartsWith("/o", StringComparison.OrdinalIgnoreCase) || x.StartsWith("-o", StringComparison.OrdinalIgnoreCase)) ||
+                // sort 는 /o 출력 파일 옵션이 있어 WinArgsOk 의 인자 경계 검사·조각 분할을 거친다 (sort /+1\" /o out.txt /+1\" x 우회)
+                first.Equals("sort", StringComparison.OrdinalIgnoreCase) && WinArgsOk("sort", args) ||
                 first.Equals("set", StringComparison.OrdinalIgnoreCase) && !seg.Contains('='))
                 continue;
             if (WinNative.Contains(first) && WinArgsOk(first, args)) continue;
@@ -851,6 +852,7 @@ public static class ReadOnlyCommands
         if (a.Any(x => x.IndexOf('"') >= 0 || x.Contains("\\ ") || x.Contains("\\\t") ||
                        x.EndsWith('\\') && x.Any(c => c is ' ' or '\t')))
             return false;
+        var origCount = a.Count;   // 인자 수는 원래 인자로 센다 — net localgroup "Remote Desktop Users" 는 인자 2개 (net.exe 는 다시 나누지 않음)
         a = a.SelectMany(x => x.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)).ToList();
         string A(int i) => i < a.Count ? a[i].ToLowerInvariant() : "";
         bool Has(params string[] xs) => a.Any(x => xs.Any(y => x.Equals(y, StringComparison.OrdinalIgnoreCase)));
@@ -883,8 +885,9 @@ public static class ReadOnlyCommands
             case "net":
                 if (a.Any(x => x.StartsWith('/') || x.StartsWith('-') || x.Contains('*') || x.IndexOfAny(new[] { ',', ';', '=' }) >= 0)) return false;
                 return (A(0) is "start" or "share" or "session" or "statistics" or "config" or "view" or "use" or "accounts" && a.Count == 1)
-                       || (A(0) is "localgroup" or "user" or "group" && a.Count <= 2);
+                       || (A(0) is "localgroup" or "user" or "group" && origCount <= 2);
             case "query": return A(0) is "user" or "session" or "process" or "termserver";
+            case "sort": return !HasRx(@"^[-/]o");   // /o 출력 파일 (긴 형태 /output 포함)
             default: return true;   // hostname, whoami, systeminfo, netstat, tasklist, quser, nslookup, ping, tracert, getmac ...
         }
     }

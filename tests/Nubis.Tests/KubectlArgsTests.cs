@@ -601,4 +601,23 @@ public class KubectlArgsTests
     [InlineData("net user administrator", CommandShell.PowerShell)]
     public void 일반_조회는_그대로_윈도우(string line, CommandShell shell) =>
         Assert.True(ReadOnlyCommands.IsReadOnly(line, shell));
+
+    // ---------------------------------------------------------------- 재검수 6회차: cmd sort /o 숨기기 · 공백 든 그룹 이름 조회
+
+    [Theory]
+    [InlineData("sort /+1\\\" /o out1.txt /+1\\\" x")]
+    [InlineData(@"sort /rec 100\"" /o C:\Windows\x.ini /rec 100\"" in.txt")]
+    [InlineData("sort x\"\"\" /o\"")]
+    [InlineData("sort /o out.txt in.txt")]
+    [InlineData("sort /output out.txt in.txt")]
+    public void cmd_sort_출력_파일_숨기기_불가(string line) => Assert.False(ReadOnlyCommands.IsReadOnly(line, CommandShell.Cmd));
+
+    [Theory]
+    [InlineData("net localgroup \"Remote Desktop Users\"", CommandShell.Cmd)]
+    [InlineData("net group \"Domain Admins\"", CommandShell.Cmd)]
+    [InlineData("net user 'John Smith'", CommandShell.PowerShell)]
+    [InlineData("sort in.txt", CommandShell.Cmd)]
+    [InlineData("sort /r in.txt", CommandShell.Cmd)]
+    public void 공백_든_이름_조회와_일반_sort_는_그대로(string line, CommandShell shell) =>
+        Assert.True(ReadOnlyCommands.IsReadOnly(line, shell));
 }
