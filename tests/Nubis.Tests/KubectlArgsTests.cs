@@ -620,4 +620,19 @@ public class KubectlArgsTests
     [InlineData("sort /r in.txt", CommandShell.Cmd)]
     public void 공백_든_이름_조회와_일반_sort_는_그대로(string line, CommandShell shell) =>
         Assert.True(ReadOnlyCommands.IsReadOnly(line, shell));
+
+    // ---------------------------------------------------------------- 재검수 7회차: w32tm 조회 · wmic 쉼표 동사
+
+    [Fact]
+    public void w32tm_설정_조회는_허용_변경은_거부()
+    {
+        Assert.True(ReadOnlyCommands.IsReadOnly("w32tm /query /configuration", CommandShell.Cmd));
+        Assert.False(ReadOnlyCommands.IsReadOnly("w32tm /config /syncfromflags:manual", CommandShell.Cmd));
+        Assert.False(ReadOnlyCommands.IsReadOnly("w32tm /resync", CommandShell.Cmd));
+    }
+
+    [Theory]
+    [InlineData("wmic os list,call nubisprobe_nomethod")]
+    [InlineData("wmic process list,delete")]
+    public void wmic_쉼표로_붙인_동사도_거부(string line) => Assert.False(ReadOnlyCommands.IsReadOnly(line, CommandShell.Cmd));
 }

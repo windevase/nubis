@@ -873,11 +873,14 @@ public static class ReadOnlyCommands
                 if (a.Any(x => x.StartsWith("/format", StringComparison.OrdinalIgnoreCase) &&
                                !Regex.IsMatch(x, @"^/format:(list|table|csv|value|htable|hform|rawxml|xml|textvaluelist)$", RegexOptions.IgnoreCase)))
                     return false;   // 원격 XSL(스크립트 실행) 방지
+                // 동사 검사는 쉼표로도 나눈 조각으로 (wmic os list,call … 처럼 붙여 쓴 동사를 놓치지 않게 — 보수적으로)
                 return a.Any(x => x.Equals("get", StringComparison.OrdinalIgnoreCase) || x.StartsWith("list", StringComparison.OrdinalIgnoreCase))
-                       && !Has("call", "create", "delete", "set");
+                       && !a.SelectMany(x => x.Split(',')).Any(x => x.Trim() is var v &&
+                              (v.Equals("call", StringComparison.OrdinalIgnoreCase) || v.Equals("create", StringComparison.OrdinalIgnoreCase) ||
+                               v.Equals("delete", StringComparison.OrdinalIgnoreCase) || v.Equals("set", StringComparison.OrdinalIgnoreCase)));
             case "route": return A(0) == "print" && !HasRx(@"^[-/][fp]$");
             case "arp": return A(0) is "-a" or "-g" or "/a" && !HasRx(@"^[-/][ds]$");
-            case "w32tm": return (A(0).StartsWith("/query") || A(0) == "/tz" || A(0) == "/stripchart") && !HasRx(@"^/(config|resync|register|unregister|debug)");
+            case "w32tm": return (A(0).StartsWith("/query") || A(0) == "/tz" || A(0) == "/stripchart") && !HasRx(@"^/(config|resync|register|unregister|debug)(:|$)");   // /query /configuration 은 조회
             case "bcdedit": return a.All(x => !(x.StartsWith('/') || x.StartsWith('-')) || x.Equals("/enum", StringComparison.OrdinalIgnoreCase) || x.Equals("/v", StringComparison.OrdinalIgnoreCase));
             case "cmdkey": return a.Count > 0 && a.All(x => x.StartsWith("/list", StringComparison.OrdinalIgnoreCase));
             case "klist": return !Has("purge", "purge_bind", "add_bind");
