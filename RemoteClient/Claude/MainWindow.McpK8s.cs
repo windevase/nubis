@@ -79,10 +79,11 @@ public partial class MainWindow
             a => OnUiAsync(() => TestK8sFromClaude(a)));
 
         yield return new McpTool("find_k8s_clusters",
-            "클라우드 프로필로 쿠버네티스 클러스터(EKS·GKE·AKS·OKE·TKE)를 찾아 목록에 반영한다 (Kubernetes 페이지 '클라우드에서 찾기' 와 같음, 조회 API 만 — 승인 없이 실행, 감사 로그). " +
+            "클라우드 프로필로 쿠버네티스 클러스터(EKS·GKE·AKS·OKE·TKE)를 찾아 목록에 반영한다 (Kubernetes 페이지 '클라우드에서 찾기' 와 같음, 조회 API 만, 감사 로그). " +
             "찾은 프로필은 클러스터 동기화(sync_clusters)를 켜 앞으로 VM 동기화 때 함께 갱신된다. profiles 를 생략하면 화면의 처음 선택과 같다 " +
             "(클러스터 동기화가 켜진 프로필, 하나도 없으면 전부). 고르지 않은 프로필은 기본으로 그대로 두고, disable_unselected=true 면 그 프로필의 클러스터 동기화를 끄고, " +
-            "remove_unselected_clusters=true 면 그 프로필의 클러스터를 목록에서 지운다 (지우기는 사용자 승인). 여러 리전을 훑어 최대 3분 걸릴 수 있다.",
+            "remove_unselected_clusters=true 면 그 프로필의 클러스터를 목록에서 지우고 그 프로필의 클러스터 동기화도 끈다 (켜 두면 다음 동기화 때 다시 생기므로 — UI 와 같음). " +
+            "클러스터 동기화가 실제로 바뀌거나(새로 켜짐·꺼짐) 클러스터를 지우면 사용자 승인 한 번, 이미 동기화가 켜진 프로필만 찾으면 승인 없이 조회. 여러 리전을 훑어 최대 3분 걸릴 수 있다.",
             Schema(new
             {
                 profiles = new { type = "array", items = new { type = "string" }, description = "프로필 id(앞 8자 이상)·표시 이름·프로필 이름 (cloud_list_profiles). 생략하면 기본 선택" },

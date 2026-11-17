@@ -195,6 +195,49 @@ public class K8sMcpParityTests
         Assert.Empty(McpK8sRules.StillRemovable(new[] { c1 }, new[] { c1 }, new HashSet<Guid> { b }));
     }
 
+    [Fact]
+    public void 지우기만_요청해도_지울_클러스터가_있는_프로필의_동기화는_끈다()
+    {
+        var a = new CloudProfile { SyncClusters = true };
+        var owner = new CloudProfile { SyncClusters = true };        // 지울 클러스터 있음 + 동기화 켜짐 → 끔 (안 끄면 다음 동기화 때 부활)
+        var ownerOff = new CloudProfile { SyncClusters = false };    // 지울 클러스터 있음 + 이미 꺼짐 → 그대로
+        var bystander = new CloudProfile { SyncClusters = true };    // 고르지 않았지만 지울 클러스터 없음 → disable_unselected 없이는 그대로
+        var clusters = new List<K8sCluster>
+        {
+            new() { Name = "o1", CloudProfileId = owner.Id, CloudClusterId = "1" },
+            new() { Name = "f1", CloudProfileId = ownerOff.Id, CloudClusterId = "2" },
+        };
+        var plan = McpK8sRules.FindPlan(new[] { a, owner, ownerOff, bystander }, new HashSet<Guid> { a.Id }, clusters,
+            disableUnselected: false, removeUnselected: true);
+        Assert.Equal(new[] { owner }, plan.Disable);
+        Assert.Equal(2, plan.Remove.Count);
+        // disable_unselected 를 같이 주면 UI 와 같이 켜진 것 모두
+        var all = McpK8sRules.FindPlan(new[] { a, owner, ownerOff, bystander }, new HashSet<Guid> { a.Id }, clusters, true, true);
+        Assert.Equal(new[] { owner, bystander }, all.Disable);
+    }
+
+    [Fact]
+    public void 동기화가_실제로_바뀌거나_지울_때만_승인()
+    {
+        var on = new CloudProfile { Name = "on", SyncClusters = true };
+        var off = new CloudProfile { Name = "off", SyncClusters = false };
+        var none = new List<K8sCluster>();
+        // 이미 켜진 프로필만 조회 → 승인 없음
+        var plain = McpK8sRules.FindPlan(new[] { on, off }, new HashSet<Guid> { on.Id }, none, false, false);
+        Assert.False(McpK8sRules.FindNeedsApproval(plain));
+        Assert.Empty(McpK8sRules.NewlyEnabled(plain));
+        // 꺼진 프로필을 고름 → 새로 켜짐 → 승인
+        var enable = McpK8sRules.FindPlan(new[] { on, off }, new HashSet<Guid> { on.Id, off.Id }, none, false, false);
+        Assert.True(McpK8sRules.FindNeedsApproval(enable));
+        Assert.Equal(new[] { off }, McpK8sRules.NewlyEnabled(enable));
+        // 고르지 않은 켜진 프로필 끄기 → 승인
+        var disable = McpK8sRules.FindPlan(new[] { on, off }, new HashSet<Guid>(), none, true, false);
+        Assert.True(McpK8sRules.FindNeedsApproval(disable));
+        var lines = McpK8sRules.FindChangeLines(McpK8sRules.FindPlan(new[] { on, off }, new HashSet<Guid> { off.Id },
+            new List<K8sCluster> { new() { Name = "c1", CloudProfileId = on.Id } }, false, true), p => p.Name);
+        Assert.Equal(new[] { "클러스터 동기화 켬: off", "클러스터 동기화 끔: on", "지울 클러스터: c1" }, lines);
+    }
+
     // ---------------------------------------------------------------- import_k8s_clusters: 경로
 
     private static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -317,5 +360,46 @@ public class K8sMcpParityTests
             Assert.Equal(dir, KubeconfigImport.ReadPath(one).BaseDir);
         }
         finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void 승인_창용_exec_인자와_환경_변수_이름()
+    {
+        const string yaml = """
+            apiVersion: v1
+            kind: Config
+            clusters:
+            - name: c
+              cluster: { server: https://c.example.com }
+            users:
+            - name: u
+              user:
+                exec:
+                  command: kubelogin
+                  args: [get-token, --server-id, "a b", "x\ny"]
+                  env:
+                  - { name: AZURE_TOKEN, value: ENV-SECRET }
+                  - { name: HTTPS_PROXY, value: http://p }
+            contexts:
+            - name: k
+              context: { cluster: c, user: u }
+            """;
+        var doc = Kubeconfig.Load(yaml);
+        var (args, env) = McpK8sRules.ExecDetail(doc, "k");
+        Assert.Equal(new[] { "get-token", "--server-id", "a b", "x\ny" }, args);
+        Assert.Equal(new[] { "AZURE_TOKEN", "HTTPS_PROXY" }, env);
+        var text = McpK8sRules.ExecApprovalText("k", "kubelogin", args, env);
+        Assert.Contains("k: kubelogin get-token --server-id \"a b\" \"x\\ny\"", text);   // 인자 속 줄바꿈은 글자로
+        Assert.Equal(2, text.Split('\n').Length);   // 명령 한 줄 + env 한 줄
+        Assert.Contains("env: AZURE_TOKEN, HTTPS_PROXY", text);
+        Assert.DoesNotContain("ENV-SECRET", text);    // 환경 변수 값은 넣지 않는다
+        // exec 없는 context · 없는 context 는 빈 목록
+        Assert.Empty(McpK8sRules.ExecDetail(Kubeconfig.Load(Multi), "prod").Args);
+        Assert.Empty(McpK8sRules.ExecDetail(Kubeconfig.Load(Multi), "nope").EnvNames);
+        Assert.Equal(new[] { "eks", "get-token", "--cluster-name", "demo", "--role-arn", "SECRET-ARG" }, McpK8sRules.ExecDetail(Kubeconfig.Load(Multi), "eks").Args);
+        // 길면 자른다
+        var longText = McpK8sRules.ExecApprovalText("k", "aws", new[] { new string('a', 1000) }, Array.Empty<string>(), max: 50);
+        Assert.EndsWith(" …", longText);
+        Assert.True(longText.Length < 80);
     }
 }
