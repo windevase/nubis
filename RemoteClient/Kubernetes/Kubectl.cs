@@ -14,39 +14,202 @@ namespace Nubis;
 /// kubectl 인자 검사 (화면 무관, KubectlArgsTests). 클러스터·인증은 앱이 고정하므로(KUBECONFIG + --context)
 /// 인자로 다른 kubeconfig·서버·사용자·토큰을 지정하지 못하게 한다 — 그렇게 바꾸면 저장된 인증이 엉뚱한 서버로 가거나
 /// (-s https://공격자), exec 플러그인을 가진 다른 kubeconfig 로 임의 프로그램이 실행될 수 있다.
+/// 옵션 해석은 kubectl(cobra·pflag) 규칙을 따른다:
+/// · 짧은 옵션은 묶어 쓸 수 있다 (-As x = -A -s x, -Asx 도 같다). 값을 받는 글자가 나오면 그 뒤는 값이다 (-lapp=s)
+/// · 긴 옵션 이름의 _ 는 - 로 바뀐다 (--profile_output = --profile-output). 접두어 축약·대소문자 무시는 없다
+/// · 값을 받는 옵션 바로 뒤의 -- 는 끝 표시가 아니라 그 옵션의 값이다 (-l -- --server=x 에서 --server 는 옵션)
+/// · 첫 인자가 기본 명령이 아니면 PATH 의 kubectl-이름 프로그램(플러그인)을 실행한다
 /// </summary>
 public static class KubectlArgs
 {
-    private static readonly string[] BlockedLong =
+    /// <summary>클러스터·서버·인증을 바꾸는 긴 옵션</summary>
+    private static readonly string[] AuthLong =
     {
         "--kubeconfig", "--context", "--cluster", "--user", "--server", "--token", "--as", "--as-group", "--as-uid",
         "--username", "--password", "--client-certificate", "--client-key", "--certificate-authority",
-        "--insecure-skip-tls-verify", "--tls-server-name", "--cache-dir",
+        "--insecure-skip-tls-verify", "--tls-server-name",
+    };
+
+    /// <summary>원격 서버 셸의 kubectl 에서는 허용하는 것 (그 서버 kubeconfig 안의 다른 context 고르기)</summary>
+    private static readonly string[] ClusterSelect = { "--context", "--cluster", "--user" };
+
+    /// <summary>
+    /// 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행하는 긴 옵션: --profile-output(임의 경로에 덮어쓰기), --log-file·--log-dir(옛 버전 klog),
+    /// --kuberc(1.33+ 설정 파일 — 별칭·기본 옵션을 바꾼다), --cache-dir, kustomize 의 --helm-command·--enable-alpha-plugins·--enable-exec(프로그램 실행)
+    /// </summary>
+    private static readonly string[] LocalLong =
+    {
+        "--profile-output", "--log-file", "--log-dir", "--kuberc", "--cache-dir", "--helm-command", "--enable-alpha-plugins", "--enable-exec",
+    };
+
+    /// <summary>kubectl debug 의 --profile 값 (전역 --profile 은 pprof 프로파일 — --profile-output 경로에 파일을 쓴다)</summary>
+    private static readonly HashSet<string> DebugProfiles = new(StringComparer.Ordinal)
+    {
+        "legacy", "general", "baseline", "netadmin", "restricted", "sysadmin",
+    };
+
+    /// <summary>
+    /// 어느 하위 명령에서든 값을 받는 짧은 옵션 (묶음 안에서 이 글자 뒤는 값). 하위 명령마다 뜻이 다른 글자(-f: logs 는 follow, apply 는 파일)는
+    /// 넣지 않는다 — 값 없는 옵션으로 보고 뒤 글자를 계속 검사하는 쪽이 안전하다
+    /// </summary>
+    private const string ShortValue = "nlocLvks";
+
+    /// <summary>어느 하위 명령에서든 값이 없는 짧은 옵션 (-- 앞에 와도 -- 를 값으로 가져가지 않는다)</summary>
+    private const string ShortBool = "itqARwh";
+
+    /// <summary>
+    /// 값이 없는(또는 값 생략 가능한 NoOptDefVal) 긴 옵션 — 바로 뒤의 -- 를 값으로 가져가지 않는다.
+    /// 목록에 없는 긴 옵션은 값을 받는 것으로 보아 뒤의 -- 를 끝 표시로 보지 않는다 (그 뒤까지 검사 — 안전한 쪽)
+    /// </summary>
+    private static readonly HashSet<string> LongBool = new(StringComparer.Ordinal)
+    {
+        "--stdin", "--tty", "--quiet", "--attach", "--rm", "--command", "--leave-stdin-open", "--privileged", "--share-processes",
+        "--replace", "--same-node", "--arguments-only", "--keep-annotations", "--keep-labels", "--keep-liveness", "--keep-readiness",
+        "--keep-startup", "--keep-init-containers", "--expose", "--force", "--save-config", "--show-managed-fields", "--wait",
+        "--recursive", "--all-namespaces", "--all", "--dry-run", "--cascade", "--validate", "--overwrite", "--local", "--record",
+        "--allow-missing-template-keys", "--disable-compression", "--match-server-version", "--warnings-as-errors", "--help",
+        "--server-side", "--force-conflicts", "--prune", "--ignore-not-found", "--no-headers", "--show-labels", "--show-kind",
+        "--watch", "--watch-only", "--previous", "--follow", "--timestamps", "--prefix", "--all-containers", "--ignore-errors",
+    };
+
+    /// <summary>kubectl 기본 명령 (이 밖의 첫 인자는 플러그인 kubectl-이름 실행이 된다)</summary>
+    private static readonly HashSet<string> Builtins = new(StringComparer.Ordinal)
+    {
+        "annotate", "api-resources", "api-versions", "apply", "attach", "auth", "autoscale", "certificate", "cluster-info",
+        "completion", "config", "cordon", "cp", "create", "debug", "delete", "describe", "diff", "drain", "edit", "events",
+        "exec", "explain", "expose", "get", "help", "kustomize", "label", "logs", "options", "patch", "plugin", "port-forward",
+        "proxy", "replace", "rollout", "run", "scale", "set", "taint", "top", "uncordon", "version", "wait", "alpha",
+    };
+
+    /// <summary>kubectl create 의 기본 하위 명령·별칭 (1.30+ 는 이 밖의 이름이면 kubectl-create-이름 플러그인을 찾는다)</summary>
+    private static readonly HashSet<string> CreateSubs = new(StringComparer.Ordinal)
+    {
+        "clusterrole", "clusterrolebinding", "configmap", "cm", "cronjob", "cj", "deployment", "deploy", "ingress", "ing", "job",
+        "namespace", "ns", "poddisruptionbudget", "pdb", "priorityclass", "pc", "quota", "resourcequota", "role", "rolebinding",
+        "secret", "service", "svc", "serviceaccount", "sa", "token",
     };
 
     /// <summary>문제가 있으면 이유(화면·Claude 에 보이는 문구), 없으면 null</summary>
-    public static string? Validate(IReadOnlyList<string> args)
+    public static string? Validate(IReadOnlyList<string> args) => Check(args, fixedCluster: true);
+
+    /// <summary>
+    /// 인자 검사. fixedCluster=false 는 원격 서버 셸의 kubectl 판정용(ReadOnlyCommands) — 그 서버 kubeconfig 안의
+    /// --context·--cluster·--user 선택만 허용하고 나머지(서버·인증·로컬 파일·플러그인)는 똑같이 막는다
+    /// </summary>
+    internal static string? Check(IReadOnlyList<string> args, bool fixedCluster)
     {
         if (args.Count == 0) return L.T("kubectl 인자가 없습니다.");
         if (args.Count > 200) return L.T("kubectl 인자가 너무 많습니다.");
-        foreach (var raw in args)
+        // 플러그인: kubectl 은 앞쪽의 옵션 아닌 인자들로 kubectl-<이름> 을 PATH 에서 찾아 실행한다 (krew 등 포함)
+        if (!args[0].StartsWith('-') && !Builtins.Contains(args[0]))
+            return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", args[0]);
+        if (args[0] == "create" && args.Count > 1 && !args[1].StartsWith('-') && !CreateSubs.Contains(args[1]))
+            return L.F("kubectl 플러그인({0})은 실행할 수 없습니다 — 기본 kubectl 명령만 쓸 수 있습니다.", "create " + args[1]);
+        var allowed = fixedCluster ? Array.Empty<string>() : ClusterSelect;
+        var end = TerminatorIndex(args);
+        for (var i = 0; i < end; i++)
         {
-            if (raw == "--") break;   // 이 뒤는 컨테이너 안에서 실행할 명령 (exec ... -- sh)
+            var raw = args[i];
             if (raw.Any(c => c == '\0' || c == '\r' || c == '\n')) return L.T("kubectl 인자에 줄바꿈·NUL 문자를 넣을 수 없습니다.");
             var a = raw.Trim();
+            var next = i + 1 < args.Count ? args[i + 1] : null;
             if (a.StartsWith("--", StringComparison.Ordinal))
             {
-                var name = a.Split('=', 2)[0].ToLowerInvariant();
-                // 접두어로도 막는다 (--server 대신 --serv= 처럼 줄여 쓰는 경우)
-                if (BlockedLong.Any(b => b == name || (name.Length >= 6 && b.StartsWith(name, StringComparison.Ordinal))))
+                if (a.Length == 2) continue;   // 앞 옵션의 값으로 쓰인 -- (끝 표시는 TerminatorIndex 가 정한다)
+                var eq = a.IndexOf('=');
+                var name = LongName(eq < 0 ? a : a[..eq]);
+                var value = eq < 0 ? next : a[(eq + 1)..];
+                if (name == "--profile")
+                {
+                    // kubectl debug --profile=general 은 허용, 그 밖(pprof: heap·cpu 등)은 --profile-output 경로에 파일을 쓴다
+                    if (value is { } pv && DebugProfiles.Contains(pv)) continue;
+                    return L.F("{0} 은(는) 쓸 수 없습니다 — 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행할 수 있습니다.", name);
+                }
+                if (Array.IndexOf(allowed, name) < 0 && Matches(name, AuthLong))
                     return L.F("{0} 은(는) 쓸 수 없습니다 — 클러스터와 인증은 Nubis 에 등록한 값으로 고정됩니다.", name);
+                if (Matches(name, LocalLong))
+                    return L.F("{0} 은(는) 쓸 수 없습니다 — 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행할 수 있습니다.", name);
+                if (name == "--output" && value != null && FileOutput(value))
+                    return L.F("{0} 은(는) 쓸 수 없습니다 — 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행할 수 있습니다.", "-o " + OutputFormat(value));
             }
-            // -s / -shttps://... (짧은 --server)
-            else if (a.Length >= 2 && a[0] == '-' && a[1] == 's')
-                return L.T("-s 는 쓸 수 없습니다 — 클러스터와 인증은 Nubis 에 등록한 값으로 고정됩니다.");
+            else if (a.Length > 1 && a[0] == '-')
+            {
+                // 짧은 옵션 묶음: 글자마다 옵션 — 값을 받는 글자가 나오면 나머지(= 뒤, 비었으면 다음 인자)는 값
+                for (var k = 1; k < a.Length; k++)
+                {
+                    var c = a[k];
+                    if (c == 's') return L.T("-s 는 쓸 수 없습니다 — 클러스터와 인증은 Nubis 에 등록한 값으로 고정됩니다.");
+                    var hasEq = k + 1 < a.Length && a[k + 1] == '=';
+                    if (c == 'o')
+                    {
+                        var ov = k + 1 < a.Length ? a[(hasEq ? k + 2 : k + 1)..] : next;
+                        if (ov != null && FileOutput(ov))
+                            return L.F("{0} 은(는) 쓸 수 없습니다 — 이 PC 의 파일을 읽거나 쓰거나 프로그램을 실행할 수 있습니다.", "-o " + OutputFormat(ov));
+                        break;
+                    }
+                    if (hasEq || ShortValue.IndexOf(c) >= 0) break;   // -x=값 · 값을 받는 글자
+                }
+            }
         }
         return null;
     }
+
+    /// <summary>
+    /// 옵션 해석이 끝나는 위치 (-- 의 위치, 없으면 인자 수). 값을 받는(또는 모르는) 옵션 바로 뒤의 -- 는 그 옵션의 값이라
+    /// 끝 표시가 아니다 — pflag 는 -l -- --server=x 에서 -- 를 -l 의 값으로 가져가고 --server 를 옵션으로 해석한다
+    /// </summary>
+    internal static int TerminatorIndex(IReadOnlyList<string> args)
+    {
+        var pending = false;
+        for (var i = 0; i < args.Count; i++)
+        {
+            var a = args[i];
+            if (pending) { pending = false; continue; }
+            if (a == "--") return i;
+            if (a.StartsWith("--", StringComparison.Ordinal))
+            {
+                if (!a.Contains('=') && !LongBool.Contains(LongName(a))) pending = true;
+            }
+            else if (a.Length > 1 && a[0] == '-')
+            {
+                for (var k = 1; k < a.Length; k++)
+                {
+                    if (k + 1 < a.Length && a[k + 1] == '=') break;
+                    if (ShortBool.IndexOf(a[k]) >= 0) continue;
+                    if (k == a.Length - 1) pending = true;   // 값을 받는(또는 모르는) 글자로 끝남 → 다음 인자가 값
+                    break;
+                }
+            }
+        }
+        return args.Count;
+    }
+
+    /// <summary>긴 옵션 이름 정규화 (pflag 의 _ → -, 비교는 보수적으로 소문자)</summary>
+    internal static string LongName(string x) => x.ToLowerInvariant().Replace('_', '-');
+
+    /// <summary>
+    /// 짧은 옵션 묶음(-Af 등)에 이 글자들이 옵션으로 들어 있다. 값을 받는 글자(-l, -o …) 뒤는 값이라 보지 않는다.
+    /// 뜻을 모르는 글자는 값 없는 옵션으로 보고 계속 본다 (놓치지 않는 쪽)
+    /// </summary>
+    internal static bool ShortHas(string x, string letters)
+    {
+        if (x.Length < 2 || x[0] != '-' || x[1] == '-') return false;
+        for (var k = 1; k < x.Length; k++)
+        {
+            if (letters.IndexOf(x[k]) >= 0) return true;
+            if ((k + 1 < x.Length && x[k + 1] == '=') || ShortValue.IndexOf(x[k]) >= 0) return false;
+        }
+        return false;
+    }
+
+    /// <summary>정확히 같거나 줄여 쓴 접두어(6자 이상 — kubectl 은 축약을 받지 않지만 보수적으로 막는다)</summary>
+    private static bool Matches(string name, string[] list) =>
+        list.Any(b => b == name || (name.Length >= 6 && b.StartsWith(name, StringComparison.Ordinal)));
+
+    private static string OutputFormat(string v) => v.Split('=', 2)[0].Trim().ToLowerInvariant();
+
+    /// <summary>-o 값이 로컬 파일을 읽는 형식인가 (go-template-file · jsonpath-file · templatefile · custom-columns-file 등)</summary>
+    private static bool FileOutput(string v) => OutputFormat(v).EndsWith("file", StringComparison.Ordinal);
 
     /// <summary>
     /// ReadOnlyCommands(sh 규칙)로 판정할 한 줄 명령. 셸을 거치지 않고 실행하지만, 판정은 보수적으로 같은 규칙을 쓴다.
@@ -187,6 +350,8 @@ public static class Kubectl
         foreach (var k in psi.Environment.Keys.ToList())
             if (ChildEnvironment.ShouldDrop(k, persistent)) psi.Environment.Remove(k);
         psi.Environment["KUBECONFIG"] = cfg.Path;
+        // 1.33+ 의 kuberc(~/.kube/kuberc · KUBERC)는 별칭·기본 옵션을 더해 위 인자 검사를 비껴갈 수 있다 → 끈다
+        psi.Environment["KUBERC"] = "off";
 
         using var p = new Process { StartInfo = psi };
         p.Start();
@@ -194,17 +359,21 @@ public static class Kubectl
         var outTask = ReadCappedAsync(p.StandardOutput, maxOutput);
         var errTask = ReadCappedAsync(p.StandardError, maxOutput / 4);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        // 취소·시간 초과 즉시(취소를 부른 스레드에서) 프로세스 트리를 끝낸다 — 앱 종료 중 UI 디스패처가 멈춰
+        // await 뒤 코드가 돌지 않아도 kubectl 이 남지 않게. 아래 await 는 ConfigureAwait(false) 라 임시 kubeconfig(using cfg)
+        // 삭제도 UI 스레드와 무관하게 스레드 풀에서 끝난다 (호출자의 await 는 각자 원래 컨텍스트로 돌아간다)
+        using var killOnCancel = cts.Token.Register(() => { try { p.Kill(entireProcessTree: true); } catch { } });
         cts.CancelAfter(timeout);
         var timedOut = false;
-        try { await p.WaitForExitAsync(cts.Token); }
+        try { await p.WaitForExitAsync(cts.Token).ConfigureAwait(false); }
         catch (OperationCanceledException)
         {
             try { p.Kill(entireProcessTree: true); } catch { }
             if (ct.IsCancellationRequested) throw;
             timedOut = true;
         }
-        var output = await outTask;
-        var error = await errTask;
+        var output = await outTask.ConfigureAwait(false);
+        var error = await errTask.ConfigureAwait(false);
         return new Result(timedOut ? -1 : p.ExitCode, output, error, timedOut);
     }
 
