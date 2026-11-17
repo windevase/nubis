@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -172,6 +173,159 @@ public class K8sPanelLogicTests
         Assert.False(K8sRowSync.ShouldRebuild(current, current.Skip(1).Append("new")));
         Assert.True(K8sRowSync.ShouldRebuild(current, current.Take(100)));   // 200개 삭제 (검색어 입력 등)
         Assert.True(K8sRowSync.ShouldRebuild(current, current.Select(k => k + "-v2")));   // 롤아웃으로 이름이 모두 바뀜
+    }
+
+    private static Dictionary<NotifyCollectionChangedAction, int> CountChanges(ObservableCollection<Row> rows)
+    {
+        var counts = new Dictionary<NotifyCollectionChangedAction, int>();
+        rows.CollectionChanged += (_, e) => counts[e.Action] = counts.GetValueOrDefault(e.Action) + 1;
+        return counts;
+    }
+
+    private static void SyncRows(ObservableCollection<Row> rows, IReadOnlyList<string> keys) =>
+        K8sRowSync.Apply(rows, keys, r => r.Key, k => k, k => new Row { Key = k }, (r, k) => { });
+
+    [Fact]
+    public void 목록_맞추기는_삭제_삽입에_아래_행을_옮기지_않는다()
+    {
+        var keys = Enumerable.Range(0, 5000).Select(i => $"p{i:D5}").ToList();
+        var rows = new ObservableCollection<Row>(keys.Select(k => new Row { Key = k }));
+        var originals = rows.ToList();
+        var counts = CountChanges(rows);
+
+        // 맨 앞 행 하나 삭제 → RemoveAt 한 번, Move 0
+        SyncRows(rows, keys.Skip(1).ToList());
+        Assert.Equal(1, counts.GetValueOrDefault(NotifyCollectionChangedAction.Remove));
+        Assert.Equal(0, counts.GetValueOrDefault(NotifyCollectionChangedAction.Move));
+        Assert.Equal(keys.Skip(1), rows.Select(r => r.Key));
+
+        // 대량 삭제 (짝수 행 모두) → Move 0, 남은 행 객체는 그대로
+        counts.Clear();
+        var odd = keys.Where((_, i) => i % 2 == 1).ToList();
+        SyncRows(rows, odd);
+        Assert.Equal(0, counts.GetValueOrDefault(NotifyCollectionChangedAction.Move));
+        Assert.Equal(odd, rows.Select(r => r.Key));
+        Assert.Same(originals[1], rows[0]);
+
+        // 중간 삽입 → Add 한 번, Move 0
+        counts.Clear();
+        var inserted = odd.Take(1000).Append("p01999x").Concat(odd.Skip(1000)).ToList();
+        SyncRows(rows, inserted);
+        Assert.Equal(1, counts.GetValueOrDefault(NotifyCollectionChangedAction.Add));
+        Assert.Equal(0, counts.GetValueOrDefault(NotifyCollectionChangedAction.Move));
+        Assert.Equal(inserted, rows.Select(r => r.Key));
+
+        // 삭제와 삽입이 섞여도 Move 0
+        counts.Clear();
+        var mixed = inserted.Where((_, i) => i % 7 != 0).ToList();
+        mixed.Insert(10, "new-a");
+        mixed.Insert(2000, "new-b");
+        SyncRows(rows, mixed);
+        Assert.Equal(0, counts.GetValueOrDefault(NotifyCollectionChangedAction.Move));
+        Assert.Equal(mixed, rows.Select(r => r.Key));
+    }
+
+    [Fact]
+    public void 목록_맞추기는_중복_키_행을_하나만_남긴다()
+    {
+        var a1 = new Row { Key = "a" };
+        var rows = new ObservableCollection<Row> { a1, new Row { Key = "a" }, new Row { Key = "b" } };
+        SyncRows(rows, new[] { "a", "b" });
+        Assert.Equal(new[] { "a", "b" }, rows.Select(r => r.Key));
+        Assert.Same(a1, rows[0]);
+    }
+
+    [Fact]
+    public void 삭제_중이어도_끝난_파드는_원래_상태()
+    {
+        var done = Pod("""
+            {"metadata":{"name":"job","namespace":"a","deletionTimestamp":"2026-11-15T11:59:00Z"},"spec":{"containers":[{"name":"a"}]},
+             "status":{"phase":"Succeeded","containerStatuses":[{"name":"a","ready":false,"state":{"terminated":{"reason":"Completed","exitCode":0}}}]}}
+            """);
+        Assert.Equal("Completed", done.Status);
+        var failed = Pod("""
+            {"metadata":{"name":"job","namespace":"a","deletionTimestamp":"2026-11-15T11:59:00Z"},"spec":{"containers":[{"name":"a"}]},
+             "status":{"phase":"Failed","containerStatuses":[{"name":"a","ready":false,"state":{"terminated":{"reason":"Error","exitCode":1}}}]}}
+            """);
+        Assert.Equal("Error", failed.Status);
+        var running = Pod("""
+            {"metadata":{"name":"web","namespace":"a","deletionTimestamp":"2026-11-15T11:59:00Z"},"spec":{"containers":[{"name":"a"}]},
+             "status":{"phase":"Running","containerStatuses":[{"name":"a","ready":true,"state":{"running":{}}}]}}
+            """);
+        Assert.Equal("Terminating", running.Status);
+        var lost = Pod("""
+            {"metadata":{"name":"web","namespace":"a","deletionTimestamp":"2026-11-15T11:59:00Z"},"spec":{"containers":[{"name":"a"}]},
+             "status":{"phase":"Running","reason":"NodeLost","containerStatuses":[{"name":"a","ready":true,"state":{"running":{}}}]}}
+            """);
+        Assert.Equal("Unknown", lost.Status);
+    }
+
+    [Fact]
+    public void 네이티브_사이드카는_Ready_분모와_재시작_수에_들어간다()
+    {
+        var p = Pod("""
+            {"metadata":{"name":"web","namespace":"a"},
+             "spec":{"initContainers":[{"name":"migrate"},{"name":"proxy","restartPolicy":"Always"}],"containers":[{"name":"app"}]},
+             "status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True"},{"type":"Ready","status":"True"}],
+               "initContainerStatuses":[
+                 {"name":"migrate","ready":false,"restartCount":4,"state":{"terminated":{"reason":"Completed","exitCode":0}}},
+                 {"name":"proxy","ready":true,"started":true,"restartCount":1,"state":{"running":{}}}],
+               "containerStatuses":[{"name":"app","ready":true,"restartCount":2,"state":{"running":{}}}]}}
+            """);
+        Assert.Equal("Running", p.Status);
+        Assert.Equal("2/2", p.Ready);
+        Assert.Equal("3", p.Restarts);   // 사이드카 1 + app 2 (끝난 일반 초기화 컨테이너의 재시작은 빼는 kubectl 과 같게)
+        Assert.True(p.Healthy);
+
+        // 사이드카가 시작했지만 Ready 가 아니면 분모에만
+        var notReady = Pod("""
+            {"metadata":{"name":"web","namespace":"a"},
+             "spec":{"initContainers":[{"name":"proxy","restartPolicy":"Always"}],"containers":[{"name":"app"}]},
+             "status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True"}],
+               "initContainerStatuses":[{"name":"proxy","ready":false,"started":true,"state":{"running":{}}}],
+               "containerStatuses":[{"name":"app","ready":true,"state":{"running":{}}}]}}
+            """);
+        Assert.Equal("1/2", notReady.Ready);
+        Assert.False(notReady.Healthy);
+    }
+
+    [Fact]
+    public void 초기화가_끝났으면_사이드카가_재시작_중이어도_컨테이너_사유를_보인다()
+    {
+        var p = Pod("""
+            {"metadata":{"name":"web","namespace":"a"},
+             "spec":{"initContainers":[{"name":"proxy","restartPolicy":"Always"}],"containers":[{"name":"app"}]},
+             "status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True"}],
+               "initContainerStatuses":[{"name":"proxy","ready":false,"started":false,"restartCount":3,
+                 "state":{"waiting":{"reason":"CrashLoopBackOff"}}}],
+               "containerStatuses":[{"name":"app","ready":false,"restartCount":2,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]}}
+            """);
+        Assert.Equal("CrashLoopBackOff", p.Status);
+        Assert.Equal("0/2", p.Ready);
+        Assert.Equal("5", p.Restarts);
+
+        // Initialized 가 아니면 초기화 단계 사유 그대로 (재시작 수는 초기화 컨테이너 것)
+        var init = Pod("""
+            {"metadata":{"name":"web","namespace":"a"},
+             "spec":{"initContainers":[{"name":"proxy","restartPolicy":"Always"}],"containers":[{"name":"app"}]},
+             "status":{"phase":"Pending","conditions":[{"type":"Initialized","status":"False"}],
+               "initContainerStatuses":[{"name":"proxy","ready":false,"started":false,"restartCount":3,
+                 "state":{"waiting":{"reason":"CrashLoopBackOff"}}}],
+               "containerStatuses":[{"name":"app","ready":false,"restartCount":0,"state":{"waiting":{"reason":"PodInitializing"}}}]}}
+            """);
+        Assert.Equal("Init:CrashLoopBackOff", init.Status);
+        Assert.Equal("3", init.Restarts);
+    }
+
+    [Fact]
+    public void 스케줄_게이트에_걸린_파드는_SchedulingGated()
+    {
+        var p = Pod("""
+            {"metadata":{"name":"gated","namespace":"a"},"spec":{"schedulingGates":[{"name":"x"}],"containers":[{"name":"a"}]},
+             "status":{"phase":"Pending","conditions":[{"type":"PodScheduled","status":"False","reason":"SchedulingGated"}]}}
+            """);
+        Assert.Equal("SchedulingGated", p.Status);
+        Assert.False(p.Healthy);
     }
 
     [Fact]

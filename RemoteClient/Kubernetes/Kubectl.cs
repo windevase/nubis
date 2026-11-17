@@ -439,7 +439,8 @@ public static class Kubectl
         var dropped = 0L;
         var buf = new char[8192];
         int n;
-        while ((n = await reader.ReadAsync(buf, 0, buf.Length)) > 0)
+        // ConfigureAwait(false): 8KB 마다 UI 디스패처로 돌아가지 않게 (앱 종료 중 디스패처가 멈춰도 읽기·정리가 끝나게)
+        while ((n = await reader.ReadAsync(buf, 0, buf.Length).ConfigureAwait(false)) > 0)
         {
             if (head.Length < max / 4) { var take = Math.Min(n, max / 4 - head.Length); head.Append(buf, 0, take); if (take < n) tail.Append(buf, take, n - take); }
             else tail.Append(buf, 0, n);

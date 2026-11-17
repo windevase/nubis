@@ -68,39 +68,56 @@ public static class K8sResources
 
     private static K8sItem Pod(JsonElement p, DateTime now)
     {
-        var statuses = Arr(p, "status", "containerStatuses").ToList();
         var containers = Arr(p, "spec", "containers").Select(c => Str(c, "name")).Where(n => n.Length > 0).ToList();
-        var total = containers.Count > 0 ? containers.Count : statuses.Count;
-        var ready = statuses.Count(s => s.TryGetProperty("ready", out var r) && r.ValueKind == JsonValueKind.True);
-        var restarts = statuses.Sum(s => s.TryGetProperty("restartCount", out var r) && r.TryGetInt32(out var n) ? n : 0);
-        var status = PodStatus(p);
+        var (status, ready, total, restarts) = PodStatus(p);
         var healthy = status is "Running" or "Succeeded" or "Completed" && (status != "Running" || ready == total);
         return new K8sItem(K8sKind.Pods, Str(p, "metadata", "name"), Str(p, "metadata", "namespace"), $"{ready}/{total}", status,
             restarts.ToString(CultureInfo.InvariantCulture), Age(p, now), Str(p, "spec", "nodeName"), containers, healthy);
     }
 
     /// <summary>
-    /// kubectl get pods 의 STATUS 열과 같은 규칙 (kubectl printPod): phase → status.reason → 초기화 컨테이너 → 컨테이너 대기·종료 사유.
+    /// kubectl get pods 의 STATUS · READY · RESTARTS 열과 같은 규칙 (kubernetes/kubectl printers.go printPod, 1.27+):
+    /// phase → status.reason → 스케줄 대기(SchedulingGated) → 초기화 컨테이너 → 컨테이너 대기·종료 사유 → 삭제 중(Terminating).
+    /// 네이티브 사이드카(restartPolicy: Always 인 initContainer)는 READY 분모·재시작 수에 들어가고, 시작했으며 Ready 면 ready 로 센다.
     /// 종료(Completed)한 컨테이너가 있어도 실행 중이며 Ready 인 컨테이너가 있으면 Ready 조건에 따라 Running / NotReady
     /// </summary>
-    internal static string PodStatus(JsonElement p)
+    internal static (string Status, int Ready, int Total, int Restarts) PodStatus(JsonElement p)
     {
-        var reason = Str(p, "status", "phase");
+        var phase = Str(p, "status", "phase");
+        var reason = phase;
         if (Str(p, "status", "reason") is { Length: > 0 } podReason) reason = podReason;
+        var conditions = Arr(p, "status", "conditions").ToList();
+        if (conditions.Any(c => Str(c, "type") == "PodScheduled" && Str(c, "reason") == "SchedulingGated")) reason = "SchedulingGated";
+
+        var specCount = Arr(p, "spec", "containers").Count();
+        var statuses = Arr(p, "status", "containerStatuses").ToList();
+        var total = specCount > 0 ? specCount : statuses.Count;   // spec 이 없는 출력이면 상태 수로
+        var ready = 0;
+        var restarts = 0;
+        var sidecarRestarts = 0;
 
         // 초기화 컨테이너 (Init:1/2 · Init:CrashLoopBackOff ...). 계속 도는 사이드카(restartPolicy Always)는 시작했으면 건너뛴다
         var initSpecs = Arr(p, "spec", "initContainers").ToList();
         var sidecars = initSpecs.Where(c => Str(c, "restartPolicy") == "Always").Select(c => Str(c, "name")).ToHashSet(StringComparer.Ordinal);
+        total += initSpecs.Count(c => Str(c, "restartPolicy") == "Always");
         var initializing = false;
         var i = 0;
         foreach (var s in Arr(p, "status", "initContainerStatuses"))
         {
             var idx = i++;
+            var count = Int(s, "restartCount") ?? 0;
+            var isSidecar = sidecars.Contains(Str(s, "name"));
+            restarts += count;
+            if (isSidecar) sidecarRestarts += count;
             var st = s.TryGetProperty("state", out var v) ? v : default;
             var terminated = st.ValueKind == JsonValueKind.Object && st.TryGetProperty("terminated", out var t) ? t : default;
             var waiting = st.ValueKind == JsonValueKind.Object && st.TryGetProperty("waiting", out var w) ? w : default;
             if (terminated.ValueKind == JsonValueKind.Object && Int(terminated, "exitCode") is 0) continue;
-            if (sidecars.Contains(Str(s, "name")) && s.TryGetProperty("started", out var started) && started.ValueKind == JsonValueKind.True) continue;
+            if (isSidecar && IsTrue(s, "started"))
+            {
+                if (IsTrue(s, "ready")) ready++;
+                continue;
+            }
             if (terminated.ValueKind == JsonValueKind.Object)
                 reason = Str(terminated, "reason") is { Length: > 0 } tr ? "Init:" + tr
                     : Int(terminated, "signal") is { } sig and not 0 ? $"Init:Signal:{sig}"
@@ -113,31 +130,43 @@ public static class K8sResources
             break;
         }
 
-        if (!initializing)
+        // Initialized 조건이 True 면(초기화가 끝난 뒤 사이드카가 다시 시작하는 중 등) 일반 컨테이너 사유로 덮는다
+        if (!initializing || conditions.Any(c => Str(c, "type") == "Initialized" && Str(c, "status") == "True"))
         {
+            restarts = sidecarRestarts;
             var hasRunning = false;
             // kubectl 처럼 뒤에서 앞으로 — 앞쪽 컨테이너의 사유가 마지막에 남는다
-            var statuses = Arr(p, "status", "containerStatuses").ToList();
             for (var k = statuses.Count - 1; k >= 0; k--)
             {
                 var s = statuses[k];
+                restarts += Int(s, "restartCount") ?? 0;
                 var st = s.TryGetProperty("state", out var v) ? v : default;
                 var obj = st.ValueKind == JsonValueKind.Object;
                 if (obj && st.TryGetProperty("waiting", out var w) && Str(w, "reason") is { Length: > 0 } wr) reason = wr;
                 else if (obj && st.TryGetProperty("terminated", out var t) && Str(t, "reason") is { Length: > 0 } tr) reason = tr;
                 else if (obj && st.TryGetProperty("terminated", out var t2))
                     reason = Int(t2, "signal") is { } sig and not 0 ? $"Signal:{sig}" : $"ExitCode:{Int(t2, "exitCode") ?? 0}";
-                else if (obj && st.TryGetProperty("running", out _) && s.TryGetProperty("ready", out var r) && r.ValueKind == JsonValueKind.True)
+                else if (obj && st.TryGetProperty("running", out _) && IsTrue(s, "ready"))
+                {
                     hasRunning = true;
+                    ready++;
+                }
             }
             if (reason == "Completed" && hasRunning)
-                reason = Arr(p, "status", "conditions").Any(c => Str(c, "type") == "Ready" && Str(c, "status") == "True") ? "Running" : "NotReady";
+                reason = conditions.Any(c => Str(c, "type") == "Ready" && Str(c, "status") == "True") ? "Running" : "NotReady";
         }
 
+        // 삭제 중: 노드 연결이 끊긴 파드는 Unknown, 이미 끝난(Succeeded/Failed) 파드는 원래 상태를 둔다
         if (p.TryGetProperty("metadata", out var m) && m.TryGetProperty("deletionTimestamp", out var del) && del.ValueKind == JsonValueKind.String)
-            reason = Str(p, "status", "reason") == "NodeLost" ? "Unknown" : "Terminating";
-        return reason.Length > 0 ? reason : "Unknown";
+        {
+            if (Str(p, "status", "reason") == "NodeLost") reason = "Unknown";
+            else if (phase is not ("Succeeded" or "Failed")) reason = "Terminating";
+        }
+        return (reason.Length > 0 ? reason : "Unknown", ready, total, restarts);
     }
+
+    private static bool IsTrue(JsonElement e, string name) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
 
     /// <summary>두 행의 보이는 내용이 같은가 (자동 새로고침에서 바뀐 행만 고치려고)</summary>
     public static bool SameItem(K8sItem a, K8sItem b) =>

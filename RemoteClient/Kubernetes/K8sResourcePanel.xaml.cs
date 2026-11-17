@@ -206,7 +206,12 @@ public partial class K8sResourcePanel : UserControl
                     : L.T("목록이 너무 커서 받지 못했습니다 — 터미널에서 kubectl 로 확인하세요. 자동 새로고침을 멈췄습니다."), "Warning");
                 return;
             }
-            _items = K8sResources.Parse(kind, r.Output, DateTime.UtcNow);
+            // 큰 JSON(최대 8MB) 해석은 UI 스레드 밖에서. 그 사이 범위를 바꿨거나 닫았으면 버린다
+            var output = r.Output;
+            var parsed = await Task.Run(() => K8sResources.Parse(kind, output, DateTime.UtcNow), req.Token);
+            req.Token.ThrowIfCancellationRequested();
+            if (_shutdown || kind != _kind || ns != _namespace) return;
+            _items = parsed;
             if (_pausedKey == ViewKey(kind, ns)) _pausedKey = null;
             _lastLoadUtc = DateTime.UtcNow;
             ApplyFilter(rebuild: false);
