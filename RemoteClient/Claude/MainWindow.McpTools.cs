@@ -63,7 +63,9 @@ public partial class MainWindow
         (h.Favorite ? " | ★즐겨찾기" : "") +
         (h.JumpHostId != null ? $" | 점프 {JumpName(h.JumpHostId)}" : "") +
         (h.RdpGateway != null ? $" | 게이트웨이 {h.RdpGateway}" : "") +
-        (h.TagsText.Length > 0 ? $" | 태그 {h.TagsText}" : "");
+        (h.TagsText.Length > 0 ? $" | 태그 {h.TagsText}" : "") +
+        // 실제로 쓰이는 Vault 계정과 출처 (직접/프로필 기본/설정 기본, HostEntry.ResolveVault)
+        McpHostParity.AccountSuffix(h, h.CloudProfileId is { } pid ? _profiles.FirstOrDefault(p => p.Id == pid) : null);
 
     /// <summary>
     /// 호스트 지정 해석: "group:이름"(그룹·클라우드 프로필 전체), ID(앞 8자리 가능), 정확한 이름, IP, 그다음 부분 일치.
@@ -105,50 +107,7 @@ public partial class MainWindow
 
     private IEnumerable<McpTool> BuildTools()
     {
-        yield return new McpTool("list_groups",
-            "등록된 호스트 그룹 목록(직접 등록 그룹 + 클라우드 프로필 그룹)과 서버 수를 반환한다.",
-            Schema(new { }),
-            _ => OnUi(() =>
-            {
-                var sb = new StringBuilder("그룹 | 서버 수 | 실행 중 | SSH | RDP\n");
-                foreach (var g in _hosts.GroupBy(GroupLabel).OrderBy(g => g.Key))
-                    sb.AppendLine($"{g.Key} | {g.Count()} | {g.Count(h => !h.IsStopped)} | {g.Count(h => h.Protocol == Protocol.Ssh)} | {g.Count(h => h.Protocol == Protocol.Rdp)}");
-                return sb.ToString();
-            }));
-
-        yield return new McpTool("list_hosts",
-            "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS, 그 뒤에 해당할 때만 " +
-            "| ★즐겨찾기 | 점프 <점프 서버 이름 (주소)> | 게이트웨이 <RD 게이트웨이> | 태그 키=값, .... 용도 칸은 클라우드 태그에서 온 값이고, 사용자가 붙인 태그는 '태그' 칸. 비밀번호는 포함하지 않는다.",
-            Schema(new
-            {
-                query = new { type = "string", description = "이름·IP(사설/공인)·인스턴스 ID·리전·용도·OS·태그(키=값) 부분 검색어" },
-                group = new { type = "string", description = "그룹 이름 (예: 'Production', '[AWS] prod')" },
-                protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
-                running_only = new { type = "boolean", description = "실행 중인 서버만" },
-                favorites_only = new { type = "boolean", description = "즐겨찾기한 호스트만" },
-                limit = new { type = "integer", description = "최대 개수 (기본 300)" },
-            }),
-            a => OnUi(() =>
-            {
-                var q = Arg(a, "query");
-                var group = Arg(a, "group");
-                var proto = Arg(a, "protocol");
-                IEnumerable<HostEntry> list = _hosts;
-                if (q.Length > 0)
-                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.Username, h.TagsText }
-                        .Any(s => s?.Contains(q, StringComparison.OrdinalIgnoreCase) == true));
-                if (group.Length > 0)
-                    list = list.Where(h => GroupLabel(h).Contains(group, StringComparison.OrdinalIgnoreCase));
-                if (proto.Length > 0)
-                    list = list.Where(h => h.ProtocolText.Equals(proto, StringComparison.OrdinalIgnoreCase));
-                if (BoolArg(a, "running_only") == true) list = list.Where(h => !h.IsStopped);
-                if (BoolArg(a, "favorites_only") == true) list = list.Where(h => h.Favorite);
-                var all = list.OrderBy(GroupLabel).ThenBy(h => h.DisplayName).ToList();
-                var limit = IntArg(a, "limit") ?? 300;
-                var sb = new StringBuilder($"{all.Count}개" + (all.Count > limit ? $" (앞 {limit}개만 표시)" : "") + "\n");
-                foreach (var h in all.Take(limit)) sb.AppendLine(HostLine(h));
-                return sb.ToString();
-            }));
+        foreach (var t in HostQueryTools()) yield return t;
 
         yield return new McpTool("list_sessions",
             "앱에 열려 있는 세션 탭 목록. active=현재 사용자가 보고 있는 탭.",
@@ -165,18 +124,34 @@ public partial class MainWindow
 
         yield return new McpTool("open_session",
             "호스트에 SSH 또는 RDP 세션 탭을 열고 앱 화면에 표시한다. host 는 이름, IP, id 중 하나. 이름이 여러 개 일치하면 후보를 돌려준다. " +
-            "바로 send_to_terminal 을 쓸 거면 wait_connected_sec 로 연결이 끝날 때까지 기다린다 (연결 중인 탭에는 입력할 수 없음).",
+            "바로 send_to_terminal 을 쓸 거면 wait_connected_sec 로 연결이 끝날 때까지 기다린다 (연결 중인 탭에는 입력할 수 없음). " +
+            "등록하지 않은 서버는 host 대신 target_address(+ protocol · port · username)로 빠른 연결한다 (화면 검색창의 빠른 접속과 같음, 목록에 저장하지 않음). " +
+            "빠른 연결은 설정의 기본 Vault 계정이 쓰일 수 있어 항상 사용자 승인을 받는다. host 와 target_address 중 하나만 지정.",
             Schema(new
             {
-                host = new { type = "string", description = "호스트 이름, IP 또는 id" },
-                address = new { type = "string", @enum = new[] { "default", "private", "public" }, description = "접속 주소: 호스트 설정(기본) / 사설 IP / 공인 IP(EIP)" },
+                host = new { type = "string", description = "등록된 호스트 이름, IP 또는 id" },
+                address = new { type = "string", @enum = new[] { "default", "private", "public" }, description = "등록된 호스트(host)의 접속 주소: 호스트 설정(기본) / 사설 IP / 공인 IP(EIP). 빠른 연결에는 쓰지 않음" },
+                target_address = new { type = "string", description = "빠른 연결: 등록하지 않은 서버의 IP 또는 호스트명 (포트·사용자명은 따로)" },
+                protocol = new { type = "string", @enum = new[] { "ssh", "rdp" }, description = "빠른 연결 프로토콜 (기본 ssh)" },
+                port = new { type = "integer", description = "빠른 연결 포트 (생략 시 설정의 기본 포트)" },
+                username = new { type = "string", description = "빠른 연결 사용자명 (생략 시 설정의 기본 Vault 계정이 있으면 그 계정, 없으면 접속할 때 묻는다)" },
                 wait_connected_sec = new { type = "number", description = "연결 완료(또는 실패)까지 기다릴 최대 초 (기본 0 = 기다리지 않음, 최대 60)" },
-            }, "host"),
+            }),
             a => OnUiAsync(async () =>
             {
                 var ct = McpRequest.Token;
                 var waitConnected = Math.Clamp(NumArg(a, "wait_connected_sec") ?? 0, 0, 60);
+                if (Has(a, "target_address"))
+                {
+                    var quick = await OpenQuickSessionAsync(a);
+                    var h = quick.Host!;
+                    return await AfterOpenSessionAsync(quick,
+                        $"빠른 연결 세션을 열었습니다: session_id={quick.Id}, {McpHostParity.QuickTargetLabel(h)} (목록에 등록하지 않음).", waitConnected, ct);
+                }
+                if (Has(a, "protocol") || Has(a, "port") || Has(a, "username"))
+                    throw new McpToolException("protocol · port · username 은 빠른 연결(target_address)에만 씁니다. 등록된 호스트를 바꾸려면 update_host 를 쓰세요.");
                 var spec = Arg(a, "host");
+                if (spec.Trim().Length == 0) throw new McpToolException("host(등록된 호스트) 또는 target_address(빠른 연결)가 필요합니다.");
                 var found = ResolveHosts(spec);
                 if (found.Count == 0) throw new McpToolException($"'{spec}' 와 일치하는 호스트가 없습니다. list_hosts 로 검색하세요.");
                 if (found.Count > 1)
@@ -189,45 +164,48 @@ public partial class MainWindow
                 AuditLog.Write("open_session",
                     new[] { $"{McpHelpers.VisibleControlChars(found[0].DisplayName)}  ({found[0].ProtocolText} {tab.Host?.Address ?? found[0].Address}:{tab.Host?.Port ?? found[0].Port})" },
                     $"(탭 열기: session {tab.Id}{(mode is "public" or "private" ? $", {mode} 주소" : "")})", "실행");
-                if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-                Activate();
-                var opened = $"세션을 열었습니다: session_id={tab.Id}, {found[0].DisplayName} ({found[0].ProtocolText} {found[0].Address}:{found[0].Port}).";
-                if (waitConnected <= 0) return opened + " 연결 결과는 잠시 후 list_sessions 또는 read_terminal 로 확인하세요.";
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                while (tab.Status == SessionStatus.Connecting && _tabs.Contains(tab) && sw.Elapsed.TotalSeconds < waitConnected)
-                    await Task.Delay(200, ct);
-                if (!_tabs.Contains(tab)) return opened + " 기다리는 동안 탭이 닫혔습니다.";
-                return opened + tab.Status switch
-                {
-                    SessionStatus.Connected => $" 연결됐습니다 ({sw.Elapsed.TotalSeconds:0.0}초).",
-                    SessionStatus.Disconnected => " 연결에 실패했거나 끊겼습니다. read_terminal 로 오류 메시지를 확인하세요.",
-                    _ => $" {waitConnected:0.#}초 안에 연결이 끝나지 않았습니다 (호스트키·비밀번호 확인 창을 기다리는 중일 수 있음). list_sessions 로 다시 확인하세요.",
-                };
+                return await AfterOpenSessionAsync(tab,
+                    $"세션을 열었습니다: session_id={tab.Id}, {found[0].DisplayName} ({found[0].ProtocolText} {found[0].Address}:{found[0].Port}).", waitConnected, ct);
             }));
 
         foreach (var t in TerminalReadTools()) yield return t;
 
         yield return new McpTool("close_session",
             "세션 탭을 닫는다 (SSH/RDP 연결 종료, 로컬 터미널 종료). Claude 가 연 탭을 정리할 때 사용. " +
-            "연결 중인 탭은 닫으면 실행 중인 프로그램이 끝날 수 있어 앱이 사용자 승인을 받는다 (끊긴 탭은 바로 닫음).",
+            "연결 중인 탭, 또는 SFTP 로 편집 중인 파일이 있는 탭(끊긴 탭 포함)은 닫으면 실행 중인 프로그램이 끝나거나 이후 저장분이 올라가지 않아 앱이 사용자 승인을 받는다 (그 밖의 끊긴 탭은 바로 닫음).",
             Schema(new { session_id = new { type = "integer" } }, "session_id"),
             a => OnUiAsync(async () =>
             {
                 var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
                 var title = tab.Title;
-                var target = $"session {tab.Id}: {title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
-                // 연결된 탭을 닫으면 SSH 는 원격 포그라운드 프로세스에 SIGHUP, 로컬은 프로세스 종료 — 항상 승인 (사용자의 탭 닫기 확인 설정과 무관)
+                var target = $"session {tab.Id}: {McpHelpers.VisibleControlChars(title)}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
+                // 연결된 탭을 닫으면 SSH 는 원격 포그라운드 프로세스에 SIGHUP, 로컬은 프로세스 종료 — 항상 승인 (사용자의 탭 닫기 확인 설정과 무관).
+                // SFTP 로 편집 중인 파일이 있으면 끊긴 탭이어도 승인 (닫은 뒤 편집기에서 저장한 내용은 올라가지 않음 — close_sessions 와 같은 기준)
                 var live = tab.Status != SessionStatus.Disconnected;
-                if (live && !await AskApprovalAsync("close_session", L.T("Claude 가 세션 탭 닫기를 요청합니다"),
-                        L.T("연결을 끊고 탭을 닫습니다. 터미널에서 실행 중인 프로그램은 종료될 수 있습니다."), new[] { target }, L.T("(탭 닫기)")))
+                var editing = SftpEditingCount(tab);
+                var command = editing > 0 ? $"(탭 닫기 · 편집 중 파일 {editing}개)" : "(탭 닫기)";
+                var ask = live || editing > 0;
+                if (ask)
                 {
-                    AuditLog.Write("close_session", new[] { target }, "(탭 닫기)", "거부");
-                    throw new McpToolException("사용자가 탭 닫기를 거부했습니다.");
+                    var desc = (live ? L.T("연결을 끊고 탭을 닫습니다. 터미널에서 실행 중인 프로그램은 종료될 수 있습니다.") : L.T("끊긴 탭을 닫습니다.")) +
+                               (editing > 0 ? "\n" + L.F("SFTP 로 편집 중인 파일 {0}개는 닫은 뒤 저장해도 서버에 올라가지 않습니다.", editing) : "");
+                    if (!await AskApprovalAsync("close_session", L.T("Claude 가 세션 탭 닫기를 요청합니다"), desc, new[] { target },
+                            editing > 0 ? L.F("(탭 닫기 · 편집 중 파일 {0}개)", editing) : L.T("(탭 닫기)")))
+                    {
+                        AuditLog.Write("close_session", new[] { target }, command, "거부");
+                        throw new McpToolException("사용자가 탭 닫기를 거부했습니다.");
+                    }
                 }
                 if (!_tabs.Contains(tab)) return $"session {tab.Id} ({title}) 은 이미 닫혀 있습니다.";
+                // 끊긴 탭으로 승인받았는데 기다리는 동안 다시 연결됐으면 닫지 않는다 (사용자가 본 것과 다름)
+                if (!live && tab.Status != SessionStatus.Disconnected)
+                {
+                    AuditLog.Write("close_session", new[] { target }, command, ask ? "승인 후 취소 (대기 중 다시 연결됨)" : "취소 (다시 연결됨)");
+                    throw new McpToolException($"session {tab.Id} 이 그사이 다시 연결돼 닫지 않았습니다. 다시 요청하면 연결된 탭으로 승인을 받습니다.");
+                }
                 CloseTab(tab);
-                AuditLog.Write("close_session", new[] { target }, "(탭 닫기)", live ? "승인·실행" : "실행(끊긴 탭)");
-                return $"session {tab.Id} ({title}) 을 닫았습니다.";
+                AuditLog.Write("close_session", new[] { target }, command, ask ? "승인·실행" : "실행(끊긴 탭)");
+                return $"session {tab.Id} ({title}) 을 닫았습니다." + (editing > 0 ? $" SFTP 로 편집 중이던 파일 {editing}개는 더 이상 자동 업로드되지 않습니다." : "");
             }));
 
         yield return new McpTool("diagnostics",
@@ -268,10 +246,13 @@ public partial class MainWindow
         yield return new McpTool("update_settings",
             "Nubis 앱 설정을 바꾼다. changes 에 {\"키\": 값} 형식 (키는 get_settings 참고, 여러 개 한 번에 가능). " +
             "화면 설정은 바로 적용되고, 보안 설정(RdpCertWarning, SshHostKeyPrompt, ConfirmMultilinePaste, AutoApproveReadOnly)은 사용자 승인 창을 거친다. " +
-            "AutoApproveReadOnly 는 끄기만 가능하다. 값이 하나라도 잘못되면 아무것도 바꾸지 않는다.",
+            "AutoApproveReadOnly 는 끄기만 가능하다. 값이 하나라도 잘못되면 아무것도 바꾸지 않는다. " +
+            "기본 포트(DefaultSshPort/DefaultRdpPort)를 바꾸면 포트를 따로 지정하지 않은 클라우드 프로필의 호스트 중 이전 기본 포트를 쓰던 것도 함께 바뀌며(승인), " +
+            "move_cloud_hosts=false 면 기본 포트만 바꾸고 그 호스트들의 포트는 그대로 둔다 (설정 화면의 '기본 포트만 바꾸기').",
             Schema(new
             {
                 changes = new { type = "object", description = "예: {\"TerminalTheme\": \"dracula\", \"FontSize\": 15}", additionalProperties = true },
+                move_cloud_hosts = new { type = "boolean", description = "기본 포트 변경 때 이전 기본 포트를 쓰던 클라우드 호스트의 포트도 함께 바꿀지 (기본 true)" },
             }, "changes"),
             a => OnUiAsync(() => UpdateSettingsFromClaude(a)));
 
@@ -325,7 +306,12 @@ public partial class MainWindow
         int Port(string key, Protocol proto) => ports.FirstOrDefault(p => p.Def.Key == key)?.New as int? ?? HostEntry.PreferredPort(proto);
         var (newSsh, newRdp) = (Port(nameof(AppSettings.DefaultSshPort), Protocol.Ssh), Port(nameof(AppSettings.DefaultRdpPort), Protocol.Rdp));
         // 기본 포트 변경이 클라우드 호스트 포트를 한꺼번에 바꾸면(다음 접속이 다른 포트로 감) 보안 설정처럼 승인을 받는다
-        var portMoves = ports.Count > 0 ? CountDefaultPortMoves(newSsh, newRdp) : 0;
+        // move_cloud_hosts=false 면 설정 화면의 "기본 포트만 바꾸기" 와 같게 클라우드 호스트 포트는 그대로 둔다
+        var moveCloudHosts = BoolArg(a, "move_cloud_hosts") ?? true;
+        var affected = ports.Count > 0 ? CountDefaultPortMoves(newSsh, newRdp) : 0;
+        var portMoves = McpHostParity.PortMoves(moveCloudHosts, affected);
+        if (affected > 0)
+            command += moveCloudHosts ? $"\n(클라우드 호스트 {affected}개의 포트도 함께 바꿈)" : $"\n(클라우드 호스트 {affected}개의 포트는 그대로 — 기본 포트만)";
         var security = plan.Any(p => p.Def.Security);
         if (security || portMoves > 0)
         {
@@ -335,12 +321,19 @@ public partial class MainWindow
                 ? L.T("아래 Nubis 설정을 바꿉니다. 보안에 영향을 주는 항목이 포함되어 있습니다.")
                 : L.T("아래 Nubis 설정을 바꿉니다.");
             if (portMoves > 0) desc += "\n" + L.F("포트를 따로 지정하지 않은 클라우드 호스트 {0}개의 접속 포트도 함께 바뀝니다.", portMoves);
+            else if (affected > 0) desc += "\n" + L.F("포트를 따로 지정하지 않은 클라우드 호스트 {0}개는 지금 포트를 그대로 씁니다 (기본 포트만 바꿈).", affected);
             if (!await AskApprovalAsync("update_settings",
                     security ? L.T("Claude 가 보안 설정 변경을 요청합니다") : L.T("Claude 가 설정 변경을 요청합니다"),
                     desc, new[] { L.T("Nubis 설정") }, shown))
             {
                 AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "거부");
                 throw new McpToolException("사용자가 설정 변경을 거부했습니다.");
+            }
+            // 승인을 기다리는 동안 동기화 등으로 함께 바뀔 호스트가 늘었으면 사용자가 본 수와 달라지므로 반영하지 않는다
+            if (moveCloudHosts && ports.Count > 0 && CountDefaultPortMoves(newSsh, newRdp) > portMoves)
+            {
+                AuditLog.Write("update_settings", new[] { "Nubis 설정" }, command, "승인 후 취소 (대기 중 포트가 바뀔 클라우드 호스트가 늘어남)");
+                throw new McpToolException("승인을 기다리는 동안 포트가 함께 바뀔 클라우드 호스트가 늘어나 바꾸지 않았습니다. 다시 요청하세요.");
             }
         }
 
@@ -349,8 +342,9 @@ public partial class MainWindow
         var note = "";
         if (ports.Count > 0)
         {
-            var moved = ApplyDefaultPorts(newSsh, newRdp);
+            var moved = ApplyDefaultPorts(newSsh, newRdp, moveCloudHosts);
             if (moved > 0) note = $"\n클라우드 호스트 {moved}개의 포트도 새 기본 포트로 바꿨습니다.";
+            else if (!moveCloudHosts && affected > 0) note = $"\n클라우드 호스트 {affected}개의 포트는 그대로 두었습니다 (기본 포트만 바꿈).";
         }
         if (SettingsPage.Visibility == Visibility.Visible) RefreshSettingsPage();
         AfterClaudeSettingsChange(plan);   // 최근 접속 표시 · 클라우드 자동 동기화 타이머 (MainWindow.McpVault.cs)
@@ -428,9 +422,9 @@ public partial class MainWindow
             a => OnUiAsync(() => AddHostFromClaude(a)));
 
         yield return new McpTool("update_host",
-            "등록된 호스트 1개의 설정을 바꾼다 (넘긴 항목만). host 는 이름·IP·id. 클라우드 동기화 호스트는 주소를 바꿀 수 없다. " +
-            "비밀번호는 바꿀 수 없다. 변경 전에 앱이 사용자 승인을 받는다 (즐겨찾기만 바꿀 때는 제외). " +
-            "프로토콜을 바꾸면 다른 프로토콜 전용 값(SSH 점프 서버 / RDP 게이트웨이)은 지워진다.",
+            "등록된 호스트 1개의 설정을 바꾼다 (넘긴 항목만). host 는 이름·IP·id. 클라우드 동기화 호스트는 주소·공인 IP·그룹을 바꿀 수 없다 (프로토콜은 가능, 동기화가 유지). " +
+            "비밀번호·키 파일 경로는 넣거나 바꿀 수 없고 clear_password · clear_key_path 로 지우기만 할 수 있다. 변경 전에 앱이 사용자 승인을 받는다 (즐겨찾기만 바꿀 때는 제외). " +
+            "프로토콜을 바꾸면 다른 프로토콜 전용 값(SSH 점프 서버 · 키 파일 경로 / RDP 게이트웨이 · NLA)은 지워진다.",
             Schema(new
             {
                 host = new { type = "string", description = "대상 호스트 (이름·IP·id, 정확히 1개여야 함)" },
@@ -450,6 +444,8 @@ public partial class MainWindow
                 rdp_gateway = new { type = "string", description = "RDP 만: RD 게이트웨이 \"호스트\" 또는 \"호스트:포트\". 빈 문자열 = 지우기 (mstsc 기본 설정을 따름)" },
                 rdp_disable_nla = new { type = "boolean", description = "RDP 만: NLA(CredSSP) 끄기(true)/켜기(false) — Entra ID(Azure AD) 가입 PC 에 AzureAD\\사용자@도메인 으로 접속할 때 필요할 수 있다. 끄면 접속 전 인증 없이 로그인 화면까지 연결된다" },
                 clear_prompt_answers = new { type = "boolean", description = "true = 서버 인증 질문(OTP 방식 선택 등)에 기억해 둔 답을 모두 지운다. 답 내용은 보여주지 않는다" },
+                clear_password = new { type = "boolean", description = "true = 호스트에 직접 저장된 비밀번호를 지운다 (되돌릴 수 없음, 넣기는 불가). 지우면 Vault·기본 계정이 있으면 그것으로, 없으면 접속할 때 묻는다" },
+                clear_key_path = new { type = "boolean", description = "true = 호스트에 적은 SSH 키 파일 경로를 지운다 (파일 자체는 그대로, 넣기는 불가)" },
             }, "host"),
             a => OnUiAsync(() => UpdateHostFromClaude(a)));
 
