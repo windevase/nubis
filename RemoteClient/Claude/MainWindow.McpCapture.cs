@@ -36,6 +36,9 @@ public partial class MainWindow
         if (tab == null) throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
         if (WindowState == WindowState.Minimized)
             throw new McpToolException("Nubis 창이 최소화되어 있어 화면을 캡처할 수 없습니다. 창을 열어 달라고 사용자에게 요청하세요.");
+        // 전체 화면 RDP 는 별도 창에 그려져 탭 영역 캡처에 원격 화면이 담기지 않는다 (좌표 기준도 어긋남)
+        if (tab.View is RdpSessionView { IsFullScreen: true })
+            throw new McpToolException("RDP 탭이 전체 화면이라 캡처할 수 없습니다. 전체 화면을 나와 달라고 사용자에게 요청하세요.");
 
         var switched = !tab.IsSelected;
         // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다
