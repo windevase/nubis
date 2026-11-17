@@ -85,8 +85,9 @@ public class KubernetesTests
             File.WriteAllText(Path.Combine(dir, "ca-dev.crt"), "CA-DEV");
             File.WriteAllText(Path.Combine(dir, "dev.crt"), "CERT-DEV");
             var one = Kubeconfig.Extract(Multi, "dev", dir);
-            Assert.Contains("certificate-authority-data: " + Convert.ToBase64String("CA-DEV"u8.ToArray()), one);
-            Assert.Contains("client-certificate-data: " + Convert.ToBase64String("CERT-DEV"u8.ToArray()), one);
+            // 새로 넣는 값은 문자열로 읽히게 큰따옴표
+            Assert.Contains("certificate-authority-data: \"" + Convert.ToBase64String("CA-DEV"u8.ToArray()) + "\"", one);
+            Assert.Contains("client-certificate-data: \"" + Convert.ToBase64String("CERT-DEV"u8.ToArray()) + "\"", one);
             Assert.Contains("S0VZLURFVg==", one);
             Assert.DoesNotContain("ca-dev.crt", one);
             // 붙여 넣은 kubeconfig(기준 폴더 없음)가 상대 경로 파일을 가리키면 알린다

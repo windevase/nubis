@@ -10,16 +10,28 @@ namespace Nubis;
 /// <summary>kubeconfig 의 context 하나 (가져오기 대화상자 목록용)</summary>
 public sealed record KubeContext(string Name, string Cluster, string User, string? Namespace, string? Server);
 
+/// <summary>한 번 읽은 kubeconfig (같은 내용을 context 마다 다시 읽지 않게). 읽기 전용으로만 쓴다</summary>
+public sealed class KubeconfigDoc
+{
+    internal KubeconfigDoc(YamlMappingNode root) => Root = root;
+    internal YamlMappingNode Root { get; }
+}
+
 /// <summary>
 /// kubeconfig 읽기·자르기·만들기 (화면 무관, KubeconfigTests).
 /// YAML 은 YamlDotNet 표현 모델(YamlStream)로만 읽는다 — 타입 인스턴스화 없음.
 /// 클러스터마다 인증을 따로 두려고, 여러 context 가 든 파일에서 context 하나(cluster + user + context)만 담은
 /// 독립 kubeconfig 를 만든다. 파일 경로로 가리킨 인증서·토큰은 내용으로 넣어(인라인) 원본 파일이 없어도 쓰이게 한다.
+/// 새로 만드는 문자열 값은 큰따옴표로 쓴다 — plain 으로 쓰면 "123"·"true"·"1.29" 같은 이름이 숫자·bool 로 읽혀 kubectl 이 거부한다.
 /// </summary>
 public static class Kubeconfig
 {
     /// <summary>받아들이는 최대 크기 (붙여넣기·파일). kubeconfig 는 보통 수십 KB</summary>
     public const int MaxChars = 1 << 20;
+
+    /// <summary>파일 경로를 담는 키 (여러 파일 병합 때 각 파일 폴더 기준 절대 경로로 바꾼다)</summary>
+    private static readonly string[] ClusterPathKeys = { "certificate-authority" };
+    private static readonly string[] UserPathKeys = { "client-certificate", "client-key", "tokenFile" };
 
     private static YamlMappingNode LoadRoot(string yaml)
     {
@@ -32,6 +44,12 @@ public static class Kubeconfig
             throw new FormatException(L.T("kubeconfig 형식이 아닙니다."));
         return root;
     }
+
+    /// <summary>한 번 읽어 두고 여러 번 쓴다 (가져오기 대화상자). 읽지 못하면 FormatException</summary>
+    public static KubeconfigDoc Load(string yaml) => new(LoadRoot(yaml));
+
+    /// <summary>큰따옴표 문자열 스칼라 (값이 숫자·bool 처럼 보여도 문자열로 읽히게)</summary>
+    private static YamlScalarNode Q(string value) => new(value) { Style = ScalarStyle.DoubleQuoted };
 
     private static YamlNode? Get(YamlMappingNode m, string key) =>
         m.Children.TryGetValue(new YamlScalarNode(key), out var n) ? n : null;
@@ -47,9 +65,11 @@ public static class Kubeconfig
         Items(root, key).FirstOrDefault(i => Str(i, "name") == name);
 
     /// <summary>context 목록 (이름 순서는 파일 순서)</summary>
-    public static List<KubeContext> ReadContexts(string yaml)
+    public static List<KubeContext> ReadContexts(string yaml) => ReadContexts(Load(yaml));
+
+    public static List<KubeContext> ReadContexts(KubeconfigDoc doc)
     {
-        var root = LoadRoot(yaml);
+        var root = doc.Root;
         var list = new List<KubeContext>();
         foreach (var item in Items(root, "contexts"))
         {
@@ -64,15 +84,19 @@ public static class Kubeconfig
     }
 
     /// <summary>current-context (없으면 null)</summary>
-    public static string? CurrentContext(string yaml) => Str(LoadRoot(yaml), "current-context") is { Length: > 0 } c ? c : null;
+    public static string? CurrentContext(string yaml) => CurrentContext(Load(yaml));
+
+    public static string? CurrentContext(KubeconfigDoc doc) => Str(doc.Root, "current-context") is { Length: > 0 } c ? c : null;
 
     /// <summary>
     /// context 하나만 담은 독립 kubeconfig. baseDir 은 원본 파일이 있던 폴더 (상대 경로 인증서 파일을 찾는 기준, 붙여넣기면 null).
     /// 인증서·키·토큰 파일은 *-data / token 으로 넣는다. 읽지 못하면 FormatException (화면에 보이는 문구)
     /// </summary>
-    public static string Extract(string yaml, string context, string? baseDir)
+    public static string Extract(string yaml, string context, string? baseDir) => Extract(Load(yaml), context, baseDir);
+
+    public static string Extract(KubeconfigDoc d, string context, string? baseDir)
     {
-        var root = LoadRoot(yaml);
+        var root = d.Root;
         var ctxItem = Named(root, "contexts", context) ?? throw new FormatException(L.F("context '{0}' 이(가) 없습니다.", context));
         var ctx = Map(ctxItem, "context") ?? throw new FormatException(L.F("context '{0}' 의 내용이 없습니다.", context));
         var clusterName = Str(ctx, "cluster") ?? "";
@@ -82,7 +106,7 @@ public static class Kubeconfig
 
         var cluster = CopyInlined(Map(clusterItem, "cluster") ?? new YamlMappingNode(), baseDir,
             ("certificate-authority", "certificate-authority-data", true));
-        var newCluster = new YamlMappingNode { { "name", clusterName }, { "cluster", cluster } };
+        var newCluster = new YamlMappingNode { { "name", Q(clusterName) }, { "cluster", cluster } };
 
         var doc = new YamlMappingNode
         {
@@ -96,10 +120,11 @@ public static class Kubeconfig
                 ("client-certificate", "client-certificate-data", true),
                 ("client-key", "client-key-data", true),
                 ("tokenFile", "token", false));
-            doc.Add("users", new YamlSequenceNode(new YamlMappingNode { { "name", userName }, { "user", user } }));
+            ResolveExecCommand(user, baseDir, required: true);
+            doc.Add("users", new YamlSequenceNode(new YamlMappingNode { { "name", Q(userName) }, { "user", user } }));
         }
-        doc.Add("contexts", new YamlSequenceNode(new YamlMappingNode { { "name", context }, { "context", CopyMap(ctx) } }));
-        doc.Add("current-context", context);
+        doc.Add("contexts", new YamlSequenceNode(new YamlMappingNode { { "name", Q(context) }, { "context", CopyContext(ctx) } }));
+        doc.Add("current-context", Q(context));
         return Save(doc);
     }
 
@@ -110,26 +135,27 @@ public static class Kubeconfig
     public static string BuildExec(string name, string server, string? caData, string command, IEnumerable<string> args,
         IReadOnlyDictionary<string, string>? env = null)
     {
-        var cluster = new YamlMappingNode { { "server", server } };
-        if (!string.IsNullOrEmpty(caData)) cluster.Add("certificate-authority-data", caData);
+        var cluster = new YamlMappingNode { { "server", Q(server) } };
+        if (!string.IsNullOrEmpty(caData)) cluster.Add("certificate-authority-data", Q(caData));
         var exec = new YamlMappingNode
         {
             { "apiVersion", "client.authentication.k8s.io/v1beta1" },
-            { "command", command },
-            { "args", new YamlSequenceNode(args.Select(a => (YamlNode)new YamlScalarNode(a) { Style = YamlDotNet.Core.ScalarStyle.DoubleQuoted })) },
+            { "command", Q(command) },
+            { "args", new YamlSequenceNode(args.Select(a => (YamlNode)Q(a))) },
             { "interactiveMode", "Never" },
-            { "provideClusterInfo", "false" },
+            // bool 값 — plain 으로 써야 bool 로 읽힌다
+            { "provideClusterInfo", new YamlScalarNode("false") { Style = ScalarStyle.Plain } },
         };
         if (env is { Count: > 0 })
-            exec.Add("env", new YamlSequenceNode(env.Select(kv => (YamlNode)new YamlMappingNode { { "name", kv.Key }, { "value", kv.Value } })));
+            exec.Add("env", new YamlSequenceNode(env.Select(kv => (YamlNode)new YamlMappingNode { { "name", Q(kv.Key) }, { "value", Q(kv.Value) } })));
         var doc = new YamlMappingNode
         {
             { "apiVersion", "v1" },
             { "kind", "Config" },
-            { "clusters", new YamlSequenceNode(new YamlMappingNode { { "name", name }, { "cluster", cluster } }) },
-            { "users", new YamlSequenceNode(new YamlMappingNode { { "name", name }, { "user", new YamlMappingNode { { "exec", exec } } } }) },
-            { "contexts", new YamlSequenceNode(new YamlMappingNode { { "name", name }, { "context", new YamlMappingNode { { "cluster", name }, { "user", name } } } }) },
-            { "current-context", name },
+            { "clusters", new YamlSequenceNode(new YamlMappingNode { { "name", Q(name) }, { "cluster", cluster } }) },
+            { "users", new YamlSequenceNode(new YamlMappingNode { { "name", Q(name) }, { "user", new YamlMappingNode { { "exec", exec } } } }) },
+            { "contexts", new YamlSequenceNode(new YamlMappingNode { { "name", Q(name) }, { "context", new YamlMappingNode { { "cluster", Q(name) }, { "user", Q(name) } } } }) },
+            { "current-context", Q(name) },
         };
         return Save(doc);
     }
@@ -142,29 +168,115 @@ public static class Kubeconfig
                    ?? throw new FormatException(L.F("context '{0}' 이(가) 없습니다.", context));
         var ctx = Map(item, "context");
         if (ctx == null) { ctx = new YamlMappingNode(); item.Children[new YamlScalarNode("context")] = ctx; }
-        ctx.Children[new YamlScalarNode("namespace")] = new YamlScalarNode(ns);
+        ctx.Children[new YamlScalarNode("namespace")] = Q(ns);
         return Save(root);
     }
 
     /// <summary>
     /// 인증 방식 (카드 배지·필요한 플러그인 확인). 독립 kubeconfig(사용자 하나)를 가정 — 첫 사용자를 본다
     /// </summary>
-    public static K8sAuthKind DetectAuth(string yaml)
+    public static K8sAuthKind DetectAuth(string yaml) => AuthOfUser(FirstUser(LoadRoot(yaml)));
+
+    /// <summary>exec 플러그인 명령 (없으면 null) — PC 에 그 명령이 있는지 확인할 때</summary>
+    public static string? ExecCommand(string yaml) => FirstUser(LoadRoot(yaml)) is { } user && Map(user, "exec") is { } exec ? Str(exec, "command") : null;
+
+    /// <summary>
+    /// 여러 context 가 든 원본에서 context 의 인증 방식과 exec 명령 (인증서 파일은 읽지 않는다 — 목록 배지용).
+    /// 구분자가 든 상대 경로 명령은 baseDir 기준 절대 경로로 (붙여넣기면 그대로)
+    /// </summary>
+    public static (K8sAuthKind Kind, string? Command) ContextAuth(KubeconfigDoc doc, string context, string? baseDir)
     {
-        var root = LoadRoot(yaml);
-        var user = Items(root, "users").Select(u => Map(u, "user")).FirstOrDefault(u => u != null);
+        var root = doc.Root;
+        var userName = Named(root, "contexts", context) is { } ci && Map(ci, "context") is { } ctx ? Str(ctx, "user") ?? "" : "";
+        var user = Named(root, "users", userName) is { } ui ? Map(ui, "user") : null;
+        var kind = AuthOfUser(user);
+        var cmd = user != null && Map(user, "exec") is { } exec ? Str(exec, "command") : null;
+        if (cmd != null && baseDir != null && IsRelativeWithSeparator(cmd)) cmd = Path.GetFullPath(Path.Combine(baseDir, cmd));
+        return (kind, cmd);
+    }
+
+    // ----- KUBECONFIG 여러 파일 -----
+
+    /// <summary>
+    /// KUBECONFIG 값(; 구분)의 파일 목록. 빈 항목·겹친 경로는 뺀다. 남는 게 없으면 기본 파일(~/.kube/config) 하나
+    /// </summary>
+    public static List<string> EnvPaths(string? env, string defaultPath)
+    {
+        var list = (env ?? "").Split(';')
+            .Select(p => p.Trim().Trim('"').Trim())
+            .Where(p => p.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (list.Count == 0) list.Add(defaultPath);
+        return list;
+    }
+
+    /// <summary>
+    /// 여러 kubeconfig 를 kubectl 규칙으로 합친다: 같은 이름의 cluster·user·context 는 먼저 나온 파일 것이 이기고,
+    /// current-context 도 처음 정해진 값. 파일마다 상대 경로(인증서·exec 명령)는 그 파일 폴더 기준 절대 경로로 바꿔 둔다 —
+    /// 그래서 결과는 기준 폴더 없이(baseDir = null) 쓸 수 있다. 빈 내용은 건너뛰고, 읽지 못하면 FormatException
+    /// </summary>
+    public static string Merge(IEnumerable<(string Yaml, string? BaseDir)> files)
+    {
+        var lists = new Dictionary<string, (List<YamlNode> Items, HashSet<string> Seen)>
+        {
+            ["clusters"] = (new(), new(StringComparer.Ordinal)),
+            ["users"] = (new(), new(StringComparer.Ordinal)),
+            ["contexts"] = (new(), new(StringComparer.Ordinal)),
+        };
+        string? current = null;
+        foreach (var (yaml, baseDir) in files)
+        {
+            if (string.IsNullOrWhiteSpace(yaml)) continue;
+            var root = LoadRoot(yaml);
+            current ??= Str(root, "current-context") is { Length: > 0 } cc ? cc : null;
+            foreach (var (key, (items, seen)) in lists)
+                foreach (var item in Items(root, key))
+                {
+                    if (Str(item, "name") is not { Length: > 0 } name || !seen.Add(name)) continue;
+                    items.Add(key switch
+                    {
+                        "clusters" => WithResolvedPaths(item, "cluster", ClusterPathKeys, baseDir, exec: false),
+                        "users" => WithResolvedPaths(item, "user", UserPathKeys, baseDir, exec: true),
+                        _ => item,
+                    });
+                }
+        }
+        var doc = new YamlMappingNode
+        {
+            { "apiVersion", "v1" },
+            { "kind", "Config" },
+            { "clusters", new YamlSequenceNode(lists["clusters"].Items) },
+            { "users", new YamlSequenceNode(lists["users"].Items) },
+            { "contexts", new YamlSequenceNode(lists["contexts"].Items) },
+        };
+        if (current != null) doc.Add("current-context", Q(current));
+        return Save(doc);
+    }
+
+    /// <summary>item(name + body) 의 사본 — body 안 파일 경로 키를 baseDir 기준 절대 경로로</summary>
+    private static YamlMappingNode WithResolvedPaths(YamlMappingNode item, string bodyKey, string[] pathKeys, string? baseDir, bool exec)
+    {
+        if (baseDir == null || Map(item, bodyKey) is not { } body) return item;
+        var newBody = CopyMap(body);
+        foreach (var k in pathKeys)
+            if (Str(body, k) is { Length: > 0 } p && ResolvePath(p, baseDir) is { } abs)
+                newBody.Children[new YamlScalarNode(k)] = Q(abs);
+        if (exec) ResolveExecCommand(newBody, baseDir, required: false);
+        var copy = CopyMap(item);
+        copy.Children[new YamlScalarNode(bodyKey)] = newBody;
+        return copy;
+    }
+
+    private static YamlMappingNode? FirstUser(YamlMappingNode root) =>
+        Items(root, "users").Select(u => Map(u, "user")).FirstOrDefault(u => u != null);
+
+    private static K8sAuthKind AuthOfUser(YamlMappingNode? user)
+    {
         if (user == null) return K8sAuthKind.Kubeconfig;
         if (Map(user, "exec") is { } exec) return AuthFromCommand(Str(exec, "command"));
         if (Map(user, "auth-provider") != null) return K8sAuthKind.Exec;
         return K8sAuthKind.Kubeconfig;
-    }
-
-    /// <summary>exec 플러그인 명령 (없으면 null) — PC 에 그 명령이 있는지 확인할 때</summary>
-    public static string? ExecCommand(string yaml)
-    {
-        var root = LoadRoot(yaml);
-        var user = Items(root, "users").Select(u => Map(u, "user")).FirstOrDefault(u => u != null);
-        return user != null && Map(user, "exec") is { } exec ? Str(exec, "command") : null;
     }
 
     internal static K8sAuthKind AuthFromCommand(string? command)
@@ -189,6 +301,16 @@ public static class Kubeconfig
         return copy;
     }
 
+    /// <summary>context 맵 사본 — cluster·user·namespace 는 문자열이므로 plain 으로 적혀 있으면(예: cluster: 456) 큰따옴표로 바꾼다</summary>
+    private static YamlMappingNode CopyContext(YamlMappingNode ctx)
+    {
+        var copy = new YamlMappingNode();
+        foreach (var (k, v) in ctx.Children)
+            copy.Add(k, k is YamlScalarNode { Value: "cluster" or "user" or "namespace" } && v is YamlScalarNode { Style: ScalarStyle.Plain or ScalarStyle.Any, Value: { } s }
+                ? Q(s) : v);
+        return copy;
+    }
+
     /// <summary>파일 경로 키(certificate-authority 등)를 내용 키(*-data)로 바꾼 사본</summary>
     private static YamlMappingNode CopyInlined(YamlMappingNode m, string? baseDir, params (string FileKey, string DataKey, bool Base64)[] rules)
     {
@@ -202,21 +324,47 @@ public static class Kubeconfig
             if (m.Children.ContainsKey(new YamlScalarNode(rule.DataKey))) continue;
             var path = (v as YamlScalarNode)?.Value ?? "";
             var bytes = ReadReferenced(path, baseDir);
-            copy.Add(rule.DataKey, rule.Base64 ? Convert.ToBase64String(bytes) : System.Text.Encoding.UTF8.GetString(bytes).Trim());
+            copy.Add(rule.DataKey, Q(rule.Base64 ? Convert.ToBase64String(bytes) : System.Text.Encoding.UTF8.GetString(bytes).Trim()));
         }
         return copy;
     }
 
-    private static byte[] ReadReferenced(string path, string? baseDir)
+    /// <summary>
+    /// exec.command 가 구분자가 든 상대 경로면 (kubectl 은 kubeconfig 파일 폴더 기준으로 찾는다) baseDir 기준 절대 경로로 바꾼다 —
+    /// 독립 kubeconfig 는 임시 파일로 쓰이므로 상대 경로로 두면 엉뚱한 곳을 찾는다. user 맵을 직접 바꾼다 (exec 맵은 사본으로 교체).
+    /// required 면 기준 폴더가 없을 때(붙여넣기) FormatException
+    /// </summary>
+    private static void ResolveExecCommand(YamlMappingNode user, string? baseDir, bool required)
+    {
+        if (Map(user, "exec") is not { } exec || Get(exec, "command") is not YamlScalarNode { Value: { } cmd } || !IsRelativeWithSeparator(cmd)) return;
+        if (baseDir == null)
+        {
+            if (required) throw new FormatException(L.F("붙여 넣은 kubeconfig 의 exec 명령이 상대 경로입니다: '{0}'. 파일로 가져오거나 절대 경로로 바꿔 주세요.", cmd));
+            return;
+        }
+        var copy = CopyMap(exec);
+        copy.Children[new YamlScalarNode("command")] = Q(Path.GetFullPath(Path.Combine(baseDir, cmd)));
+        user.Children[new YamlScalarNode("exec")] = copy;
+    }
+
+    /// <summary>"bin/plugin", ".\x.exe" 처럼 경로 구분자가 든 상대 경로인지 (그냥 "aws" 는 PATH 에서 찾는 명령)</summary>
+    internal static bool IsRelativeWithSeparator(string cmd) =>
+        (cmd.Contains('/') || cmd.Contains('\\')) && !Path.IsPathRooted(cmd) && !cmd.StartsWith('~');
+
+    /// <summary>환경 변수·~ 를 풀고 상대 경로면 baseDir 기준으로. 상대 경로인데 baseDir 이 없으면 null</summary>
+    private static string? ResolvePath(string path, string? baseDir)
     {
         var expanded = Environment.ExpandEnvironmentVariables(path);
         if (expanded.StartsWith("~/") || expanded.StartsWith("~\\"))
             expanded = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), expanded[2..]);
-        if (!Path.IsPathRooted(expanded))
-        {
-            if (baseDir == null) throw new FormatException(L.F("붙여 넣은 kubeconfig 가 파일 '{0}' 을(를) 가리킵니다. 파일로 가져오거나 *-data 값으로 바꿔 주세요.", path));
-            expanded = Path.Combine(baseDir, expanded);
-        }
+        if (Path.IsPathRooted(expanded)) return expanded;
+        return baseDir == null ? null : Path.Combine(baseDir, expanded);
+    }
+
+    private static byte[] ReadReferenced(string path, string? baseDir)
+    {
+        var expanded = ResolvePath(path, baseDir)
+                       ?? throw new FormatException(L.F("붙여 넣은 kubeconfig 가 파일 '{0}' 을(를) 가리킵니다. 파일로 가져오거나 *-data 값으로 바꿔 주세요.", path));
         try
         {
             var info = new FileInfo(expanded);

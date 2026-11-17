@@ -139,10 +139,27 @@ public static class Kubectl
         return null;
     }
 
-    /// <summary>PC 에 이 명령(exec 플러그인)이 있는지 — PATH 에서 .exe/.cmd/.bat/.ps1 를 찾는다</summary>
+    /// <summary>CommandExists 결과 캐시 (명령 → 결과, 확인 시각). 카드 다시 그리기·가져오기 목록마다 PATH 전체를 뒤지지 않게</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (bool Exists, long At)> CommandCache = new(StringComparer.OrdinalIgnoreCase);
+    private const int CommandCacheMs = 30_000;
+
+    /// <summary>
+    /// PC 에 이 명령(exec 플러그인)이 있는지 — PATH 에서 .exe/.cmd/.bat/.ps1 를 찾는다.
+    /// 결과는 30초 동안 캐시한다 (설치 직후 반영은 최대 30초 늦다)
+    /// </summary>
     public static bool CommandExists(string command)
     {
         if (string.IsNullOrWhiteSpace(command)) return false;
+        var now = Environment.TickCount64;
+        if (CommandCache.TryGetValue(command, out var hit) && now - hit.At < CommandCacheMs) return hit.Exists;
+        var exists = CommandExistsUncached(command);
+        if (CommandCache.Count > 256) CommandCache.Clear();   // 이상한 입력으로 끝없이 커지지 않게
+        CommandCache[command] = (exists, now);
+        return exists;
+    }
+
+    private static bool CommandExistsUncached(string command)
+    {
         if (Path.IsPathRooted(command)) return File.Exists(command);
         var exts = Path.HasExtension(command) ? new[] { "" } : new[] { ".exe", ".cmd", ".bat", ".ps1" };
         foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
