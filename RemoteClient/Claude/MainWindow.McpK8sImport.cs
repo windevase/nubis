@@ -86,7 +86,21 @@ public partial class MainWindow
         var command = string.Join("\n", lines);
         var description = L.T("kubeconfig 의 context 를 Nubis 쿠버네티스 클러스터로 등록합니다. 인증(토큰·인증서·키)은 이 PC 에 암호화해 저장하고 Claude 에게 보내지 않습니다.") +
                           "\n" + L.F("출처: {0}", McpHelpers.VisibleControlChars(label)) +
-                          (execs.Count > 0 ? "\n" + L.T("⚠ exec 인증 명령이 있습니다. 이 클러스터에 kubectl 을 실행할 때마다 이 PC 에서 그 명령이 실행되니 아는 명령인지 확인하세요.") : "");
+                          (execs.Count > 0 ? "\n" + L.T("⚠ exec 인증 명령이 있습니다. 이 클러스터에 kubectl 을 실행할 때마다 이 PC 에서 그 명령이 실행되니 아는 명령인지 확인하세요.") +
+                                             "\n" + ExecDetailText(execs) : "");
+        // exec 인자 · 환경 변수 이름은 사용자가 실행될 내용을 판단하도록 승인 창 설명에만 넣는다 — 인자에 값(토큰 등)이 있을 수 있어
+        // 명령 칸(요청 취소 때 감사 로그에 기록됨)·감사 로그·Claude 에게 돌려주는 결과에는 넣지 않는다. 길면 줄·개수를 자른다
+        string ExecDetailText(List<KubeconfigImport.ContextInfo> list)
+        {
+            const int maxContexts = 10;
+            var detail = list.Take(maxContexts).Select(i =>
+            {
+                var (args, env) = McpK8sRules.ExecDetail(doc, i.Context.Name);
+                return McpK8sRules.ExecApprovalText(i.Context.Name, i.ExecCommand!, args, env);
+            }).ToList();
+            if (list.Count > maxContexts) detail.Add(L.F("… 외 {0}개", list.Count - maxContexts));
+            return L.T("실행될 exec 명령 (환경 변수는 이름만):") + "\n" + string.Join("\n", detail);
+        }
         var approvalTargets = auditTargets.Take(20).Concat(auditTargets.Count > 20 ? new[] { L.F("… 외 {0}개", auditTargets.Count - 20) } : Array.Empty<string>()).ToList();
         if (!await OnUiAsync(() => AskApprovalAsync("import_k8s_clusters", L.F("Claude 가 kubeconfig 에서 클러스터 {0}개 가져오기를 요청합니다", importable.Count),
                 description, approvalTargets, command)))

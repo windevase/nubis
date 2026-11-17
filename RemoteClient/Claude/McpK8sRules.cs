@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using YamlDotNet.RepresentationModel;
 
 namespace Nubis;
 
@@ -93,13 +94,38 @@ internal static class McpK8sRules
 
     /// <summary>
     /// MCP 찾기 계획: UI 와 달리 고르지 않은 프로필의 클러스터 동기화 끄기(disableUnselected)·클러스터 제거(removeUnselected)는
-    /// 인자로 요청했을 때만 (Claude 가 profiles 를 일부만 넘겼다고 사용자가 켜 둔 동기화가 꺼지지 않게)
+    /// 인자로 요청했을 때만 (Claude 가 profiles 를 일부만 넘겼다고 사용자가 켜 둔 동기화가 꺼지지 않게).
+    /// 단 지우기는 끄기를 겸한다 (UI 와 같음): 지울 클러스터가 있는 프로필의 동기화가 켜진 채면 다음 동기화 때 같은 클러스터가
+    /// 새 카드로 다시 생겨(이름·네임스페이스 변경은 사라진 채) 지운 의미가 없으므로, 그 프로필은 disableUnselected 없이도 끈다
     /// </summary>
     public static K8sProfilePick.Plan FindPlan(IEnumerable<CloudProfile> profiles, IReadOnlySet<Guid> selected, IEnumerable<K8sCluster> clusters,
         bool disableUnselected, bool removeUnselected)
     {
         var plan = K8sProfilePick.Make(profiles, selected, clusters, removeUnselected);
-        return disableUnselected ? plan : plan with { Disable = new List<CloudProfile>() };
+        if (disableUnselected) return plan;
+        var owners = plan.Remove.Select(c => c.CloudProfileId).OfType<Guid>().ToHashSet();
+        return plan with { Disable = plan.Disable.Where(p => owners.Contains(p.Id)).ToList() };
+    }
+
+    /// <summary>찾기로 클러스터 동기화가 새로 켜질 프로필 (고른 것 중 지금 꺼진 것 — FindClustersAsync 가 켠다)</summary>
+    public static List<CloudProfile> NewlyEnabled(K8sProfilePick.Plan plan) => plan.Fetch.Where(p => !p.SyncClusters).ToList();
+
+    /// <summary>
+    /// 승인이 필요한가: 사용자가 켜 둔 설정(클러스터 동기화)이 실제로 바뀌거나(켜짐·꺼짐) 클러스터를 지울 때.
+    /// cloud_update_profile sync_clusters 가 켜기·끄기 모두 승인을 받으므로 같은 설정을 바꾸는 이 도구도 같게 — 이미 켜진 프로필만 찾으면 조회뿐이라 승인 없음
+    /// </summary>
+    public static bool FindNeedsApproval(K8sProfilePick.Plan plan) =>
+        plan.Remove.Count > 0 || plan.Disable.Count > 0 || NewlyEnabled(plan).Count > 0;
+
+    /// <summary>승인 창 명령 칸 · 감사 로그에 쓸 변경 줄 (동기화 켬 · 끔 · 지울 클러스터)</summary>
+    public static List<string> FindChangeLines(K8sProfilePick.Plan plan, Func<CloudProfile, string> label)
+    {
+        var lines = new List<string>();
+        var enable = NewlyEnabled(plan);
+        if (enable.Count > 0) lines.Add("클러스터 동기화 켬: " + string.Join(", ", enable.Select(label)));
+        if (plan.Disable.Count > 0) lines.Add("클러스터 동기화 끔: " + string.Join(", ", plan.Disable.Select(label)));
+        if (plan.Remove.Count > 0) lines.Add("지울 클러스터: " + string.Join(", ", plan.Remove.Select(c => McpHelpers.VisibleControlChars(c.Name))));
+        return lines;
     }
 
     /// <summary>승인 뒤 실제로 지울 클러스터: 승인 창에 보인 것 중 아직 있고, 그 프로필이 여전히 '고르지 않은' 프로필인 것만</summary>
@@ -178,6 +204,46 @@ internal static class McpK8sRules
     /// <summary>인증 방식 표시 (exec 명령은 파일 이름만 — 인자에는 값이 들어 있을 수 있어 넣지 않는다)</summary>
     public static string AuthText(KubeconfigImport.ContextInfo i) =>
         new K8sCluster { AuthKind = i.Auth }.AuthBadge + (i.ExecCommand is { } cmd ? $" (exec: {McpHelpers.VisibleControlChars(Path.GetFileName(cmd))})" : "");
+
+    /// <summary>
+    /// context 의 exec 인증 인자와 환경 변수 이름 (Kubeconfig.ContextAuth 와 같은 조회: contexts → user → users[].user.exec).
+    /// 환경 변수는 이름만 — 값은 비밀일 수 있다. 승인 창에만 쓰고 결과·감사 로그에는 넣지 않는다 (인자에도 값이 들어 있을 수 있음)
+    /// </summary>
+    public static (List<string> Args, List<string> EnvNames) ExecDetail(KubeconfigDoc doc, string context)
+    {
+        static YamlNode? Get(YamlMappingNode m, string key) => m.Children.TryGetValue(new YamlScalarNode(key), out var n) ? n : null;
+        static string? Str(YamlMappingNode m, string key) => Get(m, key) is YamlScalarNode s ? s.Value : null;
+        static YamlMappingNode? Named(YamlMappingNode root, string key, string name) =>
+            Get(root, key) is YamlSequenceNode seq ? seq.Children.OfType<YamlMappingNode>().FirstOrDefault(i => Str(i, "name") == name) : null;
+
+        var args = new List<string>();
+        var env = new List<string>();
+        var root = doc.Root;
+        var userName = Named(root, "contexts", context) is { } ci && Get(ci, "context") is YamlMappingNode ctx ? Str(ctx, "user") ?? "" : "";
+        if (Named(root, "users", userName) is not { } ui || Get(ui, "user") is not YamlMappingNode user || Get(user, "exec") is not YamlMappingNode exec)
+            return (args, env);
+        if (Get(exec, "args") is YamlSequenceNode a)
+            foreach (var n in a.Children) args.Add(n is YamlScalarNode s ? s.Value ?? "" : "(?)");
+        if (Get(exec, "env") is YamlSequenceNode e)
+            foreach (var m in e.Children.OfType<YamlMappingNode>())
+                if (Str(m, "name") is { Length: > 0 } name) env.Add(name);
+        return (args, env);
+    }
+
+    /// <summary>
+    /// 승인 창 설명에 붙일 exec 한 줄: "context: 명령 인자…" + 환경 변수 이름. 보이지 않는 문자는 드러내고, 공백이 든 인자는 따옴표로,
+    /// 줄마다 max 자에서 자른다
+    /// </summary>
+    public static string ExecApprovalText(string context, string command, IReadOnlyList<string> args, IReadOnlyList<string> envNames, int max = 300)
+    {
+        // 줄바꿈·탭은 글자로 드러낸다 (값 안 줄바꿈으로 승인 창에 다른 줄처럼 보이게 하지 못하게). 그 밖의 제어·양방향 문자는 VisibleControlChars
+        static string OneLine(string v) => McpHelpers.VisibleControlChars(v).Replace("\n", "\\n").Replace("\t", "\\t");
+        static string Quote(string v) => v.Length == 0 || v.Any(char.IsWhiteSpace) || v.Contains('"') ? "\"" + v.Replace("\"", "\\\"") + "\"" : v;
+        static string Clip(string v, int max) => v.Length > max ? v[..max] + " …" : v;
+        var line = OneLine(context) + ": " + Clip(OneLine(string.Join(" ", new[] { command }.Concat(args).Select(Quote))), max);
+        if (envNames.Count > 0) line += "\n    env: " + Clip(OneLine(string.Join(", ", envNames)), max);
+        return line;
+    }
 
     /// <summary>
     /// 미리보기 표 — context 이름 · API 서버 · 인증 방식 · 네임스페이스 · 상태만 (토큰 · 인증서 · 키 · exec 인자는 넣지 않는다)

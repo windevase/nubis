@@ -148,7 +148,8 @@ public partial class MainWindow
 
     /// <summary>
     /// UI '클라우드에서 찾기' 와 같은 조회·반영 (FindClustersAsync 공용, 조회 API 만). 고른 프로필은 클러스터 동기화를 켠다 (UI 와 같음).
-    /// 조회만이라 승인 없이 실행하고 감사 로그를 남긴다. 고르지 않은 프로필의 동기화 끄기 · 클러스터 제거는 인자로 요청했을 때만, 제거는 승인
+    /// 고르지 않은 프로필의 동기화 끄기 · 클러스터 제거는 인자로 요청했을 때만 (지우면 그 프로필의 동기화도 끈다 — UI 와 같음).
+    /// 클러스터 동기화가 실제로 바뀌거나 클러스터를 지우면 승인 한 번, 이미 동기화가 켜진 프로필만 찾으면 조회뿐이라 승인 없이. 감사 로그는 항상
     /// </summary>
     private async Task<string> FindK8sFromClaude(JsonElement a)
     {
@@ -169,17 +170,35 @@ public partial class MainWindow
         if (plan.Fetch.Count == 0 && plan.Disable.Count == 0 && plan.Remove.Count == 0)
             return "찾을 프로필이 없습니다. profiles 로 프로필을 지정하세요 (cloud_list_profiles).";
 
-        if (plan.Remove.Count > 0)
+        // 클러스터 동기화가 실제로 바뀌거나(켜짐·꺼짐) 클러스터를 지우면 승인 한 번 (cloud_update_profile sync_clusters 와 같은 정책).
+        // 이미 동기화가 켜진 프로필만 찾는 경우는 조회뿐이라 승인 없이
+        if (McpK8sRules.FindNeedsApproval(plan))
         {
-            var names = plan.Remove.Select(c => McpHelpers.VisibleControlChars(c.Name)).ToList();
-            // 승인 창 문구는 UI 확인 창과 같다
-            var description = L.F("선택 해제한 프로필의 클러스터 {0}개를 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.", plan.Remove.Count);
-            if (!await AskApprovalAsync("find_k8s_clusters", L.T("Claude 가 쿠버네티스 클러스터 제거를 요청합니다"), description,
+            var enable = McpK8sRules.NewlyEnabled(plan);
+            command += "\n" + string.Join("\n", McpK8sRules.FindChangeLines(plan, CloudProfileLabel));
+            var desc = new List<string>();
+            // 지우기 문구는 UI 확인 창과 같다
+            if (plan.Remove.Count > 0)
+                desc.Add(L.F("선택 해제한 프로필의 클러스터 {0}개를 목록에서 지울까요? 저장한 인증도 함께 지워집니다. 클러스터 자체에는 영향이 없습니다.", plan.Remove.Count));
+            if (plan.Disable.Count > 0)
+                desc.Add(plan.Remove.Count > 0
+                    ? L.F("클라우드 프로필 {0}개의 클러스터 동기화를 끕니다. 지운 클러스터가 다음 동기화 때 다시 생기지 않고, 이 프로필의 클러스터는 더 이상 갱신하지 않습니다.", plan.Disable.Count)
+                    : L.F("클라우드 프로필 {0}개의 클러스터 동기화를 끕니다. 이미 가져온 클러스터는 목록에 남고 더 이상 갱신하지 않습니다.", plan.Disable.Count));
+            if (enable.Count > 0)
+                desc.Add(L.F("클라우드 프로필 {0}개의 클러스터 동기화를 켭니다. 앞으로 VM 동기화 때 이 프로필의 클러스터도 함께 찾아 목록에 반영합니다 (조회 API 만).", enable.Count));
+            if (plan.Fetch.Count > 0) desc.Add(L.F("승인하면 클라우드 프로필 {0}개에서 바로 클러스터를 찾습니다 (조회 API 만).", plan.Fetch.Count));
+            var names = enable.Select(p => L.F("동기화 켬: {0}", CloudProfileLabel(p)))
+                .Concat(plan.Disable.Select(p => L.F("동기화 끔: {0}", CloudProfileLabel(p))))
+                .Concat(plan.Remove.Select(c => L.F("지움: {0}", McpHelpers.VisibleControlChars(c.Name)))).ToList();
+            var title = plan.Remove.Count > 0 ? L.T("Claude 가 쿠버네티스 클러스터 제거를 요청합니다") : L.T("Claude 가 클러스터 동기화 설정 변경을 요청합니다");
+            if (!await AskApprovalAsync("find_k8s_clusters", title, string.Join("\n", desc),
                     names.Take(20).Concat(names.Count > 20 ? new[] { L.F("… 외 {0}개", names.Count - 20) } : Array.Empty<string>()).ToList(),
-                    command + "\n지울 클러스터: " + string.Join(", ", names)))
+                    command))
             {
-                AuditLog.Write("find_k8s_clusters", auditTargets, command, "클러스터 제거 거부");
-                throw new McpToolException("사용자가 클러스터 제거를 거부했습니다. 찾기도 하지 않았습니다 — remove_unselected_clusters 없이 다시 요청할 수 있습니다.");
+                AuditLog.Write("find_k8s_clusters", auditTargets, command, "거부");
+                throw new McpToolException("사용자가 거부했습니다. 클러스터 동기화도 바꾸지 않았고 찾기·제거도 하지 않았습니다." +
+                    (enable.Count > 0 ? " 이미 클러스터 동기화가 켜진 프로필만 찾으면 승인 없이 조회합니다 (cloud_list_profiles 의 sync_clusters)." : "") +
+                    (plan.Remove.Count > 0 ? " remove_unselected_clusters 없이 다시 요청할 수 있습니다." : ""));
             }
             // 승인을 기다리는 동안: 다른 찾기가 시작됐으면 겹치지 않게 멈추고, 지울 목록은 승인 창에 보인 것 중 아직 있는 것만
             if (_k8sFinding)
@@ -194,16 +213,16 @@ public partial class MainWindow
         plan = plan with { Fetch = plan.Fetch.Where(_profiles.Contains).ToList(), Disable = plan.Disable.Where(_profiles.Contains).ToList() };
 
         var sb = new StringBuilder();
+        // ApplyUnselected 는 동기화 끄기를 먼저 저장하고 지운다 — 지우기 저장이 실패해도 끈 것은 반영됨
+        if (plan.Disable.Count > 0)
+            sb.AppendLine($"클러스터 동기화를 끔: {string.Join(", ", plan.Disable.Select(CloudProfileLabel))}" +
+                          (plan.Remove.Count > 0 && !disable ? " (지운 클러스터가 다음 동기화 때 다시 생기지 않게 — 지우기는 끄기를 겸함)" : ""));
         if (ApplyUnselected(plan) is { } removeError)
         {
             AuditLog.Write("find_k8s_clusters", auditTargets, command, "클러스터 제거 저장 실패: " + removeError);
             sb.AppendLine($"선택 해제한 프로필의 클러스터를 지우지 못했습니다 (저장 실패: {removeError}).");
         }
-        else
-        {
-            if (plan.Disable.Count > 0) sb.AppendLine($"클러스터 동기화를 끔: {string.Join(", ", plan.Disable.Select(CloudProfileLabel))}");
-            if (plan.Remove.Count > 0) sb.AppendLine($"선택 해제한 프로필의 클러스터 {plan.Remove.Count}개를 목록에서 지웠습니다.");
-        }
+        else if (plan.Remove.Count > 0) sb.AppendLine($"선택 해제한 프로필의 클러스터 {plan.Remove.Count}개를 목록에서 지웠습니다.");
         if (plan.Fetch.Count == 0)
         {
             RefreshK8sIfVisible();

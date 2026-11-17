@@ -12,5 +12,14 @@
   "Claude 가 쿠버네티스 클러스터 제거를 요청합니다": "Claude wants to remove Kubernetes clusters",
   "kubeconfig 의 context 를 Nubis 쿠버네티스 클러스터로 등록합니다. 인증(토큰·인증서·키)은 이 PC 에 암호화해 저장하고 Claude 에게 보내지 않습니다.": "Registers kubeconfig contexts as Nubis Kubernetes clusters. Credentials (tokens, certificates, keys) are stored encrypted on this PC and are not sent to Claude.",
   "⚠ exec 인증 명령이 있습니다. 이 클러스터에 kubectl 을 실행할 때마다 이 PC 에서 그 명령이 실행되니 아는 명령인지 확인하세요.": "⚠ There is an exec authentication command. It runs on this PC every time kubectl runs against this cluster, so make sure you recognize it.",
-  "Claude 가 kubeconfig 에서 클러스터 {0}개 가져오기를 요청합니다": "Claude wants to import {0} clusters from kubeconfig"
+  "Claude 가 kubeconfig 에서 클러스터 {0}개 가져오기를 요청합니다": "Claude wants to import {0} clusters from kubeconfig",
+  "Claude 가 클러스터 동기화 설정 변경을 요청합니다": "Claude wants to change cluster sync settings",
+  "클라우드 프로필 {0}개의 클러스터 동기화를 끕니다. 지운 클러스터가 다음 동기화 때 다시 생기지 않고, 이 프로필의 클러스터는 더 이상 갱신하지 않습니다.": "Turns off cluster sync for {0} cloud profile(s). The removed clusters won't come back on the next sync, and these profiles' clusters are no longer updated.",
+  "클라우드 프로필 {0}개의 클러스터 동기화를 끕니다. 이미 가져온 클러스터는 목록에 남고 더 이상 갱신하지 않습니다.": "Turns off cluster sync for {0} cloud profile(s). Clusters already imported stay in the list but are no longer updated.",
+  "클라우드 프로필 {0}개의 클러스터 동기화를 켭니다. 앞으로 VM 동기화 때 이 프로필의 클러스터도 함께 찾아 목록에 반영합니다 (조회 API 만).": "Turns on cluster sync for {0} cloud profile(s). From now on, VM sync also finds these profiles' clusters and updates the list (read-only APIs only).",
+  "승인하면 클라우드 프로필 {0}개에서 바로 클러스터를 찾습니다 (조회 API 만).": "If you approve, clusters are found right away in {0} cloud profile(s) (read-only APIs only).",
+  "동기화 켬: {0}": "Sync on: {0}",
+  "동기화 끔: {0}": "Sync off: {0}",
+  "지움: {0}": "Remove: {0}",
+  "실행될 exec 명령 (환경 변수는 이름만):": "Exec commands that will run (environment variables by name only):"
 }

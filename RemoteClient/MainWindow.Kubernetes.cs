@@ -385,14 +385,14 @@ public partial class MainWindow
     /// <summary>
     /// 연결 테스트 핵심 (UI 연결 테스트 · MCP test_k8s_cluster 공용, UI 스레드에서): kubectl version + auth can-i list pods.
     /// 상태 점(_k8sHealth)과 저장된 Version 을 반영하고 페이지가 보이면 다시 그린다. 40초 제한.
-    /// ct 로 취소하면 OperationCanceledException (상태 점은 바꾸지 않는다)
+    /// ct 로 취소하면 OperationCanceledException (상태 점은 바꾸지 않는다). 40초 제한에 걸리면 TimedOut 결과
     /// </summary>
     private async Task<K8sTestResult> RunK8sTestAsync(K8sCluster c, CancellationToken ct)
     {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(40));
         try
         {
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromSeconds(40));
             var v = await Kubectl.RunAsync(c, new[] { "version", "-o", "json", "--request-timeout=20s" }, TimeSpan.FromSeconds(30), cts.Token);
             var server = K8sVersion(v.Output);
             if (server == null)
@@ -414,6 +414,13 @@ public partial class MainWindow
             return new(true, server, can.Output.Trim().Equals("yes", StringComparison.OrdinalIgnoreCase), "", false, false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            // 호출자가 아니라 40초 제한이 취소한 경우 — kubectl 이 그 사이 끝나지 않았다 (예외 원문 "A task was canceled." 대신 시간 초과로)
+            _k8sHealth[c.Id] = false;
+            RefreshK8sIfVisible();
+            return new(false, null, false, L.T("응답이 없습니다 (시간 초과)."), true, false);
+        }
         catch (Exception ex)
         {
             _k8sHealth[c.Id] = false;
