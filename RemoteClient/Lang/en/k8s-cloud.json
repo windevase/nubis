@@ -9,5 +9,9 @@
   "클러스터 추가 {0} · 제거 {1}": "clusters added {0} · removed {1}",
   "프로필 {0}개에서 클러스터를 찾지 못했습니다.": "No clusters were found in {0} profile(s).",
   "등록한 클라우드 프로필이 없습니다. Cloud 페이지에서 프로필을 먼저 추가하세요.": "There are no cloud profiles yet. Add one on the Cloud page first.",
-  "클러스터 조회 취소": "cluster lookup canceled"
+  "클러스터 조회 취소": "cluster lookup canceled",
+  "클러스터 목록을 저장하지 못했습니다: {0}": "Could not save the cluster list: {0}",
+  "클러스터 찾기 실패: {0}": "Finding clusters failed: {0}",
+  "클러스터는 클라우드에서 찾기 중이라 이번엔 건너뜀": "clusters skipped this time (Find in cloud is running)",
+  "클러스터 목록 저장 실패: {0}": "could not save the cluster list: {0}"
 }
