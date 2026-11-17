@@ -49,6 +49,7 @@ public partial class MainWindow
     private List<string> ApplyHostArgs(HostEntry h, JsonElement a, bool isNew)
     {
         var changes = new List<string>();
+        var protocolChanged = false;
         void Note(string label, object? from, object? to)
         {
             if (!Equals(from, to)) changes.Add(isNew ? $"{label}: {to}" : $"{label}: {from} → {to}");
@@ -62,10 +63,11 @@ public partial class MainWindow
                 "rdp" => Protocol.Rdp,
                 _ => throw new McpToolException("protocol 은 ssh 또는 rdp 입니다."),
             };
-            if (h.IsCloud && p != h.Protocol) throw new McpToolException("클라우드 동기화 호스트의 프로토콜은 바꿀 수 없습니다 (OS 에서 정해짐).");
+            // 클라우드 호스트도 편집 창처럼 바꿀 수 있다 — 동기화는 새 호스트에만 OS 로 프로토콜을 정하고 기존 호스트의 값은 유지한다 (CloudSync.Apply)
             Note("프로토콜", h.ProtocolText, p == Protocol.Ssh ? "SSH" : "RDP");
             if (isNew || p != h.Protocol)
             {
+                protocolChanged = !isNew;
                 var oldDefault = HostEntry.PreferredPort(h.Protocol);
                 var oldPort = h.Port;
                 h.Protocol = p;
@@ -198,6 +200,20 @@ public partial class MainWindow
             Note(McpHostRules.GatewayLabel, h.RdpGateway ?? "없음", gw ?? "없음");
             h.RdpGateway = gw;
         }
+        // 저장된 비밀번호 · 키 파일 경로는 지우기만 (넣기는 불가). 값·경로는 승인 창·결과·감사 로그에 넣지 않는다.
+        // 편집 창과 같게 SSH 가 아닌 프로토콜로 바꾸면 키 파일 경로도 지운다 (남아 있으면 기본 Vault 계정이 쓰이지 않음 — ResolveVault)
+        if (Has(a, "clear_password") && BoolArg(a, "clear_password") == null) throw new McpToolException("clear_password 는 true/false 입니다.");
+        if (Has(a, "clear_key_path") && BoolArg(a, "clear_key_path") == null) throw new McpToolException("clear_key_path 는 true/false 입니다.");
+        if (BoolArg(a, "clear_password") == true && !string.IsNullOrEmpty(h.ProtectedPassword))
+        {
+            Note(McpHostParity.PasswordLabel, "있음", "지움");
+            h.ProtectedPassword = null;
+        }
+        if ((BoolArg(a, "clear_key_path") == true || protocolChanged && h.Protocol != Protocol.Ssh) && !string.IsNullOrWhiteSpace(h.KeyPath))
+        {
+            Note(McpHostParity.KeyPathLabel, "있음", "지움");
+            h.KeyPath = null;
+        }
         if (BoolArg(a, "clear_prompt_answers") == true && h.PromptAnswers is { Count: > 0 } answers)
         {
             // 답 내용(OTP 방식 선택 등)은 승인 창·결과·감사 로그에 넣지 않고 개수만
@@ -276,6 +292,8 @@ public partial class MainWindow
         var h = ResolveOneHost(Arg(a, "host"));
         var copy = h.Clone();
         var tagsBefore = copy.Tags == null ? null : new Dictionary<string, string>(copy.Tags, StringComparer.OrdinalIgnoreCase);
+        var (pwBefore, keyBefore) = (h.ProtectedPassword, h.KeyPath);
+        var kept = new List<string>();
         var changes = ApplyHostArgs(copy, a, isNew: false);
         if (changes.Count == 0) return "바뀐 항목이 없습니다.";
         var text = string.Join("\n", changes);
@@ -289,6 +307,15 @@ public partial class MainWindow
             // 이 호스트를 점프 서버로 쓰는 호스트가 있는데 이 호스트에 점프를 붙이면 — 점프는 한 단계만이라 그 호스트들은 새 점프를 거치지 않는다
             if (copy.JumpHostId != null && copy.JumpHostId != h.JumpHostId && MainWindow.JumpUsers(_hosts, h) is > 0 and var users)
                 desc += "\n" + L.F("이 호스트를 점프 서버로 쓰는 호스트 {0}개는 새 점프 서버를 거치지 않고 이 호스트에 바로 연결합니다 (점프는 한 단계만 지원).", users);
+            // 비밀번호 · 키 파일 경로 지우기: 되돌릴 수 없고, 남은 값이 없으면 기본 Vault 계정(있으면)이 쓰이게 된다 (ResolveVault)
+            if (changes.Any(c => c.StartsWith(McpHostParity.PasswordLabel + ":", StringComparison.Ordinal) || c.StartsWith(McpHostParity.KeyPathLabel + ":", StringComparison.Ordinal)))
+            {
+                desc += "\n" + L.T("⚠ 호스트에 저장된 비밀번호·키 파일 경로를 지웁니다. 지운 비밀번호는 되돌릴 수 없습니다.");
+                var after = McpHelpers.CredentialSourceForAudit(copy, _profiles.FirstOrDefault(p => p.Id == copy.CloudProfileId));
+                var afterUi = copy.CredentialSourceText(_profiles.FirstOrDefault(p => p.Id == copy.CloudProfileId));
+                desc += "\n" + (afterUi != null ? L.F("지운 뒤 접속에 쓰일 계정: {0}", afterUi) : L.T("지운 뒤에는 저장된 계정이 없어 접속할 때 묻습니다."));
+                text += "\n(지운 뒤 접속 계정: " + (after ?? "없음 — 접속할 때 묻는다") + ")";
+            }
             if (!await AskApprovalAsync("update_host", L.T("Claude 가 호스트 설정 변경을 요청합니다"),
                     desc, new[] { McpHelpers.VisibleControlChars(h.DisplayName) }, text))
             {
@@ -308,7 +335,7 @@ public partial class MainWindow
             AuditLog.Write("update_host", new[] { h.DisplayName }, text, "승인 후 취소 (점프 서버 변경)");
             throw new McpToolException(jumpErr);
         }
-        // 확인한 값만 원본에 반영 (비밀번호·키 파일·클라우드 정보는 건드리지 않음)
+        // 확인한 값만 원본에 반영 (비밀번호·키 파일은 승인한 지우기만, 클라우드 정보는 건드리지 않음)
         if (favoriteOnly)
             h.Favorite = copy.Favorite;
         else
@@ -336,12 +363,25 @@ public partial class MainWindow
             }
             // 기억한 답 지우기는 승인 시점의 답 전체를 지운다 (대기 중 새로 기억한 답 포함 — 사용자가 지우기를 승인했으므로)
             if (copy.PromptAnswers == null && changes.Any(c => c.StartsWith(McpHostRules.AnswersLabel, StringComparison.Ordinal))) h.PromptAnswers = null;
+            // 비밀번호 · 키 파일 경로는 승인한 지우기만. 승인을 기다리는 동안 사용자가 새로 저장한 값(접속 때 입력·편집 창)은
+            // 승인 창에 보인 값이 아니므로 지우지 않는다
+            if (Changed(McpHostParity.PasswordLabel))
+            {
+                if (h.ProtectedPassword == pwBefore) h.ProtectedPassword = null;
+                else kept.Add("대기 중 새로 저장된 비밀번호는 지우지 않았습니다.");
+            }
+            if (Changed(McpHostParity.KeyPathLabel))
+            {
+                if (h.KeyPath == keyBefore) h.KeyPath = null;
+                else kept.Add("대기 중 새로 저장된 키 파일 경로는 지우지 않았습니다.");
+            }
             if (h.PrivateIp != null && !h.IsCloud) h.PrivateIp = h.Address;
         }
         SaveHosts();
         RefreshHosts();
-        AuditLog.Write("update_host", new[] { h.DisplayName }, text, favoriteOnly ? "변경 (즐겨찾기만 — 승인 생략)" : "승인·변경");
-        return $"바꿨습니다: {h.DisplayName}\n{text}";
+        AuditLog.Write("update_host", new[] { h.DisplayName }, text,
+            (favoriteOnly ? "변경 (즐겨찾기만 — 승인 생략)" : "승인·변경") + (kept.Count > 0 ? $" ({string.Join(" ", kept)})" : ""));
+        return $"바꿨습니다: {h.DisplayName}\n{text}" + string.Concat(kept.Select(k => "\n" + k));
     }
 
     private async Task<string> DeleteHostsFromClaude(JsonElement a)
@@ -421,94 +461,5 @@ public partial class MainWindow
             : Line(p) + string.Concat(new[] { p.LastResult, p.StatusText }.Where(s => s.Length > 0).Select(s => " · " + s)))));
         AuditLog.Write("cloud_sync", targets.Select(p => $"[{p.ProviderText}] {p.GroupName}"), "sync", "조회·반영");
         return "동기화 결과:\n" + result;
-    }
-}
-
-/// <summary>add_host / update_host 의 UI 와 무관한 판정 (테스트 대상)</summary>
-internal static class McpHostRules
-{
-    // 변경 목록 줄의 머리말 (ApplyHostArgs 의 Note 라벨) — 위험 판정·즐겨찾기만 판정이 이 문자열에 기댄다
-    public const string FavoriteLabel = "즐겨찾기";
-    public const string JumpLabel = "점프 서버";
-    public const string GatewayLabel = "RD 게이트웨이";
-    /// <summary>RDP NLA(CredSSP) — 끄면 접속 전 인증 없이 원격 로그인 화면까지 연결되므로 위험 변경으로 본다</summary>
-    public const string NlaLabel = "NLA(CredSSP)";
-    public const string AnswersLabel = "기억한 인증 답";
-    public const string TagLabel = "태그";
-
-    /// <summary>두 태그 묶음 사이에 값이 달라진 키 (대소문자 무시)</summary>
-    public static List<string> ChangedTagKeys(IReadOnlyDictionary<string, string>? before, IReadOnlyDictionary<string, string>? after)
-    {
-        var b = before == null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(before, StringComparer.OrdinalIgnoreCase);
-        var a = after == null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : new Dictionary<string, string>(after, StringComparer.OrdinalIgnoreCase);
-        return b.Keys.Union(a.Keys, StringComparer.OrdinalIgnoreCase)
-            .Where(k => b.GetValueOrDefault(k) != a.GetValueOrDefault(k)).ToList();
-    }
-
-    private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel, NlaLabel };
-
-    /// <summary>접속 대상·계정·경로를 바꾸는 변경 (승인 창에 경고)</summary>
-    public static bool IsRisky(string change) => RiskyLabels.Any(l => change.StartsWith(l, StringComparison.Ordinal));
-
-    /// <summary>즐겨찾기만 바꾸는 변경인가 (승인 생략 대상). 빈 목록은 false</summary>
-    public static bool IsFavoriteOnly(IReadOnlyCollection<string> changes) =>
-        changes.Count > 0 && changes.All(c => c.StartsWith(FavoriteLabel + ":", StringComparison.Ordinal));
-
-    /// <summary>
-    /// target 의 점프 서버로 jump 를 쓸 수 없으면 이유, 쓸 수 있으면 null. 편집 창(OnPickJump)과 같은 규칙:
-    /// 둘 다 SSH, 자기 자신 불가, 한 단계만 (jump 가 다시 점프 서버를 거치면 불가 — 이미 지정된 점프 서버는 그대로 허용)
-    /// </summary>
-    public static string? JumpError(HostEntry target, HostEntry jump)
-    {
-        if (target.Protocol != Protocol.Ssh) return "점프 서버는 SSH 호스트에만 지정할 수 있습니다.";
-        if (jump.Id == target.Id || ReferenceEquals(jump, target)) return "자기 자신을 점프 서버로 지정할 수 없습니다.";
-        if (jump.Protocol != Protocol.Ssh) return $"'{jump.DisplayName}' 은 SSH 호스트가 아니라 점프 서버로 쓸 수 없습니다.";
-        if (jump.JumpHostId != null && jump.Id != target.JumpHostId)
-            return $"'{jump.DisplayName}' 도 점프 서버를 거쳐 접속합니다. 점프 서버는 한 단계만 지원합니다.";
-        return null;
-    }
-
-    /// <summary>
-    /// RD 게이트웨이 값 검사: "" 이면 null(지우기), "host" 또는 "host:port" ("[IPv6]:port" 포함).
-    /// 공백·제어 문자·경로·계정 구분자(/ \ @ ; 등)는 거부 — 게이트웨이 칸에 다른 값을 끼워 넣지 못하게
-    /// </summary>
-    public static string? NormalizeGateway(string value, out string? error)
-    {
-        error = null;
-        var v = value.Trim();
-        if (v.Length == 0) return null;
-        if (v.Length > 255 || McpHelpers.HasInvisibleChars(v)) { error = "rdp_gateway 가 올바르지 않습니다."; return null; }
-        foreach (var ch in v)
-            // ASCII 만 — 유니코드 글자(키릴 'о' 등)로 승인 창에서 다른 게이트웨이처럼 보이게 꾸미지 못하게
-            if (!(char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-' or '_' or ':' or '[' or ']'))
-            { error = $"rdp_gateway 에 쓸 수 없는 문자가 있습니다: '{ch}' (\"호스트\" 또는 \"호스트:포트\")"; return null; }
-
-        string host;
-        string? port = null;
-        if (v.StartsWith('['))
-        {
-            var close = v.IndexOf(']');
-            if (close < 2) { error = "rdp_gateway 의 IPv6 주소 형식이 올바르지 않습니다."; return null; }
-            host = v[1..close];
-            var rest = v[(close + 1)..];
-            if (rest.Length > 0)
-            {
-                if (rest[0] != ':') { error = "rdp_gateway 형식이 올바르지 않습니다."; return null; }
-                port = rest[1..];
-            }
-            if (!System.Net.IPAddress.TryParse(host, out var ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6)
-            { error = "rdp_gateway 의 IPv6 주소가 올바르지 않습니다."; return null; }
-        }
-        else
-        {
-            if (v.Contains('[') || v.Contains(']') || v.Count(c => c == ':') > 1) { error = "rdp_gateway 형식이 올바르지 않습니다 (IPv6 는 [주소]:포트)."; return null; }
-            var colon = v.IndexOf(':');
-            host = colon < 0 ? v : v[..colon];
-            if (colon >= 0) port = v[(colon + 1)..];
-            if (host.Length == 0 || host.StartsWith('.') || host.StartsWith('-')) { error = "rdp_gateway 의 호스트가 올바르지 않습니다."; return null; }
-        }
-        if (port != null && !(int.TryParse(port, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var p) && p is >= 1 and <= 65535))
-        { error = "rdp_gateway 의 포트는 1~65535 입니다."; return null; }
-        return v;
     }
 }
