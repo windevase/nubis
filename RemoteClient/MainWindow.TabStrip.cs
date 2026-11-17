@@ -73,6 +73,9 @@ public partial class MainWindow
         // Claude 에게 준 화면 조작 허용(10분)을 바로 끝낸다 — 허용 중일 때만 보인다
         if (tab.View is RdpSessionView && HasRdpControl(tab))
             Add(L.T("Claude 화면 조작 허용 끝내기"), () => RevokeRdpControl(tab));
+        // Claude 가 지금 보내는 입력(긴 글자 입력 등)을 바로 멈춘다 — 허용 여부와 무관하게 입력 중일 때만 보인다
+        if (tab.View is RdpSessionView && IsRdpInputRunning(tab))
+            Add(L.T("Claude 입력 멈추기"), () => StopRdpInput(tab));
         Add(L.T("탭 이름 바꾸기..."), () =>
         {
             // 공백만 넣으면 탭 제목이 비어 탭을 알아볼 수 없다 — 앞뒤 공백을 떼고 빈 이름은 무시

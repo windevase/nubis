@@ -15,8 +15,8 @@ public partial class MainWindow
 {
     // =================== 화면 캡처 (capture_screen) ===================
 
-    /// <summary>마지막 캡처의 이미지 크기 · 그때 탭 화면의 물리 픽셀 크기</summary>
-    private sealed record CaptureGeometry(int ImageW, int ImageH, int TabW, int TabH);
+    /// <summary>마지막 캡처의 이미지 크기 · 그때 탭 화면의 물리 픽셀 크기 · RDP 연결 번호(다시 연결 뒤에는 그 좌표를 쓰지 않게)</summary>
+    private sealed record CaptureGeometry(int ImageW, int ImageH, int TabW, int TabH, int Generation);
 
     // 탭별 마지막 캡처 — 약한 참조라 닫힌 탭은 함께 사라진다 (누수 없음)
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<SessionTab, CaptureGeometry> _captureGeometry = new();
@@ -129,7 +129,7 @@ public partial class MainWindow
         }
         var (data, mime, outW, outH) = await Task.Run(() => EncodeCapture(full, crop, maxWidth));
         // RDP 화면 조작(rdp_click 등)은 Claude 가 본 마지막 이미지의 좌표를 쓴다 — 이미지 크기와 그때의 탭 크기를 기억
-        _captureGeometry.AddOrUpdate(tab, new CaptureGeometry(outW, outH, crop.Width, crop.Height));
+        _captureGeometry.AddOrUpdate(tab, new CaptureGeometry(outW, outH, crop.Width, crop.Height, (tab.View as RdpSessionView)?.SessionGeneration ?? 0));
 
         var target = $"session {tab.Id}: {tab.Title}" + (tab.Host != null ? $" ({tab.Host.Address})" : "");
         AuditLog.Write("capture_screen", new[] { target }, $"({outW}x{outH} {mime})", "조회");

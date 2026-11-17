@@ -278,4 +278,258 @@ public class RdpInputTests
     [Fact]
     public void 이미지_크기가_0_이면_null() =>
         Assert.Null(RdpKeys.ImageToTabPixels(0, 0, 0, 0, 1600, 900, 1600, 900));
+
+    [Fact]
+    public void 가로_세로_비율이_다른_축소도_축마다_환산()
+    {
+        // 이미지 800x600 ← 캡처 1600x900 : 가로 2배, 세로 1.5배
+        Assert.Equal((200, 300), RdpKeys.ImageToTabPixels(100, 200, 800, 600, 1600, 900, 1600, 900));
+        Assert.Equal((1599, 899), RdpKeys.ImageToTabPixels(799.9, 599.9, 800, 600, 1600, 900, 1600, 900));
+        Assert.Equal((1, 1), RdpKeys.ImageToTabPixels(0.5, 0.9, 800, 600, 1600, 900, 1600, 900));
+    }
+
+    [Fact]
+    public void 캡처_크기가_0_이면_예외_없이_null()
+    {
+        (int, int)? r = null;
+        var ex = Record.Exception(() => r = RdpKeys.ImageToTabPixels(10, 10, 800, 450, 0, 0, 0, 0));
+        Assert.Null(ex);
+        Assert.Null(r);
+        ex = Record.Exception(() => r = RdpKeys.ImageToTabPixels(10, 10, 800, 450, 0, 900, 0, 900));
+        Assert.Null(ex);
+        Assert.Null(r);
+    }
+
+    // ── TextToEvents 경계 ──
+
+    [Fact]
+    public void 중간의_CR_단독은_Enter_한_번()
+    {
+        var ev = RdpKeys.TextToEvents("a\rb");
+        Assert.Equal(1, ev.Count(e => e.Scan == 0x1C && !e.Up));
+        Assert.Equal(new[]
+        {
+            Down((ushort)'A', 0x1E), Up((ushort)'A', 0x1E),
+            Down(0x0D, 0x1C), Up(0x0D, 0x1C),
+            Down((ushort)'B', 0x30), Up((ushort)'B', 0x30),
+        }, ev);
+    }
+
+    [Fact]
+    public void CR_CR_LF_는_Enter_두_번()
+    {
+        var ev = RdpKeys.TextToEvents("\r\r\n");
+        Assert.Equal(new[] { Down(0x0D, 0x1C), Up(0x0D, 0x1C), Down(0x0D, 0x1C), Up(0x0D, 0x1C) }, ev);
+    }
+
+    // ── ParseCombo: 추가 거부 ──
+
+    [Theory]
+    // 공백은 글자
+    [InlineData("space")]
+    [InlineData("SPACE")]
+    [InlineData("shift+space")]
+    // AltGr (ctrl+alt+글자)
+    [InlineData("ctrl+alt+a")]
+    [InlineData("alt+ctrl+a")]
+    [InlineData("ctrl+shift+alt+a")]
+    [InlineData("ctrl+alt+1")]
+    [InlineData("ctrl+alt+;")]
+    [InlineData("ctrl+alt+space")]
+    // 클립보드 기록
+    [InlineData("win+v")]
+    [InlineData("WIN+V")]
+    [InlineData("win+shift+v")]
+    [InlineData("ctrl+win+v")]
+    // 화상 키보드
+    [InlineData("ctrl+win+o")]
+    [InlineData("win+ctrl+O")]
+    // 형식 오류
+    [InlineData("ctrl++")]
+    [InlineData("+")]
+    [InlineData("ctrl+ +r")]
+    // 기능 키 범위
+    [InlineData("f0")]
+    [InlineData("f13")]
+    [InlineData("f1a")]
+    // Shift 가 필요한 기호
+    [InlineData("ctrl+!")]
+    // 붙여넣기
+    [InlineData("shift+ins")]
+    public void 추가로_거부되는_조합(string combo) => Assert.Throws<ArgumentException>(() => RdpKeys.ParseCombo(combo));
+
+    [Theory]
+    [InlineData("win+.")]   // 이모지 패널
+    [InlineData("win+;")]   // 이모지 패널
+    [InlineData("win+h")]   // 음성 입력
+    [InlineData("win+v")]   // 클립보드 기록
+    [InlineData("win+c")]
+    [InlineData("win+k")]
+    [InlineData("win+w")]
+    public void win_글자는_허용_목록_밖이면_거부(string combo) => Assert.Throws<ArgumentException>(() => RdpKeys.ParseCombo(combo));
+
+    // ── ParseCombo: 추가 허용 ──
+
+    [Theory]
+    [InlineData("ctrl+space")]
+    [InlineData("win+space")]
+    [InlineData("alt+space")]
+    [InlineData("ctrl+alt+f1")]
+    [InlineData("ctrl+alt+tab")]
+    [InlineData("ctrl+insert")]
+    [InlineData("shift+tab")]
+    [InlineData("shift+delete")]
+    [InlineData("alt+v")]
+    [InlineData("ctrl+shift+esc")]
+    [InlineData("hangul")]
+    [InlineData("ralt")]
+    [InlineData("win")]
+    [InlineData("capslock")]
+    [InlineData("win+up")]
+    [InlineData("win+down")]
+    [InlineData("win+left")]
+    [InlineData("win+right")]
+    [InlineData("win+tab")]
+    public void 추가로_허용되는_조합(string combo)
+    {
+        var ev = RdpKeys.ParseCombo(combo);
+        Assert.NotEmpty(ev);
+        Assert.Equal(ev.Count(e => !e.Up), ev.Count(e => e.Up));
+    }
+
+    [Theory]
+    [InlineData("win+r")]
+    [InlineData("win+e")]
+    [InlineData("win+d")]
+    [InlineData("win+x")]
+    [InlineData("win+l")]
+    [InlineData("win+i")]
+    [InlineData("win+s")]
+    [InlineData("win+m")]
+    [InlineData("win+1")]
+    [InlineData("win+2")]
+    [InlineData("win+3")]
+    [InlineData("win+4")]
+    [InlineData("win+5")]
+    [InlineData("win+6")]
+    [InlineData("win+7")]
+    [InlineData("win+8")]
+    [InlineData("win+9")]
+    [InlineData("win+0")]
+    public void win_글자_허용_목록(string combo) => Assert.Equal(4, RdpKeys.ParseCombo(combo).Count);
+
+    // ── RdpInputSender.BuildKeyMessage ──
+
+    private const uint WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
+
+    private static uint Bits(IntPtr p) => unchecked((uint)p.ToInt64());
+    private static bool Bit(IntPtr p, int n) => (Bits(p) & (1u << n)) != 0;
+
+    [Fact]
+    public void 일반_키_누름은_KEYDOWN_반복1_스캔코드_나머지_비트0()
+    {
+        var (msg, w, l) = RdpInputSender.BuildKeyMessage(Down((ushort)'A', 0x1E), false, false);
+        Assert.Equal(WM_KEYDOWN, msg);
+        Assert.Equal((IntPtr)'A', w);
+        Assert.Equal(1u | (0x1Eu << 16), Bits(l));
+        Assert.False(Bit(l, 24));
+        Assert.False(Bit(l, 29));
+        Assert.False(Bit(l, 30));
+        Assert.False(Bit(l, 31));
+    }
+
+    [Fact]
+    public void 일반_키_뗌은_KEYUP_비트30_31()
+    {
+        var (msg, _, l) = RdpInputSender.BuildKeyMessage(Up((ushort)'A', 0x1E), false, false);
+        Assert.Equal(WM_KEYUP, msg);
+        Assert.True(Bit(l, 30));
+        Assert.True(Bit(l, 31));
+        Assert.False(Bit(l, 29));
+        Assert.True(l.ToInt64() < 0);
+        Assert.Equal(0x1Eu, (Bits(l) >> 16) & 0xFF);
+    }
+
+    [Fact]
+    public void 확장_키는_비트24()
+    {
+        Assert.True(Bit(RdpInputSender.BuildKeyMessage(Down(0x5B, 0x5B, true), false, false).LParam, 24));
+        Assert.True(Bit(RdpInputSender.BuildKeyMessage(Up(0x5B, 0x5B, true), false, false).LParam, 24));
+        var del = RdpKeys.ParseCombo("ctrl+alt+delete").First(e => e.Vk == 0x2E);
+        Assert.True(Bit(RdpInputSender.BuildKeyMessage(del, false, false).LParam, 24));
+    }
+
+    [Fact]
+    public void Alt_누름은_SYSKEYDOWN_비트29()
+    {
+        var (msg, w, l) = RdpInputSender.BuildKeyMessage(Down(0x12, 0x38), false, false);
+        Assert.Equal(WM_SYSKEYDOWN, msg);
+        Assert.Equal((IntPtr)0x12, w);
+        Assert.True(Bit(l, 29));
+    }
+
+    [Fact]
+    public void Alt_뗌은_SYSKEYUP_비트29_0()
+    {
+        var (msg, _, l) = RdpInputSender.BuildKeyMessage(Up(0x12, 0x38), true, false);
+        Assert.Equal(WM_SYSKEYUP, msg);
+        Assert.False(Bit(l, 29));   // 실제 키보드처럼 Alt 자체를 뗄 때는 컨텍스트 비트가 꺼진다
+        Assert.True(Bit(l, 30));
+        Assert.True(Bit(l, 31));
+    }
+
+    [Fact]
+    public void Alt_누른_채_F4_는_SYSKEY_비트29()
+    {
+        var down = RdpInputSender.BuildKeyMessage(Down(0x73, 0x3E), true, false);
+        Assert.Equal(WM_SYSKEYDOWN, down.Msg);
+        Assert.True(Bit(down.LParam, 29));
+        var up = RdpInputSender.BuildKeyMessage(Up(0x73, 0x3E), true, false);
+        Assert.Equal(WM_SYSKEYUP, up.Msg);
+        Assert.True(Bit(up.LParam, 29));
+    }
+
+    [Fact]
+    public void Ctrl_누른_채_Alt_는_시스템_키가_아니다()
+    {
+        var (msg, _, l) = RdpInputSender.BuildKeyMessage(Down(0x12, 0x38), false, true);
+        Assert.Equal(WM_KEYDOWN, msg);
+        Assert.True(Bit(l, 29));
+        var del = RdpInputSender.BuildKeyMessage(Down(0x2E, 0x53, true), true, true);
+        Assert.Equal(WM_KEYDOWN, del.Msg);
+    }
+
+    [Fact]
+    public void 기호_VK_0_은_WParam_0()
+    {
+        var (_, w, l) = RdpInputSender.BuildKeyMessage(Down(0, 0x02), false, false);
+        Assert.Equal(IntPtr.Zero, w);
+        Assert.Equal(0x02u, (Bits(l) >> 16) & 0xFF);
+    }
+
+    /// <summary>KeysAsync 와 같은 방식으로 Alt·Ctrl 상태를 따라가며 메시지 종류를 만든다 (상태는 메시지를 만든 뒤 갱신)</summary>
+    private static uint[] Messages(string combo)
+    {
+        bool alt = false, ctrl = false;
+        var r = new List<uint>();
+        foreach (var e in RdpKeys.ParseCombo(combo))
+        {
+            r.Add(RdpInputSender.BuildKeyMessage(e, alt, ctrl).Msg);
+            if (e.Vk == 0x12) alt = !e.Up;
+            if (e.Vk == 0x11) ctrl = !e.Up;
+        }
+        return r.ToArray();
+    }
+
+    [Fact]
+    public void alt_f4_조합은_전부_SYSKEY() =>
+        Assert.Equal(new[] { WM_SYSKEYDOWN, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_SYSKEYUP }, Messages("alt+f4"));
+
+    [Fact]
+    public void ctrl_alt_delete_조합은_전부_일반_KEY() =>
+        Assert.Equal(new[] { WM_KEYDOWN, WM_KEYDOWN, WM_KEYDOWN, WM_KEYUP, WM_KEYUP, WM_KEYUP }, Messages("ctrl+alt+delete"));
+
+    [Fact]
+    public void win_r_조합은_전부_일반_KEY() =>
+        Assert.Equal(new[] { WM_KEYDOWN, WM_KEYDOWN, WM_KEYUP, WM_KEYUP }, Messages("win+r"));
 }

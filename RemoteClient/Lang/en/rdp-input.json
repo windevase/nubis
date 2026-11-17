@@ -2,6 +2,7 @@
   "Claude 가 원격 데스크톱 화면 조작을 요청합니다": "Claude is requesting control of the remote desktop screen",
   "Claude 가 원격 데스크톱에 글자 입력을 요청합니다": "Claude is requesting to type on the remote desktop",
   "Claude 화면 조작 허용 끝내기": "End Claude screen control",
+  "Claude 입력 멈추기": "Stop Claude's input",
   "아래 RDP 화면에서 지금 포커스를 가진 창에 글자를 입력하고 Enter 를 누릅니다.": "Types the text below into the focused window on this RDP screen, then presses Enter.",
   "아래 RDP 화면에서 지금 포커스를 가진 창에 글자를 입력합니다.": "Types the text below into the focused window on this RDP screen.",
   "{0} 화면의 Claude 조작 허용을 끝냈습니다.": "Ended Claude's control of the {0} screen.",

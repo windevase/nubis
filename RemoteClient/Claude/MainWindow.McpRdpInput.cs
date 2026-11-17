@@ -35,6 +35,19 @@ public partial class MainWindow
     // 탭별 허용 · 입력 잠금 — 약한 참조라 닫힌 탭은 함께 사라진다
     private readonly ConditionalWeakTable<SessionTab, RdpGrant> _rdpGrants = new();
     private readonly ConditionalWeakTable<SessionTab, SemaphoreSlim> _rdpInputLocks = new();
+    // 지금 입력 중인 요청의 멈춤 토큰 (탭 메뉴 "Claude 입력 멈추기"·허용 끝내기에서 취소)
+    private readonly ConditionalWeakTable<SessionTab, CancellationTokenSource> _rdpActiveInput = new();
+
+    /// <summary>이 탭에 Claude 가 지금 입력하는 중인가 (탭 메뉴에 "Claude 입력 멈추기" 표시용)</summary>
+    internal bool IsRdpInputRunning(SessionTab tab) => _rdpActiveInput.TryGetValue(tab, out _);
+
+    /// <summary>진행 중인 Claude 입력을 멈춘다 (누른 키·버튼은 떼고 끝남)</summary>
+    internal void StopRdpInput(SessionTab tab)
+    {
+        if (!_rdpActiveInput.TryGetValue(tab, out var cts)) return;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { }
+        AuditLog.Write("rdp_control", new[] { SessionAuditTarget(tab) }, "(진행 중인 입력 멈춤)", "사용자 중단");
+    }
 
     private RdpGrant? ActiveGrant(SessionTab tab) =>
         _rdpGrants.TryGetValue(tab, out var g) && g.Until > DateTime.UtcNow && !g.Stop.IsCancellationRequested &&
@@ -46,6 +59,7 @@ public partial class MainWindow
     /// <summary>화면 조작 허용을 바로 끝낸다 (탭 우클릭 메뉴) — 진행 중인 입력도 멈춘다</summary>
     internal void RevokeRdpControl(SessionTab tab)
     {
+        if (_rdpActiveInput.TryGetValue(tab, out var running)) { try { running.Cancel(); } catch (ObjectDisposedException) { } }
         if (!_rdpGrants.TryGetValue(tab, out var g)) return;
         _rdpGrants.Remove(tab);
         try { g.Stop.Cancel(); } catch (ObjectDisposedException) { }
@@ -198,7 +212,7 @@ public partial class MainWindow
     /// action 은 감사 로그·결과 문구(언어 무관 표기). 인자 오류는 모두 승인 전에 던진다.
     /// </summary>
     private async Task<object> RdpActAsync(JsonElement a, string tool, string action, bool grant,
-        Func<SessionTab, IntPtr, CancellationToken, Task> act, (string Title, string Description, string Shown)? approval = null)
+        Func<SessionTab, RdpTarget, CancellationToken, Task> act, (string Title, string Description, string Shown)? approval = null)
     {
         var ct = McpRequest.Token;
         var captureAfter = BoolArg(a, "capture_after") != false;
@@ -212,24 +226,28 @@ public partial class MainWindow
         var gate = _rdpInputLocks.GetValue(tab, _ => new SemaphoreSlim(1, 1));
         try { await gate.WaitAsync(ct); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
-        var approved = false;
+        // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
+        using var userStop = new CancellationTokenSource();
         try
         {
-            CancellationToken stop = default;
-            if (grant) stop = (await EnsureRdpControlAsync(tab, tool, action)).Stop.Token;
+            // 승인을 묻기 전 연결 번호 — 승인 창이 떠 있는 사이 다시 연결됐으면 승인하지 않은 새 연결에 입력하지 않는다
+            var view = (RdpSessionView)tab.View;
+            var gen = view.SessionGeneration;
+            CancellationToken grantStop = default;
+            if (grant) grantStop = (await EnsureRdpControlAsync(tab, tool, action, gen)).Stop.Token;
             else if (approval is { } ap && !await AskApprovalAsync(tool, ap.Title, ap.Description, new[] { target }, ap.Shown))
             {
                 AuditLog.Write(tool, new[] { target }, action, "거부");
                 throw new McpToolException("사용자가 입력을 거부했습니다.");
             }
-            approved = true;
 
-            IntPtr ih;
+            RdpTarget ih;
             try
             {
-                // 승인을 기다리는 동안 탭이 닫혔거나 끊겼을 수 있다
+                // 승인을 기다리는 동안 탭이 닫혔거나 끊겼거나 다시 연결됐을 수 있다
                 if (!_tabs.Contains(tab)) throw new McpToolException("승인을 기다리는 동안 탭이 닫혀 입력하지 않았습니다.");
                 CheckRdpTab(tab);
+                if (view.SessionGeneration != gen) throw new McpToolException("승인을 기다리는 동안 RDP 가 다시 연결되어 입력하지 않았습니다. 화면을 다시 캡처한 뒤 요청하세요.");
                 // 조작하는 모습이 보이게 그 탭을 띄운다 (숨은 탭은 크기가 0 이라 좌표를 맞출 수 없음)
                 if (!tab.IsSelected)
                 {
@@ -237,8 +255,10 @@ public partial class MainWindow
                     await Task.Delay(400, ct);
                     if (!_tabs.Contains(tab)) throw new McpToolException("탭이 닫혀 입력하지 않았습니다.");
                 }
-                ih = ((RdpSessionView)tab.View).FindInputWindow();
-                if (ih == IntPtr.Zero) throw new McpToolException("RDP 입력 창을 찾지 못했습니다 (연결 중이거나 끊김). list_sessions 로 상태를 확인하세요.");
+                var hwnd = view.FindInputWindow();
+                if (hwnd == IntPtr.Zero) throw new McpToolException("RDP 입력 창을 찾지 못했습니다 (연결 중이거나 끊김). list_sessions 로 상태를 확인하세요.");
+                // 메시지마다 확인: 같은 탭이 열려 있고 · 같은 연결이고 · 입력 창이 그대로인가 (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게)
+                ih = new RdpTarget(hwnd, () => _tabs.Contains(tab) && view.SessionGeneration == gen && view.FindInputWindow() == hwnd);
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
@@ -247,11 +267,12 @@ public partial class MainWindow
                 throw;
             }
 
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, stop);
+            _rdpActiveInput.AddOrUpdate(tab, userStop);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
             try { await act(tab, ih, linked.Token); }
             catch (OperationCanceledException)
             {
-                var why = stop.IsCancellationRequested ? "사용자가 화면 조작 허용을 끝내" : "요청이 취소되어";
+                var why = userStop.IsCancellationRequested || grantStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰" : "요청이 취소되어";
                 AuditLog.Write(tool, new[] { target }, action, $"중단({why}) — 일부 입력됐을 수 있음");
                 throw new McpToolException($"{why} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것).");
             }
@@ -263,15 +284,15 @@ public partial class MainWindow
             }
             catch (Exception ex)
             {
-                AuditLog.Write(tool, new[] { target }, action, "실패 — 일부 입력됐을 수 있음");
-                throw new McpToolException($"입력 중 오류: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것).");
+                AuditLog.Write(tool, new[] { target }, action, "중단 — 일부 입력됐을 수 있음: " + ex.Message);
+                throw new McpToolException($"입력을 멈췄습니다: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것).");
             }
             AuditLog.Write(tool, new[] { target }, action, grant ? "실행(화면 조작 허용 중)" : "승인·입력");
         }
         finally
         {
+            if (_rdpActiveInput.TryGetValue(tab, out var cur) && ReferenceEquals(cur, userStop)) _rdpActiveInput.Remove(tab);
             gate.Release();
-            _ = approved;
         }
 
         var done = $"{action} 완료.";
@@ -317,7 +338,7 @@ public partial class MainWindow
     }
 
     /// <summary>탭 단위 화면 조작 허용 — 없거나 만료·다시 연결됐으면 승인을 받는다. 탭별 잠금 안에서 부른다</summary>
-    private async Task<RdpGrant> EnsureRdpControlAsync(SessionTab tab, string tool, string action)
+    private async Task<RdpGrant> EnsureRdpControlAsync(SessionTab tab, string tool, string action, int gen)
     {
         if (ActiveGrant(tab) is { } live) return live;
         var target = SessionAuditTarget(tab);
@@ -328,12 +349,12 @@ public partial class MainWindow
             AuditLog.Write(tool, new[] { target }, action, "거부");
             throw new McpToolException("사용자가 화면 조작을 거부했습니다.");
         }
-        if (!_tabs.Contains(tab) || tab.View is not RdpSessionView v)
+        if (!_tabs.Contains(tab) || tab.View is not RdpSessionView v || v.SessionGeneration != gen)
         {
-            AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함(탭 닫힘)");
-            throw new McpToolException("승인을 기다리는 동안 탭이 닫혀 입력하지 않았습니다.");
+            AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함(탭 닫힘·다시 연결)");
+            throw new McpToolException("승인을 기다리는 동안 탭이 닫혔거나 RDP 가 다시 연결되어 입력하지 않았습니다. 화면을 다시 캡처한 뒤 요청하세요.");
         }
-        var grant = new RdpGrant(DateTime.UtcNow.AddMinutes(RdpControlMinutes), v.SessionGeneration);
+        var grant = new RdpGrant(DateTime.UtcNow.AddMinutes(RdpControlMinutes), gen);
         if (_rdpGrants.TryGetValue(tab, out var old)) { try { old.Stop.Cancel(); } catch (ObjectDisposedException) { } }
         _rdpGrants.AddOrUpdate(tab, grant);
         AuditLog.Write("rdp_control", new[] { target }, $"(화면 조작 허용 {RdpControlMinutes}분)", "승인");
@@ -342,12 +363,14 @@ public partial class MainWindow
     }
 
     /// <summary>마지막 캡처 이미지 좌표 → RDP 입력 창 좌표 · 화면 좌표</summary>
-    private ((int X, int Y) Client, (int X, int Y) Screen) MapToInput(SessionTab tab, IntPtr ih, double x, double y, int? imageWidth)
+    private ((int X, int Y) Client, (int X, int Y) Screen) MapToInput(SessionTab tab, RdpTarget ih, double x, double y, int? imageWidth)
     {
         if (!_captureGeometry.TryGetValue(tab, out var g))
             throw new McpToolException($"session {tab.Id} 화면을 아직 캡처하지 않았습니다. capture_screen 으로 먼저 화면을 보고 그 이미지 좌표를 주세요.");
         if (imageWidth is { } iw && iw != g.ImageW)
             throw new McpToolException($"image_width {iw} 가 마지막 캡처 이미지 가로({g.ImageW})와 다릅니다. 가장 최근 캡처 이미지의 좌표를 주세요.");
+        if (tab.View is RdpSessionView rv && rv.SessionGeneration != g.Generation)
+            throw new McpToolException("마지막 캡처 뒤 RDP 가 다시 연결되어 화면이 바뀌었을 수 있습니다. capture_screen 으로 다시 캡처한 뒤 새 좌표를 주세요.");
         var view = tab.View;
         var dpi = VisualTreeHelper.GetDpi(this);
         var (curW, curH) = ((int)(view.ActualWidth * dpi.DpiScaleX), (int)(view.ActualHeight * dpi.DpiScaleY));
@@ -357,7 +380,7 @@ public partial class MainWindow
                  ?? throw new McpToolException("마지막 캡처 뒤 탭 크기가 바뀌었습니다. capture_screen 으로 다시 캡처한 뒤 새 좌표를 주세요.");
         var screen = view.PointToScreen(new Point(px.X / dpi.DpiScaleX, px.Y / dpi.DpiScaleY));
         var (sx, sy) = ((int)Math.Round(screen.X), (int)Math.Round(screen.Y));
-        var client = RdpInputSender.ScreenToInput(ih, sx, sy)
+        var client = RdpInputSender.ScreenToInput(ih.Hwnd, sx, sy)
                      ?? throw new McpToolException($"좌표 ({x:0.#}, {y:0.#}) 는 원격 화면 영역 밖입니다. 다시 캡처해 확인하세요.");
         return (client, (sx, sy));
     }
