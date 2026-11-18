@@ -76,6 +76,33 @@ public sealed class RdpAxHost : AxHost
         object get_Property([MarshalAs(UnmanagedType.BStr)] string bstrPropertyName);
     }
 
+    /// <summary>
+    /// IMsRdpClientNonScriptable — 원격 세션에 키(스캔코드)를 보내는 공식 SendKeys 가 여기에 있다 (IDispatch 로는 노출되지 않음).
+    /// vtable 순서는 mstsax.idl: IMsTscNonScriptable 의 10개 → NotifyRedirectDeviceChange → SendKeys
+    /// </summary>
+    [ComImport, Guid("2F079C4C-87B2-4AFD-97AB-20CDB43038AE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IMsRdpClientNonScriptable
+    {
+        void put_ClearTextPassword([MarshalAs(UnmanagedType.BStr)] string v);
+        void put_PortablePassword([MarshalAs(UnmanagedType.BStr)] string v);
+        [return: MarshalAs(UnmanagedType.BStr)] string get_PortablePassword();
+        void put_PortableSalt([MarshalAs(UnmanagedType.BStr)] string v);
+        [return: MarshalAs(UnmanagedType.BStr)] string get_PortableSalt();
+        void put_BinaryPassword([MarshalAs(UnmanagedType.BStr)] string v);
+        [return: MarshalAs(UnmanagedType.BStr)] string get_BinaryPassword();
+        void put_BinarySalt([MarshalAs(UnmanagedType.BStr)] string v);
+        [return: MarshalAs(UnmanagedType.BStr)] string get_BinarySalt();
+        void ResetPassword();
+        void NotifyRedirectDeviceChange(IntPtr wParam, IntPtr lParam);
+        void SendKeys(int numKeys, [MarshalAs(UnmanagedType.LPArray)] short[] pbArrayKeyUp, [MarshalAs(UnmanagedType.LPArray)] int[] plKeyData);
+    }
+
+    /// <summary>공식 키 전송 인터페이스 (없으면 null)</summary>
+    public IMsRdpClientNonScriptable? NonScriptable
+    {
+        get { try { return GetOcx() as IMsRdpClientNonScriptable; } catch { return null; } }
+    }
+
     protected override void CreateSink()
     {
         try { _cookie = new ConnectionPointCookie(GetOcx()!, _sink, typeof(IMsTscAxEvents)); }

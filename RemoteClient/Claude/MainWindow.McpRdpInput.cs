@@ -125,7 +125,7 @@ public partial class MainWindow
                 y = new { type = "number" },
                 button = new { type = "string", @enum = new[] { "left", "right", "middle" }, description = "기본 left" },
                 @double = new { type = "boolean", description = "더블 클릭" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
             }, "x", "y"),
             a => OnUiAsync(async () =>
             {
@@ -148,7 +148,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 to_x = new { type = "number" }, to_y = new { type = "number" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
             }, "x", "y", "to_x", "to_y"),
             a => OnUiAsync(async () =>
             {
@@ -169,7 +169,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 amount = new { type = "integer", description = "휠 칸 수 (양수 위, 음수 아래)" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
             }, "x", "y", "amount"),
             a => OnUiAsync(async () =>
             {
@@ -194,7 +194,7 @@ public partial class MainWindow
             {
                 session_id = new { type = "integer" },
                 keys = new { type = "array", items = new { type = "string" }, description = $"차례로 누를 키 조합 (최대 {RdpKeys.MaxCombos}개)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
             }, "keys"),
             a => OnUiAsync(async () =>
             {
@@ -219,7 +219,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 text = new { type = "string" },
                 press_enter = new { type = "boolean", description = "끝에 Enter (기본 true)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
             }, "text"),
             a => OnUiAsync(async () =>
             {
@@ -240,6 +240,24 @@ public partial class MainWindow
             }));
     }
 
+    private static readonly object MethodArg = new
+    {
+        type = "string",
+        @enum = new[] { "message", "post", "focus_post", "sendkeys", "sendinput" },
+        description = "입력 전달 방식 (실험 중 — 기본 message). post = 메시지 큐 · focus_post = RDP 컨트롤에 포커스를 준 뒤 · " +
+                      "sendkeys = 키는 컨트롤의 공식 SendKeys(마우스는 focus_post) · sendinput = 실제 입력(Nubis 창이 앞으로 오고 커서가 잠깐 움직였다 돌아옴)",
+    };
+
+    private static RdpInputMethod ParseInputMethod(string s) => s.Trim().ToLowerInvariant() switch
+    {
+        "" or "message" => RdpInputMethod.Message,
+        "post" => RdpInputMethod.Post,
+        "focus_post" => RdpInputMethod.FocusPost,
+        "sendkeys" => RdpInputMethod.SendKeys,
+        "sendinput" => RdpInputMethod.SendInput,
+        _ => throw new McpToolException("input_method 는 message / post / focus_post / sendkeys / sendinput 중 하나입니다."),
+    };
+
     private static double RequireNum(JsonElement a, string name) =>
         NumArg(a, name) is { } v && double.IsFinite(v) ? v : throw new McpToolException($"{name} 좌표(숫자)가 필요합니다.");
 
@@ -254,6 +272,7 @@ public partial class MainWindow
         var captureAfter = BoolArg(a, "capture_after") != false;
         var waitMs = Math.Clamp(IntArg(a, "wait_ms") ?? 800, 0, 10000);
         var maxWidthArg = IntArg(a, "max_width");
+        var method = ParseInputMethod(Arg(a, "input_method"));
         var tab = RequireSession(a, allowCurrent: true);
         CheckRdpTab(tab);
         var target = SessionAuditTarget(tab);
@@ -298,7 +317,8 @@ public partial class MainWindow
                 ih = new RdpTarget(hwnd,
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
-                    () => _tabs.Contains(tab) && view.SessionGeneration == gen);
+                    () => _tabs.Contains(tab) && view.SessionGeneration == gen)
+                { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null };
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
@@ -309,7 +329,19 @@ public partial class MainWindow
 
             _rdpActiveInput.AddOrUpdate(tab, userStop);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
-            try { await act(tab, ih, linked.Token); }
+            // 포커스가 필요한 방식은 RDP 컨트롤에 포커스를 주고(sendinput 은 창도 앞으로), 끝나면 Claude 패널 등 원래 자리로 되돌린다
+            var hadClaudeFocus = _claudeView?.IsKeyboardFocusWithin == true;
+            if (method is RdpInputMethod.FocusPost or RdpInputMethod.SendKeys or RdpInputMethod.SendInput)
+            {
+                if (method == RdpInputMethod.SendInput) Activate();
+                view.FocusRdpControl();
+                await Task.Delay(120, ct);
+            }
+            try
+            {
+                try { await act(tab, ih, linked.Token); }
+                finally { if (method is not (RdpInputMethod.Message or RdpInputMethod.Post) && hadClaudeFocus) _claudeView?.FocusSession(); }
+            }
             catch (OperationCanceledException)
             {
                 var why = userStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰"
