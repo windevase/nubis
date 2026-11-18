@@ -47,13 +47,16 @@ public partial class MainWindow
 
         yield return new McpTool("sftp_delete",
             "원격 파일·폴더·심볼릭 링크를 삭제한다. 폴더는 안의 내용까지 모두 지운다 (되돌릴 수 없음). 링크는 링크만 지우고 따라 들어가지 않는다. " +
-            $"승인 창에 지울 항목 수를 보인다. 항목이 {MaxSftpDeleteItems}개를 넘거나 / · 최상위 시스템 폴더 · 홈 폴더는 지우지 않는다. host 또는 session_id 필요.",
+            $"승인 창에 지울 항목 수를 보인다. 항목이 {MaxSftpDeleteItems}개를 넘거나 / · 최상위 시스템 폴더 · 홈 폴더는 지우지 않는다. " +
+            $"여러 개는 paths 로 (최대 {McpSftpRules.MaxMultiPaths}개, 승인 한 번 — 서로 품는 경로는 거부, 항목 수 한도는 전체 합계). " +
+            "승인 뒤 없어졌거나 종류가 바뀐 항목·지우다 실패한 항목은 건너뛰고 결과에 적는다. host 또는 session_id 필요.",
             Schema(new
             {
                 host = new { type = "string" },
                 session_id = new { type = "integer", description = SessionIdHelp },
-                path = new { type = "string", description = "지울 항목의 절대 경로" },
-            }, "path"),
+                path = new { type = "string", description = "지울 항목의 절대 경로 (paths 와 둘 중 하나)" },
+                paths = new { type = "array", items = new { type = "string" }, description = "지울 항목 여러 개의 절대 경로" },
+            }),
             a => SftpDeleteAsync(a));
 
         yield return new McpTool("sftp_write",
@@ -84,9 +87,12 @@ public partial class MainWindow
     }
 
     /// <summary>경로 인자 검사 (절대 경로, '.'·'..'·제어 문자 없음) 후 마지막 이름을 패널 규칙(ValidateRemoteName)으로 검사</summary>
-    private static string WritePathArg(JsonElement a, string name = "path")
+    private static string WritePathArg(JsonElement a, string name = "path") => WritePath(Arg(a, name), name);
+
+    /// <summary>WritePathArg 의 값 버전 (paths 목록의 항목마다)</summary>
+    private static string WritePath(string raw, string name)
     {
-        if (McpSftpRules.ValidateRemotePath(Arg(a, name), out var p) is { } why) throw new McpToolException($"{name}: {why}");
+        if (McpSftpRules.ValidateRemotePath(raw, out var p) is { } why) throw new McpToolException($"{name}: {why}");
         if (p != "/" && McpSftpRules.ValidateName(McpHelpers.RemoteFileName(p)) is { } bad) throw new McpToolException($"{name}: {bad}");
         return p;
     }
@@ -231,60 +237,129 @@ public partial class MainWindow
 
     // ---------------- sftp_delete ----------------
 
+    /// <summary>sftp_delete 의 항목 하나: 승인 때 본 종류 · 항목 수 (승인 뒤 종류가 바뀌면 지우지 않음)</summary>
+    private sealed record DeleteTarget(string Path, bool IsDir, bool IsLink, int Total);
+
     private async Task<string> SftpDeleteAsync(JsonElement a)
     {
-        var path = WritePathArg(a);
-        if (McpSftpRules.ProtectedPathReason(path) is { } prot) throw new McpToolException(prot);
+        if (McpSftpRules.CollectPaths("path", Arg(a, "path"), "paths", StringListArg(a, "paths"), ignoreCase: false, out var raw) is { } badArgs)
+            throw new McpToolException(badArgs);
+        // 경로마다 쓰기 도구 공통 검사 (절대 경로, '.'·'..'·제어 문자 없음, 이름 규칙) + 보호 경로. 정리 뒤 같아진 경로는 하나로
+        var paths = new List<string>();
+        foreach (var r in raw)
+        {
+            var p = WritePath(r, raw.Count > 1 ? "paths" : "path");
+            if (McpSftpRules.ProtectedPathReason(p) is { } prot) throw new McpToolException(prot);
+            if (!paths.Contains(p)) paths.Add(p);
+        }
+        if (McpSftpRules.NestedRemotePaths(paths) is { } nested) throw new McpToolException(nested);
+        var multi = paths.Count > 1;
         var t = await SftpTargetAsync(a);
         var deleted = 0;
+        var donePaths = new List<string>();
         return await SftpWriteOpAsync("sftp_delete", t, L.T("Claude 가 원격 삭제를 요청합니다"),
-            L.T("승인하면 서버에서 아래 항목을 삭제합니다. 폴더는 안의 내용까지 모두 지우며 되돌릴 수 없습니다. 심볼릭 링크는 링크만 지우고 가리키는 원본은 그대로 둡니다."),
+            multi
+                ? L.F("승인하면 서버에서 아래 {0}개 항목을 삭제합니다. 폴더는 안의 내용까지 모두 지우며 되돌릴 수 없습니다. 심볼릭 링크는 링크만 지우고 가리키는 원본은 그대로 둡니다.", paths.Count)
+                : L.T("승인하면 서버에서 아래 항목을 삭제합니다. 폴더는 안의 내용까지 모두 지우며 되돌릴 수 없습니다. 심볼릭 링크는 링크만 지우고 가리키는 원본은 그대로 둡니다."),
             (c, ct) =>
             {
-                var attr = TryLStat(c, path) ?? throw new McpToolException($"원격 경로가 없습니다: {path}");
-                GuardHomeAndProtected(c, path, attr, "지울");
                 int files = 0, dirs = 0, links = 0;
                 var capped = false;
-                var preview = new List<string>();
-                void Count(string p, bool isDir, bool isLink, int depth)
+                var targets = new List<DeleteTarget>();
+                var lines = new List<string>();
+                var parentNotes = new List<string>();
+                foreach (var path in paths)
+                {
+                    var attr = TryLStat(c, path) ?? throw new McpToolException($"원격 경로가 없습니다: {path}");
+                    GuardHomeAndProtected(c, path, attr, "지울");
+                    int f0 = files, d0 = dirs, l0 = links;
+                    var preview = new List<string>();
+                    void Count(string p, bool isDir, bool isLink, int depth)
+                    {
+                        ct.ThrowIfCancellationRequested();
+                        if (files + dirs + links >= MaxSftpDeleteItems) { capped = true; return; }
+                        if (isLink) { links++; return; }
+                        if (!isDir) { files++; return; }
+                        dirs++;
+                        foreach (var f in c.ListDirectory(p).Where(f => f.Name is not "." and not ".."))
+                        {
+                            if (capped) return;
+                            if (depth == 0 && preview.Count < 10)
+                                preview.Add($"  {(f.IsSymbolicLink ? "link" : f.IsDirectory ? "dir" : "file")}  {McpHelpers.VisibleControlChars(f.Name)}");
+                            // 링크(폴더를 가리키는 링크 포함)는 안으로 들어가지 않는다 — 패널의 삭제와 같은 규칙
+                            Count(ChildPath(p, f.Name), f.IsDirectory && !f.IsSymbolicLink, f.IsSymbolicLink, depth + 1);
+                        }
+                    }
+                    Count(path, attr.IsDirectory && !attr.IsSymbolicLink, attr.IsSymbolicLink, 0);
+                    if (capped)
+                        throw new McpToolException($"항목이 {MaxSftpDeleteItems}개를 넘어 지우지 않았습니다 (승인 창에 정확한 수를 보일 수 없음). 더 작은 단위로 나눠 지우세요.");
+                    int pf = files - f0, pd = dirs - d0, pl = links - l0;
+                    targets.Add(new DeleteTarget(path, attr.IsDirectory && !attr.IsSymbolicLink, attr.IsSymbolicLink, pf + pd + pl));
+                    if (!multi)
+                        lines.Add($"삭제: {path} ({KindText(attr)})\n{McpSftpRules.CountText(pf, pd, pl, false)}" +
+                                  (preview.Count > 0 ? "\n안의 항목:\n" + string.Join("\n", preview) + (pf + pd + pl - 1 > preview.Count ? "\n  …" : "") : ""));
+                    else
+                        lines.Add($"  {path} ({KindText(attr)}{(pd + pf + pl > 1 ? $" — {McpSftpRules.CountText(pf, pd, pl, false)}" : "")})");
+                    if (LinkedParentNote(c, path) is { Length: > 0 } pn && !parentNotes.Contains(pn)) parentNotes.Add(pn);
+                }
+                var what = multi
+                    ? $"삭제 ({paths.Count}개, 모두 {McpSftpRules.CountText(files, dirs, links, false)}):\n" + string.Join("\n", lines)
+                    : lines[0];
+                return (targets, what, L.F("\n삭제할 항목: 파일 {0}개 · 폴더 {1}개 · 링크 {2}개", files, dirs, links) + string.Concat(parentNotes));
+            },
+            (c, ct, targets) =>
+            {
+                var total = targets.Sum(x => x.Total);
+                var notDone = new List<string>();
+                var capHit = false;
+                foreach (var tg in targets)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (files + dirs + links >= MaxSftpDeleteItems) { capped = true; return; }
-                    if (isLink) { links++; return; }
-                    if (!isDir) { files++; return; }
-                    dirs++;
-                    foreach (var f in c.ListDirectory(p).Where(f => f.Name is not "." and not ".."))
+                    // 승인을 기다리는 사이 없어졌거나 폴더가 링크로 바뀌었으면(또는 반대) 지우지 않는다 — 링크를 따라 다른 곳의 내용을 지우지 않게.
+                    // 항목이 하나면 예전처럼 오류, 여럿이면 그 항목만 빼고 결과에 적는다
+                    var now = TryLStat(c, tg.Path);
+                    string? why = now == null ? $"승인을 기다리는 사이 없어졌습니다: {tg.Path}"
+                        : now.IsSymbolicLink != tg.IsLink || (now.IsDirectory && !now.IsSymbolicLink) != tg.IsDir ? $"승인을 기다리는 사이 종류가 바뀌어 지우지 않았습니다: {tg.Path}"
+                        : null;
+                    if (why != null)
                     {
-                        if (capped) return;
-                        if (depth == 0 && preview.Count < 10)
-                            preview.Add($"  {(f.IsSymbolicLink ? "link" : f.IsDirectory ? "dir" : "file")}  {McpHelpers.VisibleControlChars(f.Name)}");
-                        // 링크(폴더를 가리키는 링크 포함)는 안으로 들어가지 않는다 — 패널의 삭제와 같은 규칙
-                        Count(ChildPath(p, f.Name), f.IsDirectory && !f.IsSymbolicLink, f.IsSymbolicLink, depth + 1);
+                        if (!multi) throw new McpToolException(why);
+                        notDone.Add(why);
+                        continue;
+                    }
+                    var before = deleted;
+                    try
+                    {
+                        DeleteRecursiveCounted(c, tg.Path, tg.IsDir, tg.IsLink, ct, () =>
+                        {
+                            // 승인 뒤 늘어난 항목까지 끝없이 지우지 않게 실제 삭제에도 한도를 둔다
+                            if (deleted >= MaxSftpDeleteItems)
+                            {
+                                capHit = true;
+                                throw new McpToolException($"지운 항목이 {MaxSftpDeleteItems}개에 이르러 멈췄습니다 (승인 때 {total}개). 남은 항목은 다시 확인하세요.");
+                            }
+                        }, () => deleted++);
+                        donePaths.Add(tg.Path);
+                    }
+                    // 여러 항목이면 한 항목의 실패(권한 없음 · 그사이 없어짐 · 이상한 이름)로 나머지를 멈추지 않는다 —
+                    // 한도 · 취소 · 연결 끊김 · 시간 초과 등 그 밖의 오류는 전체를 멈춘다 (끊긴 연결로 남은 항목을 하나씩 시도하지 않게)
+                    catch (Exception ex) when (multi && !capHit &&
+                        ex is Renci.SshNet.Common.SftpPermissionDeniedException or Renci.SshNet.Common.SftpPathNotFoundException or McpToolException)
+                    {
+                        var msg = ex is Renci.SshNet.Common.SftpPermissionDeniedException ? "권한 없음" : ex.Message;
+                        notDone.Add($"{tg.Path}: 실패 ({msg}, 그 전까지 {deleted - before}개 지움)");
                     }
                 }
-                Count(path, attr.IsDirectory && !attr.IsSymbolicLink, attr.IsSymbolicLink, 0);
-                if (capped)
-                    throw new McpToolException($"항목이 {MaxSftpDeleteItems}개를 넘어 지우지 않았습니다 (승인 창에 정확한 수를 보일 수 없음). 더 작은 단위로 나눠 지우세요.");
-                var what = $"삭제: {path} ({KindText(attr)})\n{McpSftpRules.CountText(files, dirs, links, false)}" +
-                           (preview.Count > 0 ? "\n안의 항목:\n" + string.Join("\n", preview) + (files + dirs + links - 1 > preview.Count ? "\n  …" : "") : "");
-                return ((IsDir: attr.IsDirectory && !attr.IsSymbolicLink, IsLink: attr.IsSymbolicLink, Total: files + dirs + links), what,
-                        L.F("\n삭제할 항목: 파일 {0}개 · 폴더 {1}개 · 링크 {2}개", files, dirs, links) + LinkedParentNote(c, path));
+                if (!multi)
+                    return ($"삭제했습니다: {paths[0]} (항목 {deleted}개)", $"{deleted}개 (승인 때 {total}개)");
+                var result = $"삭제했습니다: {donePaths.Count}/{paths.Count}개 경로 (항목 {deleted}개)" + McpSftpRules.ListText(donePaths, McpSftpRules.MaxMultiPaths) +
+                             (notDone.Count > 0 ? $"\n지우지 못한 경로 {notDone.Count}개:" + McpSftpRules.ListText(notDone, McpSftpRules.MaxMultiPaths) : "");
+                var audit = $"{deleted}개 (승인 때 {total}개), 경로 {donePaths.Count}/{paths.Count}" + (notDone.Count > 0 ? " — 지우지 못함: " + string.Join(" / ", notDone) : "");
+                if (donePaths.Count == 0) throw new McpToolException("지운 경로가 없습니다:" + McpSftpRules.ListText(notDone, McpSftpRules.MaxMultiPaths));
+                return (result, audit);
             },
-            (c, ct, info) =>
-            {
-                // 승인을 기다리는 사이 폴더가 링크로 바뀌었으면(또는 반대) 지우지 않는다 — 링크를 따라 다른 곳의 내용을 지우지 않게
-                var now = TryLStat(c, path) ?? throw new McpToolException($"승인을 기다리는 사이 없어졌습니다: {path}");
-                if (now.IsSymbolicLink != info.IsLink || (now.IsDirectory && !now.IsSymbolicLink) != info.IsDir)
-                    throw new McpToolException($"승인을 기다리는 사이 종류가 바뀌어 지우지 않았습니다: {path}");
-                DeleteRecursiveCounted(c, path, info.IsDir, info.IsLink, ct, () =>
-                {
-                    // 승인 뒤 늘어난 항목까지 끝없이 지우지 않게 실제 삭제에도 한도를 둔다
-                    if (deleted >= MaxSftpDeleteItems)
-                        throw new McpToolException($"지운 항목이 {MaxSftpDeleteItems}개에 이르러 멈췄습니다 (승인 때 {info.Total}개). 남은 항목은 다시 확인하세요.");
-                }, () => deleted++);
-                return ($"삭제했습니다: {path} (항목 {deleted}개)", $"{deleted}개 (승인 때 {info.Total}개)");
-            },
-            () => $"중단 전까지 {deleted}개 삭제됨 — 이미 지운 항목은 되돌릴 수 없음");
+            () => $"중단 전까지 {deleted}개 삭제됨 — 이미 지운 항목은 되돌릴 수 없음" +
+                  (multi && donePaths.Count > 0 ? $", 다 지운 경로: {string.Join(", ", donePaths)}" : ""));
     }
 
     /// <summary>

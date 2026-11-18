@@ -213,7 +213,15 @@ public sealed record ClusterFetchResult(List<CloudCluster> Items, List<string> E
 {
     public bool IsPartial => Errors.Count > 0;
     public List<string> DeniedRegions { get; init; } = new();
-    public bool HasUnexpectedErrors => Errors.Count > DeniedRegions.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    /// <summary>
+    /// 목록에는 있었지만 kubeconfig·엔드포인트를 못 받아 Items 에서 뺀 클러스터 ID (CloudCluster.Id 형식).
+    /// 그 클러스터만 이번에 지우지도 갱신하지도 않는다 (기존 kubeconfig 유지). 사유는 Errors 에 클러스터마다 한 줄씩 넣는다 —
+    /// 목록 조회 실패가 아니므로 HasUnexpectedErrors 에 세지 않는다 (다른 클러스터의 삭제는 반영)
+    /// </summary>
+    public List<string> ProtectedIds { get; init; } = new();
+    // 거부 리전 · 보호 클러스터는 Errors 에 한 줄씩 들어간다. 중복은 한 번만 세서 실제 오류를 가리지 않게 한다
+    public bool HasUnexpectedErrors => Errors.Count >
+        DeniedRegions.Distinct(StringComparer.OrdinalIgnoreCase).Count() + ProtectedIds.Distinct(StringComparer.Ordinal).Count();
     public static ClusterFetchResult Empty => new(new List<CloudCluster>(), new List<string>());
 }
 

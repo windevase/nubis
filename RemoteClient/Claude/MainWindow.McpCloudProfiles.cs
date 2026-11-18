@@ -16,7 +16,7 @@ public partial class MainWindow
         yield return new McpTool("cloud_list_profiles",
             "클라우드 프로필 목록과 설정을 반환한다: id, 클라우드, 프로필 이름, 표시 이름, 서버 수(실행 중), 마지막 동기화, 동기화 중 여부, " +
             "include_stopped, use_public_ip, ssh/rdp 포트(비어 있으면 설정의 기본 포트), 기본 사용자명, 기본 비밀번호 설정 여부(set/unset 만), " +
-            "SSH/RDP 기본 Vault 계정 이름, 목록에서 지운(숨긴) 서버 수. 비밀번호 값은 포함하지 않는다.",
+            "SSH/RDP 기본 Vault 계정 이름, 목록에서 지운(숨긴) 서버 수, 쿠버네티스 클러스터 동기화(sync_clusters) 여부와 이 프로필에서 가져온 클러스터 수. 비밀번호 값은 포함하지 않는다.",
             Schema(new { }),
             _ => OnUi(ListCloudProfilesText));
 
@@ -28,7 +28,9 @@ public partial class MainWindow
             "ssh_vault/rdp_vault 는 Vault 계정 이름 또는 id ('none' 또는 빈 문자열 = 해제, 해제하면 그 프로토콜 호스트에 직접 고른 계정도 함께 해제 — UI 와 같음). " +
             "지정할 때 다른 Vault 계정을 직접 골라 둔 호스트는 기본으로 유지하고, vault_override_hosts=true 면 그 지정을 해제한다. " +
             "vault_clear_own_credentials=true 면 호스트에 직접 적은 사용자명·비밀번호·키 경로를 지워 Vault 계정만 쓰게 한다 (기본 false). " +
-            "unhide_removed=true 면 목록에서 지운 서버를 다음 동기화부터 다시 표시한다. 기본 비밀번호(default_password)는 MCP 로 바꿀 수 없다.",
+            "unhide_removed=true 면 목록에서 지운 서버를 다음 동기화부터 다시 표시한다. " +
+            "sync_clusters 는 VM 동기화 때 이 프로필의 쿠버네티스 클러스터도 함께 갱신할지 (켜도 바로 찾지는 않음 — 바로 찾으려면 find_k8s_clusters, 꺼도 이미 가져온 클러스터는 남음). " +
+            "기본 비밀번호(default_password)는 MCP 로 바꿀 수 없다.",
             Schema(new
             {
                 profile = new { type = "string", description = "프로필 id(앞 8자 이상)·표시 이름·프로필 이름 또는 '[AWS] 이름' (cloud_list_profiles 참고)" },
@@ -44,11 +46,12 @@ public partial class MainWindow
                 vault_override_hosts = new { type = "boolean", description = "다른 Vault 계정을 직접 골라 둔 호스트의 지정도 해제 (기본 false = 유지)" },
                 vault_clear_own_credentials = new { type = "boolean", description = "호스트에 직접 적은 사용자명·비밀번호·키 경로를 지움 (기본 false)" },
                 unhide_removed = new { type = "boolean", description = "목록에서 지운 서버 다시 표시 (다음 동기화부터)" },
+                sync_clusters = new { type = "boolean", description = "VM 동기화 때 쿠버네티스 클러스터도 갱신 (Kubernetes '클라우드에서 찾기' 의 프로필 선택과 같은 설정)" },
             }, "profile"),
             a => OnUiAsync(() => UpdateCloudProfileFromClaude(a)));
 
         yield return new McpTool("cloud_remove_profile",
-            "클라우드 프로필과 그 프로필로 동기화된 호스트를 Nubis 에서 제거한다 (사용자 승인 필요, 클라우드의 서버에는 영향 없음). " +
+            "클라우드 프로필과 그 프로필로 동기화된 호스트 · 가져온 쿠버네티스 클러스터를 Nubis 에서 제거한다 (사용자 승인 필요, 클라우드의 서버·클러스터에는 영향 없음). " +
             "다른 그룹 호스트가 이 프로필의 서버를 점프 호스트로 쓰고 있으면 승인 창과 결과에 알린다 (제거 후 그 호스트들은 점프 호스트를 다시 지정해야 접속 가능).",
             Schema(new { profile = new { type = "string", description = "프로필 id(앞 8자 이상)·표시 이름·프로필 이름" } }, "profile"),
             a => OnUiAsync(() => RemoveCloudProfileFromClaude(a)));
@@ -86,6 +89,7 @@ public partial class MainWindow
         if (_profiles.Count == 0) return "클라우드 프로필이 없습니다. discover_sources · cloud_add_profile 로 추가할 수 있습니다.";
         var counts = _hosts.Where(h => h.CloudProfileId != null).GroupBy(h => h.CloudProfileId!.Value)
             .ToDictionary(g => g.Key, g => (total: g.Count(), running: g.Count(h => !h.IsStopped)));
+        var clusters = K8sProfilePick.ClusterCounts(K8sStore.All());
         var sb = new StringBuilder($"클라우드 프로필 {_profiles.Count}개\n");
         foreach (var p in _profiles.OrderBy(p => p.Provider).ThenBy(p => p.GroupName, StringComparer.CurrentCultureIgnoreCase))
         {
@@ -98,6 +102,7 @@ public partial class MainWindow
             sb.AppendLine($"  기본 사용자명 {(p.DefaultUsername.Length > 0 ? McpHelpers.VisibleControlChars(p.DefaultUsername) : "-")}" +
                           $" | 기본 비밀번호 {(string.IsNullOrEmpty(p.ProtectedDefaultPassword) ? "unset" : "set")}" +
                           $" | ssh_vault {ProfileVaultName(p.SshVaultId)} | rdp_vault {ProfileVaultName(p.RdpVaultId)} | 숨긴 서버 {p.HiddenInstances.Count}개");
+            sb.AppendLine($"  sync_clusters {(p.SyncClusters ? "true" : "false")} | 쿠버네티스 클러스터 {clusters.GetValueOrDefault(p.Id)}개");
             if (p.StatusText.Length > 0) sb.AppendLine($"  상태 {McpHelpers.VisibleControlChars(p.StatusText)}");
         }
         return sb.ToString();
@@ -169,6 +174,20 @@ public partial class MainWindow
         }
         var unhide = BoolArg(a, "unhide_removed") == true && p.HiddenInstances.Count > 0;
         if (unhide) changes.Add($"목록에서 지운 서버 {p.HiddenInstances.Count}개 다시 표시 (다음 동기화부터)");
+        // 쿠버네티스 클러스터 동기화 (Kubernetes '클라우드에서 찾기' 의 프로필 선택과 같은 설정 — 프로필 설정 창에는 없음)
+        bool? syncClusters = null;
+        if (Has(a, "sync_clusters"))
+        {
+            var v = BoolArg(a, "sync_clusters") ?? throw new McpToolException("sync_clusters 는 true/false 입니다.");
+            if (v != p.SyncClusters)
+            {
+                syncClusters = v;
+                var k8sCount = K8sStore.All().Count(c => c.CloudProfileId == p.Id);
+                changes.Add($"쿠버네티스 클러스터 동기화: {(p.SyncClusters ? "켜짐" : "꺼짐")} → {(v ? "켜짐" : "꺼짐")}");
+                changes.Add(v ? "  → 다음 동기화부터 이 프로필의 클러스터도 함께 갱신 (바로 찾지는 않음)"
+                              : $"  → 이미 가져온 클러스터 {k8sCount}개는 목록에 남고 더 이상 갱신하지 않음");
+            }
+        }
 
         var (sshSet, sshVault) = ProfileVaultArg(a, "ssh_vault");
         var (rdpSet, rdpVault) = ProfileVaultArg(a, "rdp_vault");
@@ -217,12 +236,12 @@ public partial class MainWindow
         VaultNote(Protocol.Ssh, sshSet, sshVault);
         VaultNote(Protocol.Rdp, rdpSet, rdpVault);
 
-        var settingsChanged = next != cur || unhide;
+        var settingsChanged = next != cur || unhide || syncClusters != null;
         if (!settingsChanged && !sshSet && !rdpSet) return "바뀐 항목이 없습니다.";
 
         var label = CloudProfileLabel(p);
         var text = string.Join("\n", changes);
-        var otherBefore = (ssh: p.SshVaultId, rdp: p.RdpVaultId, hidden: p.HiddenInstances.Count);
+        var otherBefore = (ssh: p.SshVaultId, rdp: p.RdpVaultId, hidden: p.HiddenInstances.Count, k8s: p.SyncClusters);
         if (!await AskApprovalAsync("cloud_update_profile", L.T("Claude 가 클라우드 프로필 설정 변경을 요청합니다"),
                 L.F("'{0}' 프로필의 설정을 바꿉니다. 이 프로필 서버들의 접속 주소·포트·로그인 계정이 함께 바뀔 수 있으니 아래 내용을 확인하세요.", label),
                 new[] { label }, text))
@@ -241,7 +260,7 @@ public partial class MainWindow
             AuditLog.Write("cloud_update_profile", new[] { label }, text, "승인 후 취소 (프로필 설정 창이 열려 있음)");
             throw new McpToolException("승인을 기다리는 동안 사용자가 이 프로필의 설정 창을 열어 바꾸지 않았습니다. 창을 닫은 뒤 다시 요청하세요.");
         }
-        if (CloudProfileSettings.From(p) != cur || (p.SshVaultId, p.RdpVaultId, p.HiddenInstances.Count) != otherBefore || (sshSet && sshVault != null && VaultStore.Get(sshVault.Id) == null) ||
+        if (CloudProfileSettings.From(p) != cur || (p.SshVaultId, p.RdpVaultId, p.HiddenInstances.Count, p.SyncClusters) != otherBefore || (sshSet && sshVault != null && VaultStore.Get(sshVault.Id) == null) ||
             (rdpSet && rdpVault != null && VaultStore.Get(rdpVault.Id) == null))
         {
             AuditLog.Write("cloud_update_profile", new[] { label }, text, "승인 후 취소 (대기 중 프로필 설정 또는 Vault 계정이 바뀜)");
@@ -251,6 +270,7 @@ public partial class MainWindow
         // UI 프로필 설정(EditProfile)과 같은 순서: 값 반영 → 호스트 주소·포트 반영 → 저장 · (중지 서버 포함을 켰으면) 동기화
         var before = CloudProfileEdit.Snapshot(p);
         CloudProfileEdit.ApplySettings(p, next, unhide);
+        if (syncClusters is { } sc) p.SyncClusters = sc;   // FinishProfileEdit 가 저장
         CloudProfileEdit.ApplyCascade(_hosts, p, before, overrideAddress);
         // 그룹 우클릭 Vault 지정 · 해제와 같은 반영 (MainWindow.Groups.cs 공용 함수)
         void ApplyVault(Protocol proto, bool set, VaultEntry? v)
@@ -286,7 +306,11 @@ public partial class MainWindow
         if (dependents.Count > 0)
             description += "\n\n" + L.F("주의: 이 프로필의 서버를 점프 호스트로 쓰는 다른 호스트 {0}개가 있습니다 — 제거하면 점프 호스트를 다시 지정해야 접속할 수 있습니다: {1}",
                 dependents.Count, NameList(depNames));
-        var command = $"프로필 제거: {label} ({McpHelpers.VisibleControlChars(p.Name)}) — 동기화된 호스트 {count}개를 Nubis 목록에서 제거" +
+        // RemoveProfile 은 이 프로필에서 가져온 쿠버네티스 클러스터도 지운다 — UI 확인 창과 같은 문구로 알린다
+        var k8sCount = K8sStore.All().Count(c => c.CloudProfileId == p.Id);
+        if (k8sCount > 0) description += "\n" + L.F("이 프로필에서 가져온 쿠버네티스 클러스터 {0}개도 목록에서 제거합니다.", k8sCount);
+        var command = $"프로필 제거: {label} ({McpHelpers.VisibleControlChars(p.Name)}) — 동기화된 호스트 {count}개" +
+                      (k8sCount > 0 ? $" · 쿠버네티스 클러스터 {k8sCount}개" : "") + "를 Nubis 목록에서 제거" +
                       (dependents.Count > 0 ? $"\n이 프로필 서버를 점프 호스트로 쓰는 다른 호스트 {dependents.Count}개: {string.Join(", ", depNames.Take(30))}" +
                                               (depNames.Count > 30 ? $" 외 {depNames.Count - 30}개" : "") : "");
         if (!await AskApprovalAsync("cloud_remove_profile", L.T("Claude 가 클라우드 프로필 제거를 요청합니다"), description, new[] { label }, command))
@@ -302,9 +326,12 @@ public partial class MainWindow
         // 승인을 기다리는 동안 동기화 · 호스트 편집으로 점프 호스트 관계가 바뀌었을 수 있어 결과 안내는 지금 기준으로 다시 센다
         dependents = CloudProfileEdit.JumpDependents(_hosts, p);
         depNames = dependents.Select(h => McpHelpers.VisibleControlChars(h.DisplayName)).ToList();
+        var k8sBefore = K8sStore.All().Count(c => c.CloudProfileId == p.Id);
         var removed = RemoveProfile(p);
-        AuditLog.Write("cloud_remove_profile", new[] { label }, command, $"승인·제거 (호스트 {removed}개)");
-        return $"제거했습니다: {label} ({McpHelpers.VisibleControlChars(p.Name)}) — 호스트 {removed}개" +
+        var k8sLeft = K8sStore.All().Count(c => c.CloudProfileId == p.Id);   // 저장 실패면 남는다 (RemoveProfileClusters 가 알림)
+        var k8sText = k8sBefore > 0 ? $" · 쿠버네티스 클러스터 {k8sBefore - k8sLeft}개" + (k8sLeft > 0 ? $" (저장 실패로 {k8sLeft}개 남음 — delete_k8s_cluster 로 지울 수 있음)" : "") : "";
+        AuditLog.Write("cloud_remove_profile", new[] { label }, command, $"승인·제거 (호스트 {removed}개{k8sText})");
+        return $"제거했습니다: {label} ({McpHelpers.VisibleControlChars(p.Name)}) — 호스트 {removed}개{k8sText}" +
                (dependents.Count > 0 ? $"\n주의: 이 프로필 서버를 점프 호스트로 쓰던 호스트 {dependents.Count}개는 점프 호스트를 다시 지정해야 접속할 수 있습니다 (update_host 또는 호스트 편집): " +
                                        string.Join(", ", depNames.Take(30)) + (depNames.Count > 30 ? $" 외 {depNames.Count - 30}개" : "") : "");
     }

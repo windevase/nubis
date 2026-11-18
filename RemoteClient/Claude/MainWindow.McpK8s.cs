@@ -17,13 +17,16 @@ public partial class MainWindow
     {
         yield return new McpTool("list_k8s_clusters",
             "Nubis 에 등록된 쿠버네티스 클러스터 목록 (Kubernetes 페이지). 형식: id | 이름 | 그룹 | 인증 방식 | API 주소 | 버전 | 리전 | 기본 네임스페이스 | 상태. " +
-            "인증 정보(kubeconfig·토큰)는 포함하지 않는다. 클러스터 등록은 사용자가 Kubernetes 페이지에서 한다.",
+            "끝에 이 PC 에서 찾은 kubectl 경로 한 줄. 인증 정보(kubeconfig·토큰)는 포함하지 않는다. " +
+            "등록은 import_k8s_clusters(kubeconfig) · find_k8s_clusters(클라우드), 관리는 update_k8s_cluster · delete_k8s_cluster · test_k8s_cluster.",
             Schema(new { query = new { type = "string", description = "이름·주소·리전 부분 검색어 (생략하면 전체)" } }),
             a => OnUi(() => ListK8sClusters(Arg(a, "query"))));
 
         yield return new McpTool("run_kubectl",
             "등록된 클러스터 하나에 kubectl 을 실행하고 출력을 돌려준다 (이 PC 의 kubectl, 셸을 거치지 않음). 클러스터·인증은 앱이 고정하므로 " +
-            "--kubeconfig · --context · --cluster · --user · -s/--server · --token · --as 는 쓸 수 없다. 대화형 명령(exec -it, attach, port-forward, proxy, edit, logs -f)은 안 된다 — " +
+            "--kubeconfig · --context · --cluster · --user · -s/--server · --token · --as 는 쓸 수 없고, config view(--raw · --flatten 포함)도 저장된 인증이 나오므로 쓸 수 없다(주소·네임스페이스는 list_k8s_clusters). " +
+            "이 PC 의 파일·프로그램을 쓰는 cp · kustomize · diff · edit · -k/--kustomize · --from-file · --from-env-file · --cert/--key 도 안 되고, -f 는 Nubis 데이터 폴더·~/.ssh 밖의 파일만. " +
+            "대화형·끝나지 않는 명령(exec -it, attach, port-forward, proxy, debug, logs -f, --watch)은 안 된다 — " +
             "파드 셸·로그는 open_k8s_session 으로 탭을 연다. 실행 전에 앱이 사용자 승인을 받는다 (사용자가 읽기 전용 자동 승인을 켰고 get·describe·logs·top 등 읽기 전용이면 승인 생략, 감사 로그는 항상). " +
             "Secret 값 조회(get secret -o yaml 등)는 꼭 필요할 때만.",
             Schema(new
@@ -48,7 +51,63 @@ public partial class MainWindow
                 container = new { type = "string", description = "컨테이너 (생략하면 기본 컨테이너)" },
                 previous = new { type = "boolean", description = "logs: 재시작 전 컨테이너의 로그" },
             }, "cluster"),
-            a => OnUi(() => OpenK8sFromClaude(a)));
+            a => OnUiAsync(() => UnderRdpInputSectionAsync(() => OpenK8sFromClaude(a))));   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
+
+        // ----- 관리 (Kubernetes 페이지의 손 동작과 같음 — MainWindow.McpK8sManage.cs · McpK8sImport.cs) -----
+
+        yield return new McpTool("update_k8s_cluster",
+            "등록된 클러스터의 이름 · 기본 네임스페이스 · 그룹을 바꾼다 (Kubernetes 페이지의 이름 바꾸기 · 기본 네임스페이스 · 그룹과 같음, 사용자 승인 필요). " +
+            "넘긴 항목만 바뀐다. default_namespace 는 쿠버네티스 이름 규칙(소문자·숫자·하이픈), 빈 문자열이면 kubeconfig 의 값(없으면 default). " +
+            "클라우드에서 가져온 클러스터는 그룹을 바꿀 수 없다 (클라우드 프로필 그룹을 따름). 클러스터 자체는 바꾸지 않는다.",
+            Schema(new
+            {
+                cluster = new { type = "string", description = "클러스터 이름 또는 id (list_k8s_clusters)" },
+                name = new { type = "string", description = "새 이름" },
+                default_namespace = new { type = "string", description = "기본 네임스페이스 (빈 문자열 = kubeconfig 의 값)" },
+                group = new { type = "string", description = "그룹 (빈 문자열 = 그룹 없음, 직접 가져온 클러스터만)" },
+            }, "cluster"),
+            a => OnUiAsync(() => UpdateK8sFromClaude(a)));
+
+        yield return new McpTool("delete_k8s_cluster",
+            "클러스터를 Nubis 목록에서 지운다 — 저장한 인증(kubeconfig)도 함께 지워지고 클러스터 자체에는 영향이 없다 (Kubernetes 페이지 삭제와 같음, 사용자 승인 필요). " +
+            "클라우드에서 가져온 클러스터는 그 프로필의 클러스터 동기화가 켜져 있으면 다음 동기화 때 다시 나타날 수 있다.",
+            Schema(new { cluster = new { type = "string", description = "클러스터 이름 또는 id" } }, "cluster"),
+            a => OnUiAsync(() => DeleteK8sFromClaude(a)));
+
+        yield return new McpTool("test_k8s_cluster",
+            "클러스터 연결 테스트 (Kubernetes 페이지의 연결 테스트와 같음): kubectl version 으로 서버 버전, auth can-i list pods 로 파드 목록 권한을 확인하고 " +
+            "페이지의 상태 점과 저장된 버전을 갱신한다. 읽기 전용이라 사용자가 읽기 전용 자동 승인을 켰으면 승인 없이, 아니면 승인 후 실행 (감사 로그는 항상).",
+            Schema(new { cluster = new { type = "string", description = "클러스터 이름 또는 id" } }, "cluster"),
+            a => OnUiAsync(() => TestK8sFromClaude(a)));
+
+        yield return new McpTool("find_k8s_clusters",
+            "클라우드 프로필로 쿠버네티스 클러스터(EKS·GKE·AKS·OKE·TKE)를 찾아 목록에 반영한다 (Kubernetes 페이지 '클라우드에서 찾기' 와 같음, 조회 API 만, 감사 로그). " +
+            "찾은 프로필은 클러스터 동기화(sync_clusters)를 켜 앞으로 VM 동기화 때 함께 갱신된다. profiles 를 생략하면 화면의 처음 선택과 같다 " +
+            "(클러스터 동기화가 켜진 프로필, 하나도 없으면 전부). 고르지 않은 프로필은 기본으로 그대로 두고, disable_unselected=true 면 그 프로필의 클러스터 동기화를 끄고, " +
+            "remove_unselected_clusters=true 면 그 프로필의 클러스터를 목록에서 지우고 그 프로필의 클러스터 동기화도 끈다 (켜 두면 다음 동기화 때 다시 생기므로 — UI 와 같음). " +
+            "클러스터 동기화가 실제로 바뀌거나(새로 켜짐·꺼짐) 클러스터를 지우면 사용자 승인 한 번, 이미 동기화가 켜진 프로필만 찾으면 승인 없이 조회. 여러 리전을 훑어 최대 3분 걸릴 수 있다.",
+            Schema(new
+            {
+                profiles = new { type = "array", items = new { type = "string" }, description = "프로필 id(앞 8자 이상)·표시 이름·프로필 이름 (cloud_list_profiles). 생략하면 기본 선택" },
+                disable_unselected = new { type = "boolean", description = "고르지 않은 프로필의 클러스터 동기화 끄기 (기본 false)" },
+                remove_unselected_clusters = new { type = "boolean", description = "고르지 않은 프로필의 클러스터를 목록에서 지우기 (기본 false, 사용자 승인)" },
+            }),
+            a => OnUiAsync(() => FindK8sFromClaude(a)));
+
+        yield return new McpTool("import_k8s_clusters",
+            "kubeconfig 의 context 를 클러스터로 등록한다 (Kubernetes 페이지 'kubeconfig 가져오기' 와 같음). apply=false(기본)면 미리보기만: context 이름 · API 서버 · 인증 방식 · " +
+            "네임스페이스 · 이미 있음 여부 (토큰·인증서·키는 돌려주지 않는다). apply=true 면 사용자 승인 한 번 뒤 앱이 파일을 읽어 인증을 이 PC 에 암호화 저장한다. " +
+            "source: \"default\"(KUBECONFIG 환경 변수의 파일들, 없으면 ~/.kube/config) 또는 kubeconfig 파일 경로 (네트워크 경로 · Nubis 데이터 폴더 · ~/.ssh 불가). " +
+            "kubeconfig 내용을 붙여 넣는 방식은 지원하지 않는다 — 사용자가 파일로 저장하게 안내. contexts 를 생략하면 화면과 같은 기본 선택(current-context, 등록된 클러스터가 없으면 전부). " +
+            "같은 API 서버 + context 이름이 이미 있으면 건너뛴다.",
+            Schema(new
+            {
+                source = new { type = "string", description = "\"default\" 또는 kubeconfig 파일 경로" },
+                contexts = new { type = "array", items = new { type = "string" }, description = "가져올 context 이름 (생략하면 기본 선택)" },
+                group = new { type = "string", description = "넣을 그룹 (생략 = 그룹 없음)" },
+                apply = new { type = "boolean", description = "true = 등록 (사용자 승인), false/생략 = 미리보기" },
+            }, "source"),
+            ImportK8sFromClaude);
     }
 
     /// <summary>이름(정확히 → 부분 일치) 또는 id(앞 8자리 이상)로 클러스터 하나</summary>
@@ -76,9 +135,13 @@ public partial class MainWindow
             .Where(c => query.Length == 0 || new[] { c.Name, c.Endpoint, c.Region, c.ContextName }.Any(s => s?.Contains(query, StringComparison.OrdinalIgnoreCase) == true))
             .OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         if (list.Count == 0)
-            return query.Length == 0
-                ? "등록된 클러스터가 없습니다. 사용자에게 Nubis 의 Kubernetes 페이지에서 kubeconfig 가져오기 또는 '클라우드에서 찾기' 를 안내하세요 (open_app_page)."
-                : $"'{query}' 와 일치하는 클러스터가 없습니다.";
+        {
+            var none = new StringBuilder(query.Length == 0
+                ? "등록된 클러스터가 없습니다. import_k8s_clusters(kubeconfig 가져오기) 또는 find_k8s_clusters(클라우드에서 찾기)로 등록할 수 있습니다.\n"
+                : $"'{McpHelpers.VisibleControlChars(query)}' 와 일치하는 클러스터가 없습니다.\n");
+            AppendKubectlLine(none);
+            return none.ToString();
+        }
         var sb = new StringBuilder($"{list.Count}개\n");
         foreach (var c in list)
         {
@@ -86,22 +149,48 @@ public partial class MainWindow
             sb.AppendLine($"{c.Id.ToString()[..8]} | {McpHelpers.VisibleControlChars(c.Name)} | {group} | {c.AuthBadge} | {c.Endpoint} | {(c.Version.Length > 0 ? c.Version : "-")} | " +
                           $"{(string.IsNullOrEmpty(c.Region) ? "-" : c.Region)} | {c.NamespaceOrDefault} | {(c.State ?? "-")}");
         }
-        if (Kubectl.Locate(SettingsStore.Current.KubectlPath) == null)
-            sb.AppendLine("주의: 이 PC 에서 kubectl 을 찾지 못했습니다 — run_kubectl 은 실패합니다. 사용자에게 설치(winget install Kubernetes.kubectl)를 안내하세요.");
+        AppendKubectlLine(sb);
         return sb.ToString();
     }
 
-    /// <summary>run_kubectl 에서 받지 않는 대화형·장시간 명령 (결과가 끝나지 않거나 편집기·포트를 연다)</summary>
+    /// <summary>찾은 kubectl 경로 한 줄 (Kubernetes 페이지 위쪽 줄과 같은 정보). 없으면 설치 안내</summary>
+    private static void AppendKubectlLine(StringBuilder sb)
+    {
+        if (Kubectl.Locate(SettingsStore.Current.KubectlPath) is { } path) sb.AppendLine($"kubectl: {path}");
+        else sb.AppendLine("주의: 이 PC 에서 kubectl 을 찾지 못했습니다 — run_kubectl 은 실패합니다. 사용자에게 설치(winget install Kubernetes.kubectl)를 안내하세요.");
+    }
+
+    /// <summary>
+    /// run_kubectl 에서 받지 않는 대화형·장시간 명령 (결과가 끝나지 않거나 편집기·포트를 연다).
+    /// 하위 명령은 KubectlArgs.SubcommandIndex(cobra 처럼 루트의 값 받는 옵션 -n x · -v 6 등을 건너뜀)로 찾는다 (-n default proxy · -v 1 port-forward).
+    /// 자리를 정할 수 없으면(모르는 옵션이 앞에 있음: -l -- edit · -A attach) 막을 명령이 끝 표시 앞 어디에 있든 거부한다.
+    /// 옵션은 짧은 묶음(-pf · -Aw)·=값·_ 표기까지 본다
+    /// </summary>
     internal static string? KubectlInteractiveReason(IReadOnlyList<string> args)
     {
-        var before = args.TakeWhile(x => x != "--").ToList();
-        var verb = before.FirstOrDefault(x => !x.StartsWith("-", StringComparison.Ordinal)) ?? "";
-        if (verb is "attach" or "port-forward" or "proxy" or "edit" or "debug")
+        if (KubectlArgs.CommandIs(args, "attach", "port-forward", "proxy", "edit", "debug") is { } verb)
             return $"'{verb}' 는 대화형·장시간 명령이라 run_kubectl 로 실행할 수 없습니다.";
-        if (verb == "exec" && before.Any(x => x is "-i" or "-t" or "-it" or "-ti" or "--stdin" or "--tty" || x.StartsWith("--stdin=", StringComparison.Ordinal) || x.StartsWith("--tty=", StringComparison.Ordinal)))
+        var before = args.Take(KubectlArgs.TerminatorIndex(args)).Select(x => x.Trim()).ToList();
+        var at = KubectlArgs.SubcommandIndex(args);
+        // 하위 명령을 확신할 수 없으면(모르는 옵션이 앞에 있음) 어디에든 있으면 그 명령으로 본다
+        bool Is(string v) => at >= 0 ? args[at].Trim() == v : before.Contains(v);
+        static (string Name, string? Value) Long(string x)
+        {
+            if (!x.StartsWith("--", StringComparison.Ordinal) || x.Length == 2) return ("", null);
+            var eq = x.IndexOf('=');
+            return (KubectlArgs.LongName(eq < 0 ? x : x[..eq]), eq < 0 ? null : x[(eq + 1)..]);
+        }
+        // pflag 의 bool 거짓 값 (--watch=false 는 끝나는 명령)
+        static bool False(string? v) => v is "false" or "False" or "FALSE" or "f" or "F" or "0";
+        if (Is("exec") && before.Any(x => KubectlArgs.ShortHas(x, "it") || Long(x) is { Name: "--stdin" or "--tty" } o && !False(o.Value)))
             return "exec -i/-t 는 대화형이라 run_kubectl 로 실행할 수 없습니다 — 비대화형 exec(예: exec pod -- ls /) 는 됩니다. 셸은 open_k8s_session kind=shell.";
-        if ((verb == "logs" || verb == "get") && before.Any(x => x is "-f" or "--follow" or "-w" or "--watch" or "--watch-only" || x.StartsWith("--follow=", StringComparison.Ordinal) || x.StartsWith("--watch", StringComparison.Ordinal)))
-            return "-f/--follow/--watch 는 끝나지 않아 run_kubectl 로 실행할 수 없습니다. 로그 탭은 open_k8s_session kind=logs.";
+        // --follow · --watch · --watch-only (어느 하위 명령이든: get · events · rollout status …), -w 묶음(-Aw), logs 의 -f 묶음(-pf · -f=true)
+        // 짧은 -w=false · -f=false 는 끝나는 명령 (긴 --watch=false 와 같게)
+        static bool ShortOff(string x, char c) => x.Length > 3 && x[0] == '-' && x[1] == c && x[2] == '=' && False(x[3..]);
+        if (before.Any(x => KubectlArgs.ShortHas(x, "w") && !ShortOff(x, 'w') ||
+                            Long(x) is var o && (o.Name.StartsWith("--follow", StringComparison.Ordinal) || o.Name.StartsWith("--watch", StringComparison.Ordinal)) && !False(o.Value)) ||
+            Is("logs") && before.Any(x => KubectlArgs.ShortHas(x, "f") && !ShortOff(x, 'f')))
+            return "-f/--follow/-w/--watch 는 끝나지 않아 run_kubectl 로 실행할 수 없습니다. 로그 탭은 open_k8s_session kind=logs.";
         return null;
     }
 
@@ -119,12 +208,10 @@ public partial class MainWindow
             }
             if (list.Count == 0) throw new McpToolException("args 또는 command 가 필요합니다.");
             var ns = Arg(a, "namespace").Trim();
-            var before = list.TakeWhile(x => x != "--").ToList();
-            if (ns.Length > 0 && !before.Any(x => x is "-n" or "-A" or "--all-namespaces" || x.StartsWith("--namespace", StringComparison.Ordinal) || x.StartsWith("-n=", StringComparison.Ordinal)))
-            {
-                var at = list.IndexOf("--");
-                list.InsertRange(at < 0 ? list.Count : at, new[] { "-n", ns });
-            }
+            var end = KubectlArgs.TerminatorIndex(list);
+            var before = list.Take(end).ToList();
+            if (ns.Length > 0 && !before.Any(x => KubectlArgs.ShortHas(x, "nA") || x.StartsWith("--namespace", StringComparison.Ordinal) || x.StartsWith("--all-namespaces", StringComparison.Ordinal)))
+                list.InsertRange(end, new[] { "-n", ns });
             return (c, list);
         });
         if (KubectlArgs.Validate(args) is { } bad) throw new McpToolException(bad);

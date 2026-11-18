@@ -181,7 +181,7 @@ public partial class MainWindow
 
     private void OnQuickConnect(object sender, RoutedEventArgs e) => QuickConnect();
 
-    /// <summary>검색 결과가 1개면 그 호스트로, 아니면 "user@host:port" / "rdp host" 형식으로 바로 접속</summary>
+    /// <summary>검색 결과가 1개면 그 호스트로, 아니면 "user@host:port" / "rdp host" 형식으로 바로 접속 (MakeQuickHost)</summary>
     private void QuickConnect()
     {
         var text = SearchBox.Text.Trim();
@@ -220,14 +220,35 @@ public partial class MainWindow
         }
 
         var proto = m.Groups["proto"].Value.Equals("rdp", StringComparison.OrdinalIgnoreCase) ? Protocol.Rdp : Protocol.Ssh;
-        var host = new HostEntry
-        {
-            Protocol = proto,
-            Address = m.Groups["host"].Value,
-            Username = m.Groups["user"].Value,
-            Port = m.Groups["port"].Success ? int.Parse(m.Groups["port"].Value) : HostEntry.PreferredPort(proto),
-        };
-        if (host.Port is < 1 or > 65535) host.Port = HostEntry.PreferredPort(proto);
-        Connect(host);
+        Connect(MakeQuickHost(proto, m.Groups["host"].Value, m.Groups["user"].Value,
+            m.Groups["port"].Success ? int.Parse(m.Groups["port"].Value) : null));
+    }
+
+    /// <summary>
+    /// 빠른 접속 대상 (목록에 등록하지 않는 호스트). 화면 빠른 접속 · MCP open_session(target_address) 공통.
+    /// 포트가 없거나 범위 밖이면 설정의 기본 포트
+    /// </summary>
+    internal static HostEntry MakeQuickHost(Protocol proto, string address, string? user, int? port) => new()
+    {
+        Protocol = proto,
+        Address = address,
+        Username = user ?? "",
+        Port = port is >= 1 and <= 65535 ? port.Value : HostEntry.PreferredPort(proto),
+    };
+
+    /// <summary>
+    /// MCP 빠른 연결 인자 검사 — 화면 빠른 접속 칸이 받는 형식(QuickRegex: user@host:port)과 같은 주소·사용자명만.
+    /// 잘못됐으면 오류 문구(MCP 결과용, 번역 안 함), 괜찮으면 null
+    /// </summary>
+    internal static string? QuickTargetError(string address, string user, int? port)
+    {
+        if (address.Length == 0) return "target_address 가 필요합니다.";
+        if (McpHelpers.HasInvisibleChars(user)) return $"username 에 보이지 않는 제어 문자·양방향 문자가 있습니다: {McpHelpers.VisibleControlChars(user)}";
+        var m = QuickRegex.Match((user.Length > 0 ? user + "@" : "") + address);
+        if (!m.Success || m.Groups["proto"].Success || m.Groups["port"].Success || m.Groups["host"].Value != address)
+            return "target_address 는 IP 또는 호스트명만 씁니다 (영문·숫자·. - _, 포트·사용자명은 port · username 인자로).";
+        if (m.Groups["user"].Value != user) return "username 이 올바르지 않습니다 (공백·@ 불가).";
+        if (port is not null and (< 1 or > 65535)) return "port 는 1~65535 입니다.";
+        return null;
     }
 }

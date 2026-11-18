@@ -67,6 +67,14 @@ public sealed class K8sCluster
     /// <summary>표시용 네임스페이스 (비어 있으면 default)</summary>
     [JsonIgnore] public string NamespaceOrDefault => string.IsNullOrWhiteSpace(DefaultNamespace) ? "default" : DefaultNamespace;
 
+    /// <summary>네임스페이스 이름 규칙 (RFC 1123 label) — kubeconfig 에 그대로 들어가므로 다른 값은 받지 않는다</summary>
+    public static bool IsValidNamespace(string? ns) =>
+        !string.IsNullOrEmpty(ns) && System.Text.RegularExpressions.Regex.IsMatch(ns, "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$");
+
+    /// <summary>kubeconfig context 의 namespace 를 가져올 때 쓸 기본 네임스페이스 (규칙에 맞지 않거나 없으면 "")</summary>
+    public static string ImportedNamespace(string? contextNamespace) =>
+        contextNamespace?.Trim() is { Length: > 0 } ns && IsValidNamespace(ns) ? ns : "";
+
     /// <summary>인증 방식 배지 글자</summary>
     [JsonIgnore]
     public string AuthBadge => AuthKind switch

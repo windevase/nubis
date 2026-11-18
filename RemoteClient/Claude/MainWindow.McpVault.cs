@@ -10,6 +10,7 @@ namespace Nubis;
 // MCP 도구: Vault · Known Hosts (비밀 값은 다루지 않음) — UI 에서 손으로 하는 동작을 Claude 도 할 수 있게 (BuildTools 에서 등록)
 // 보안 원칙:
 // - 비밀번호·키·키 암호는 어떤 도구로도 넣거나 읽지 않는다 (공개키는 비밀이 아니라 돌려준다 — 감사 로그는 남김)
+// - 계정 정보(이름·사용자명·메모) 변경도 승인 — 사용자명이 바뀌면 그 계정으로 로그인하는 서버의 계정이 바뀜
 // - 기본 계정 지정·계정 삭제·호스트키 삭제는 항상 승인 (어느 서버에 어떤 계정이 가는지, 어떤 키를 신뢰하는지가 바뀜)
 // - 거부(REJECTED)로 표시된 호스트키는 지우지 않는다 — 나쁜 키를 막으려고 남겨 둔 것
 public partial class MainWindow
@@ -49,6 +50,20 @@ public partial class MainWindow
             Schema(new { account = new { type = "string", description = "Vault 계정 이름 또는 id" } }, "account"),
             a => OnUiAsync(() => VaultDeleteFromClaude(Arg(a, "account"))));
 
+        yield return new McpTool("vault_update",
+            "Vault 계정의 비밀이 아닌 값(이름 · 사용자명 · 메모)을 바꾼다. 바꿀 항목만 넘긴다 (빈 문자열 = 사용자명·메모 지우기, 이름은 비울 수 없음). " +
+            "사용자명을 바꾸면 이 계정으로 로그인하는 서버의 로그인 계정이 바뀌므로 앱이 영향받는 호스트 수와 함께 사용자 승인을 받는다 (이름·메모만 바꿔도 승인). " +
+            "비밀번호·SSH 키·키 암호는 넣거나 지울 수 없다 — open_app_page vault_edit:<계정> 으로 창을 열어 사용자가 직접 하게 하세요. " +
+            "account 는 이름(정확히) 또는 id(8자 이상).",
+            Schema(new
+            {
+                account = new { type = "string", description = "Vault 계정 이름 또는 id (list_vault)" },
+                name = new { type = "string", description = "새 이름 (다른 계정과 겹치면 안 됨)" },
+                username = new { type = "string", description = "새 로그인 사용자명 (빈 문자열 = 지움)" },
+                note = new { type = "string", description = "새 메모 (빈 문자열 = 지움)" },
+            }, "account"),
+            a => OnUiAsync(() => VaultUpdateFromClaude(a)));
+
         yield return new McpTool("list_known_hosts",
             "저장된 SSH 호스트키 목록 (host:port | 키 형식 | 지문 | 상태). 상태 rejected = 사용자가 거부한 키(이 키를 보내는 서버에는 접속하지 않음).",
             Schema(new { }),
@@ -74,6 +89,157 @@ public partial class MainWindow
             "앱이 경고와 함께 사용자 승인을 받는다. 거부(rejected)로 표시된 키는 지울 수 없다. host 는 list_known_hosts 의 host:port.",
             Schema(new { host = new { type = "string", description = "host:port (port 를 생략하면 그 호스트의 항목이 하나일 때만)" } }, "host"),
             a => OnUiAsync(() => DeleteKnownHostFromClaude(Arg(a, "host"))));
+    }
+
+    /// <summary>vault_update 로 바꿀 값 (null = 그대로)</summary>
+    internal sealed record VaultEdit(string? Name, string? Username, string? Note);
+
+    /// <summary>vault_update 검사 결과: 실제로 바뀌는 값만 (그대로인 항목은 null). Error 가 있으면 바꾸지 않는다</summary>
+    internal sealed record VaultEditPlan(string? Name, string? Username, string? Note, string? Error)
+    {
+        public bool Empty => Error == null && Name == null && Username == null && Note == null;
+    }
+
+    internal const int VaultNameMax = 128, VaultUsernameMax = 256, VaultNoteMax = 1000;
+
+    /// <summary>
+    /// vault_update 검사 (UI 무관 — VaultEntryDialog 저장과 같은 규칙): 앞뒤 공백 제거, 이름은 비울 수 없고 이름을 바꿀 때만 중복 검사
+    /// (예전부터 같은 이름이던 계정도 그대로 둘 수 있게 — 대소문자만 바꾸는 것은 중복 아님). 보이지 않는 제어·양방향 문자는
+    /// 목록·승인 창에서 다른 계정처럼 꾸밀 수 있어 거부. 메모는 Vault 화면의 한 줄 입력란과 같게 줄 바꿈 불가
+    /// </summary>
+    internal static VaultEditPlan PlanVaultEdit(VaultEntry cur, VaultEdit edit, Func<string, Guid, bool> nameTaken)
+    {
+        string? Check(string? v, string field, int max, out string? error)
+        {
+            error = null;
+            if (v == null) return null;
+            v = v.Trim();
+            if (McpHelpers.HasInvisibleChars(v)) error = $"{field} 에 보이지 않는 제어 문자·양방향 문자가 있습니다: {McpHelpers.VisibleControlChars(v)}";
+            else if (v.Length > max) error = $"{field} 는 {max}자 이하여야 합니다.";
+            return v;
+        }
+        var name = Check(edit.Name, "name", VaultNameMax, out var e1);
+        var user = Check(edit.Username, "username", VaultUsernameMax, out var e2);
+        var note = Check(edit.Note, "note", VaultNoteMax, out var e3);
+        if ((e1 ?? e2 ?? e3) is { } err) return new(null, null, null, err);
+        if (name != null && name.Length == 0) return new(null, null, null, "name 은 비울 수 없습니다.");
+        if (name != null && name == cur.Name) name = null;
+        if (name != null && !string.Equals(name, cur.Name.Trim(), StringComparison.CurrentCultureIgnoreCase) && nameTaken(name, cur.Id))
+            return new(null, null, null, $"같은 이름의 Vault 계정 '{McpHelpers.VisibleControlChars(name)}' 이(가) 이미 있습니다. 다른 이름을 쓰세요.");
+        if (user != null && user == cur.Username) user = null;
+        if (note != null && note == cur.Note) note = null;
+        return new(name, user, note, null);
+    }
+
+    /// <summary>
+    /// 접속할 때 실제로 쓰는 사용자명 (VaultStore.Apply · HostEntry.WithDefaults 와 같은 우선순위).
+    /// preferVault = 호스트에 직접 고른 계정(계정 값 우선, 비었으면 호스트 값), 아니면 기본 계정(호스트 값 우선). 그래도 비면 프로필 기본 사용자명
+    /// </summary>
+    internal static string EffectiveUsername(bool preferVault, string? hostUser, string? vaultUser, string? profileUser)
+    {
+        var u = preferVault
+            ? (!string.IsNullOrWhiteSpace(vaultUser) ? vaultUser : hostUser)
+            : (!string.IsNullOrWhiteSpace(hostUser) ? hostUser : vaultUser);
+        return string.IsNullOrEmpty(u) ? profileUser ?? "" : u!;
+    }
+
+    /// <summary>Vault 계정의 사용자명을 바꾸면 접속 사용자명이 실제로 바뀌는 호스트 (이 계정을 직접 고르거나 기본 계정으로 쓰는 호스트 중)</summary>
+    private List<HostEntry> HostsWithUsernameChange(Guid id, string oldUser, string newUser)
+    {
+        var profiles = _profiles.GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
+        var list = new List<HostEntry>();
+        foreach (var h in _hosts)
+        {
+            var p = h.CloudProfileId is { } pid ? profiles.GetValueOrDefault(pid) : null;
+            var (vid, source) = h.ResolveVault(p);
+            if (vid != id) continue;
+            var prefer = source == "host";
+            if (EffectiveUsername(prefer, h.Username, oldUser, p?.DefaultUsername) != EffectiveUsername(prefer, h.Username, newUser, p?.DefaultUsername))
+                list.Add(h);
+        }
+        return list;
+    }
+
+    private async Task<string> VaultUpdateFromClaude(System.Text.Json.JsonElement a)
+    {
+        var v = ResolveVaultStrict(Arg(a, "account"));
+        // 문자열이 아닌 값(숫자 등)을 빈 문자열로 받아 사용자명·메모를 몰래 지우지 않게 — 넘겼으면 문자열이어야 한다
+        string? Str(string field)
+        {
+            if (!Has(a, field)) return null;
+            return a.GetProperty(field).ValueKind == System.Text.Json.JsonValueKind.String
+                ? Arg(a, field)
+                : throw new McpToolException($"{field} 는 문자열이어야 합니다.");
+        }
+        var edit = new VaultEdit(Str("name"), Str("username"), Str("note"));
+        if (edit is { Name: null, Username: null, Note: null })
+            throw new McpToolException("바꿀 항목(name · username · note)을 하나 이상 넘기세요. 비밀번호·키는 open_app_page vault_edit:<계정> 으로 사용자가 직접 바꿉니다.");
+        var plan = PlanVaultEdit(v, edit, VaultStore.NameTaken);
+        if (plan.Error != null) throw new McpToolException(plan.Error);
+        var shown = McpHelpers.VisibleControlChars(v.Name);
+        if (plan.Empty) return $"Vault 계정 '{shown}' 은 이미 그 값입니다. 바꾼 것이 없습니다.";
+
+        var affected = plan.Username != null ? HostsWithUsernameChange(v.Id, v.Username, plan.Username) : new List<HostEntry>();
+        static string Q(string s) => $"'{McpHelpers.VisibleControlChars(s)}'";
+        static string Short(string s) => s.Length > 60 ? s[..60] + "…" : s;
+        // 승인 창의 명령 칸·감사 로그: 언어와 무관한 표기
+        var parts = new List<string>();
+        if (plan.Name != null) parts.Add($"name {Q(v.Name)} → {Q(plan.Name)}");
+        if (plan.Username != null) parts.Add($"username {Q(v.Username)} → {Q(plan.Username)} (hosts {affected.Count})");
+        if (plan.Note != null) parts.Add($"note {Q(Short(v.Note))} → {Q(Short(plan.Note))}");
+        var command = $"vault_update {shown}: {string.Join(", ", parts)}";
+        // 승인 창(사용자 화면)은 번역
+        var empty = L.T("(없음)");
+        string Ui(string s) => s.Length == 0 ? empty : McpHelpers.VisibleControlChars(Short(s));
+        var targets = new List<string> { L.F("Vault 계정 '{0}' ({1})", shown, v.MethodsText) };
+        if (plan.Name != null) targets.Add(L.F("이름: {0} → {1}", Ui(v.Name), Ui(plan.Name)));
+        if (plan.Username != null) targets.Add(L.F("사용자명: {0} → {1}", Ui(v.Username), Ui(plan.Username)));
+        if (plan.Note != null) targets.Add(L.F("메모: {0} → {1}", Ui(v.Note), Ui(plan.Note)));
+        targets.AddRange(affected.Take(20).Select(h => "  " + McpHelpers.VisibleControlChars(h.DisplayName)));
+        if (affected.Count > 20) targets.Add("  " + L.F("외 {0}개", affected.Count - 20));
+        var desc = L.F("Vault 계정 '{0}' 의 정보를 바꿉니다. 비밀번호·SSH 키는 바뀌지 않습니다.", shown);
+        if (plan.Username != null)
+            desc += "\n" + L.F("사용자명을 바꾸면 이 계정으로 로그인하는 호스트 {0}개의 로그인 계정이 바뀝니다:", affected.Count);
+        var auditTargets = new[] { $"Vault {shown}" };
+        if (!await AskApprovalAsync("vault_update", L.T("Claude 가 Vault 계정 정보 변경을 요청합니다"), desc, targets, command))
+        {
+            AuditLog.Write("vault_update", auditTargets, command, "거부");
+            throw new McpToolException("사용자가 Vault 계정 정보 변경을 거부했습니다.");
+        }
+        // 승인을 기다리는 동안 계정이 지워졌거나 (Vault 화면에서) 고쳐졌으면 승인한 것과 다른 상태에 덮어쓰지 않는다
+        var now = VaultStore.Get(v.Id);
+        if (now == null)
+        {
+            AuditLog.Write("vault_update", auditTargets, command, "승인 후 취소 (대기 중 계정이 지워짐)");
+            throw new McpToolException("승인을 기다리는 동안 Vault 계정이 지워져 바꾸지 않았습니다.");
+        }
+        if (now.Name != v.Name || now.Username != v.Username || now.Note != v.Note || now.Updated != v.Updated)
+        {
+            AuditLog.Write("vault_update", auditTargets, command, "승인 후 취소 (대기 중 계정이 바뀜)");
+            throw new McpToolException("승인을 기다리는 동안 Vault 계정이 바뀌어 저장하지 않았습니다. list_vault 로 다시 확인하세요.");
+        }
+        if (plan.Name != null && !string.Equals(plan.Name, now.Name.Trim(), StringComparison.CurrentCultureIgnoreCase) && VaultStore.NameTaken(plan.Name, now.Id))
+        {
+            AuditLog.Write("vault_update", auditTargets, command, "승인 후 취소 (대기 중 같은 이름의 계정이 생김)");
+            throw new McpToolException($"승인을 기다리는 동안 같은 이름의 Vault 계정 '{McpHelpers.VisibleControlChars(plan.Name)}' 이(가) 생겨 바꾸지 않았습니다.");
+        }
+        // Vault 화면 수정 창과 같게 사본을 고쳐 Upsert 로 바꿔 넣는다 (접속 중인 다른 스레드가 반쯤 바뀐 값을 읽지 않게, 실패하면 원본 유지)
+        var copy = now.Clone();
+        if (plan.Name != null) copy.Name = plan.Name;
+        if (plan.Username != null) copy.Username = plan.Username;
+        if (plan.Note != null) copy.Note = plan.Note;
+        try { VaultStore.Upsert(copy); }
+        catch (Exception ex)
+        {
+            RefreshVault();
+            AuditLog.Write("vault_update", auditTargets, command, "승인·실패: " + ex.Message);
+            throw new McpToolException("Vault 계정을 저장하지 못했습니다: " + ex.Message);
+        }
+        RefreshHosts();   // 카드의 사용자명·툴팁이 Vault 값을 보여 준다
+        RefreshVault();
+        if (SettingsPage.Visibility == Visibility.Visible) RefreshPreferences();   // 기본 계정 선택 칸의 이름
+        AuditLog.Write("vault_update", auditTargets, command, "승인·변경");
+        return $"Vault 계정을 바꿨습니다: {command}." + (plan.Username != null ? $" 로그인 사용자명이 바뀐 호스트 {affected.Count}개." : "");
     }
 
     /// <summary>저장값 "[REJECTED ]형식 SHA256:..." → (형식, 지문, 거부 여부). 형식이 없는 값은 전체가 지문</summary>

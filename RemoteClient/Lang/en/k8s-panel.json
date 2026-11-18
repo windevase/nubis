@@ -1,0 +1,12 @@
+{
+  "자동 새로고침 켜짐 — 누르면 끔": "Auto refresh is on. Click to turn it off.",
+  "목록이 너무 커서 받지 못했습니다 — 네임스페이스를 골라 범위를 줄이세요. 자동 새로고침을 멈췄습니다.": "The list is too large to load — pick a namespace to narrow it down. Auto refresh is paused.",
+  "목록이 너무 커서 받지 못했습니다 — 터미널에서 kubectl 로 확인하세요. 자동 새로고침을 멈췄습니다.": "The list is too large to load — check it with kubectl in the terminal. Auto refresh is paused.",
+  "kubectl 출력을 읽지 못했습니다.": "Could not read the kubectl output.",
+  "알 수 없는 오류가 발생했습니다.": "An unknown error occurred.",
+  "kubectl 이 실패했습니다 (종료 코드 {0}).": "kubectl failed (exit code {0}).",
+  "완료했습니다.": "Done.",
+  "kubectl 터미널이 연결되어 있지 않아 명령을 보내지 못했습니다.": "The kubectl terminal is not connected, so the command was not sent.",
+  "터미널이 명령을 기다리는 상태가 아니어서(실행 중인 프로그램 · 입력 중인 글자) 보내지 않고 클립보드에 복사했습니다.": "The terminal is not waiting for a command (a program is running or text is being typed), so the command was copied to the clipboard instead of being sent.",
+  "터미널이 명령을 기다리는 상태가 아니어서(실행 중인 프로그램 · 입력 중인 글자) 보내지 않았습니다.": "The terminal is not waiting for a command (a program is running or text is being typed), so the command was not sent."
+}

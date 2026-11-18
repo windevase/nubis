@@ -1,0 +1,9 @@
+{
+  "KUBECONFIG ({0}개 파일)": "KUBECONFIG ({0} files)",
+  "'파일...' 을 눌러 kubeconfig 파일을 고르세요.": "Click 'File...' to choose a kubeconfig file.",
+  "KUBECONFIG 가 가리키는 파일이 하나도 없습니다.": "None of the files in KUBECONFIG exist.",
+  "붙여 넣은 kubeconfig 의 exec 명령이 상대 경로입니다: '{0}'. 파일로 가져오거나 절대 경로로 바꿔 주세요.": "The pasted kubeconfig runs an exec command by relative path: '{0}'. Import it from a file or change it to an absolute path.",
+  "그사이 목록에서 지워진 클러스터입니다.": "That cluster was removed from the list in the meantime.",
+  "이 프로필에서 가져온 쿠버네티스 클러스터 {0}개도 목록에서 제거합니다.": "The {0} Kubernetes cluster(s) imported from this profile will be removed from the list as well.",
+  "쿠버네티스 클러스터 목록을 저장하지 못했습니다: {0}": "Could not save the Kubernetes cluster list: {0}"
+}

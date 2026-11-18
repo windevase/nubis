@@ -260,7 +260,7 @@ public sealed class AzureProvider : ICloudProvider
 
     /// <summary>
     /// 구독의 AKS 클러스터. 목록에는 CA 인증서가 없어 클러스터마다 listClusterUserCredential(자격 증명을 읽는 POST, 리소스는 바뀌지 않음)로
-    /// kubeconfig 를 받는다. 그 호출이 실패한 클러스터는 건너뛰고 Errors 에 "이름: 사유" 로 남긴다 (삭제 판단 금지)
+    /// kubeconfig 를 받는다. 그 호출이 실패한 클러스터는 건너뛰고 Errors 에 "이름: 사유" 로 남기며 ProtectedIds 로 그 클러스터만 지우지 않는다
     /// </summary>
     public async Task<ClusterFetchResult> FetchClustersAsync(CloudProfile p, CancellationToken ct)
     {
@@ -283,15 +283,34 @@ public sealed class AzureProvider : ICloudProvider
         }
 
         var infos = raw.Select(ParseAks).Where(a => a.Id.Length > 0 && a.Name.Length > 0).ToList();
+        // 목록은 다 읽었으므로 kubeconfig 를 못 받은 클러스터(중지·실패 상태, 권한 없음 등)는 그 클러스터만 보호한다 —
+        // 프로필 전체를 부분 실패로 만들면 다른 클러스터의 삭제가 영영 반영되지 않는다
+        var skipped = new ConcurrentBag<(string id, string error)>();
         var (items, errors) = await CloudProviders.ParallelCollect(infos, AksParallelism, async a =>
         {
-            var cred = await CloudProviders.SendJsonAsync(HttpMethod.Post,
-                $"{Arm}{a.Id}/listClusterUserCredential?api-version={AksApi}", token, null, ct);
-            var yaml = CredentialKubeconfig(cred) ?? throw new InvalidOperationException("listClusterUserCredential returned no kubeconfig");
-            return (IEnumerable<CloudCluster>)new[] { BuildAksCluster(a, yaml) };
+            try
+            {
+                var cred = await CloudProviders.SendJsonAsync(HttpMethod.Post,
+                    $"{Arm}{a.Id}/listClusterUserCredential?api-version={AksApi}", token, null, ct);
+                var yaml = CredentialKubeconfig(cred) ?? throw new InvalidOperationException("listClusterUserCredential returned no kubeconfig");
+                return (IEnumerable<CloudCluster>)new[] { BuildAksCluster(a, yaml, p.TenantId) };
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException && ct.IsCancellationRequested))
+            {
+                skipped.Add((AksClusterId(a.Id), $"{a.Name}: {CloudProviders.FirstLine(ex.Message)}"));
+                return Enumerable.Empty<CloudCluster>();
+            }
         }, a => a.Name, ct);
-        return new ClusterFetchResult(items.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList(), errors);
+        var skippedList = skipped.OrderBy(s => s.error, StringComparer.Ordinal).ToList();
+        errors.AddRange(skippedList.Select(s => s.error));
+        return new ClusterFetchResult(items.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToList(), errors)
+        {
+            ProtectedIds = skippedList.Select(s => s.id).ToList(),
+        };
     }
+
+    /// <summary>AKS 리소스 ID → CloudCluster.Id (ARM ID 는 대소문자 구분이 없어 소문자로)</summary>
+    internal static string AksClusterId(string resourceId) => "aks:" + resourceId.ToLowerInvariant();
 
     /// <summary>managedClusters 목록 한 항목 → 값 (화면 무관)</summary>
     internal static AksInfo ParseAks(JsonElement c)
@@ -322,7 +341,7 @@ public sealed class AzureProvider : ICloudProvider
     /// 목록 값 + 받은 kubeconfig → CloudCluster. AAD 클러스터는 server·CA 만 꺼내 kubelogin(azurecli) exec 로 다시 만들고 (비밀값 없음),
     /// 로컬 계정 클러스터는 받은 kubeconfig 의 첫 context 만 남긴다 (클라이언트 인증서 포함 — 앱이 암호화해 저장)
     /// </summary>
-    internal static CloudCluster BuildAksCluster(AksInfo a, string kubeconfig)
+    internal static CloudCluster BuildAksCluster(AksInfo a, string kubeconfig, string? tenantId = null)
     {
         var endpoint = a.Fqdn.Length > 0 ? "https://" + a.Fqdn : "";
         string yaml, context;
@@ -333,8 +352,7 @@ public sealed class AzureProvider : ICloudProvider
             if (string.IsNullOrEmpty(server)) server = endpoint;
             if (string.IsNullOrEmpty(server)) throw new InvalidOperationException("kubeconfig has no server");
             context = a.Name;
-            yaml = Kubeconfig.BuildExec(context, server, ca, "kubelogin",
-                new[] { "get-token", "--login", "azurecli", "--server-id", AksAadServerId });
+            yaml = Kubeconfig.BuildExec(context, server, ca, "kubelogin", KubeloginArgs(tenantId));
             auth = K8sAuthKind.Azure;
         }
         else
@@ -346,9 +364,27 @@ public sealed class AzureProvider : ICloudProvider
             yaml = contexts.Count == 1 ? kubeconfig : Kubeconfig.Extract(kubeconfig, context, null);
             auth = Kubeconfig.DetectAuth(yaml);
         }
-        return new CloudCluster("aks:" + a.Id.ToLowerInvariant(), a.Name, a.Location, endpoint, a.Version, a.State,
+        return new CloudCluster(AksClusterId(a.Id), a.Name, a.Location, endpoint, a.Version, a.State,
             auth, yaml, context);
     }
+
+    /// <summary>
+    /// kubelogin get-token 인자 (azurecli 모드). 프로필에 테넌트가 있으면 --tenant-id 로 고정한다 —
+    /// 없으면 az 의 기본(현재 구독) 테넌트 토큰을 받아, 동기화(프로필 테넌트로 조회)와 다른 테넌트로 인증된다.
+    /// GUID·도메인 형식이 아닌 값은 넣지 않는다 (exec 인자라 셸은 거치지 않지만 옵션처럼 보이는 값 차단)
+    /// </summary>
+    internal static List<string> KubeloginArgs(string? tenantId)
+    {
+        var args = new List<string> { "get-token", "--login", "azurecli", "--server-id", AksAadServerId };
+        var t = tenantId?.Trim();
+        if (!string.IsNullOrEmpty(t) && IsTenantIdLike(t)) args.AddRange(new[] { "--tenant-id", t });
+        return args;
+    }
+
+    /// <summary>테넌트 ID(GUID) 또는 도메인(contoso.onmicrosoft.com) 형식인지</summary>
+    internal static bool IsTenantIdLike(string s) =>
+        Guid.TryParse(s, out _) ||
+        (s.Length <= 253 && s[0] != '-' && s.Contains('.') && s.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '.' or '-'));
 
     /// <summary>kubeconfig 의 첫 context(없으면 첫 cluster)가 가리키는 cluster 의 server · certificate-authority-data</summary>
     internal static (string? Server, string? CaData) ClusterOfKubeconfig(string yaml)

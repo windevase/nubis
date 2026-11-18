@@ -85,8 +85,9 @@ public class KubernetesTests
             File.WriteAllText(Path.Combine(dir, "ca-dev.crt"), "CA-DEV");
             File.WriteAllText(Path.Combine(dir, "dev.crt"), "CERT-DEV");
             var one = Kubeconfig.Extract(Multi, "dev", dir);
-            Assert.Contains("certificate-authority-data: " + Convert.ToBase64String("CA-DEV"u8.ToArray()), one);
-            Assert.Contains("client-certificate-data: " + Convert.ToBase64String("CERT-DEV"u8.ToArray()), one);
+            // 새로 넣는 값은 문자열로 읽히게 큰따옴표
+            Assert.Contains("certificate-authority-data: \"" + Convert.ToBase64String("CA-DEV"u8.ToArray()) + "\"", one);
+            Assert.Contains("client-certificate-data: \"" + Convert.ToBase64String("CERT-DEV"u8.ToArray()) + "\"", one);
             Assert.Contains("S0VZLURFVg==", one);
             Assert.DoesNotContain("ca-dev.crt", one);
             // 붙여 넣은 kubeconfig(기준 폴더 없음)가 상대 경로 파일을 가리키면 알린다
@@ -148,7 +149,7 @@ public class KubernetesTests
     [InlineData("apply -f x.yaml", false)]
     [InlineData("scale deploy web --replicas=0", false)]
     [InlineData("port-forward svc/web 8080:80", false)]
-    [InlineData("config view --raw", false)]
+    [InlineData("config get-contexts", true)]   // config view(--raw 포함)는 거부로 바뀜 (K8sMcpParityTests)
     public void 읽기_전용_판정(string line, bool readOnly)
     {
         var args = KubectlArgs.Split(line);
@@ -213,6 +214,25 @@ public class KubernetesTests
         Assert.Contains("Read(//c/Users/a/AppData/Roaming/Nubis/k8s-run/**)", rules);
         Assert.Contains("PowerShell(*k8s-run*)", rules);
         Assert.Contains("Bash(*ProtectedKubeconfig*)", rules);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task run_kubectl_로도_임시_kubeconfig_폴더를_읽지_못한다()
+    {
+        // ClaudeGuard 의 Read 규칙을 kubectl 로 돌아가는 길: 폴더 전체를 configmap 으로 만들어 출력 · --local -f 로 그대로 출력
+        var run = SecureTempFile.K8sDir;
+        foreach (var args in new[]
+                 {
+                     new[] { "create", "configmap", "x", "--from-file=" + run, "--dry-run=client", "-o", "yaml" },
+                     new[] { "create", "secret", "generic", "x", "--from-file", run, "--dry-run=client", "-o", "yaml" },
+                     new[] { "label", "--local", "-f", run, "-o", "yaml", "a=b" },
+                     new[] { "label", "--local", "-Rf", Path.GetDirectoryName(run)!, "-o", "yaml", "a=b" },
+                     new[] { "cp", "web:/x", Path.Combine(run, "a.yaml") },
+                 })
+        {
+            Assert.NotNull(KubectlArgs.Validate(args));
+            await Assert.ThrowsAsync<ArgumentException>(() => Kubectl.RunAsync(new K8sCluster(), args, TimeSpan.FromSeconds(1), default));
+        }
     }
 
     [Fact]

@@ -74,12 +74,30 @@ public partial class MainWindow
 
         yield return new McpTool("duplicate_host",
             "호스트 1개를 복제해 새 호스트로 저장한다 (UI 의 복제와 같음). 원본의 계정 설정(사용자명 · Vault 계정 · 저장된 비밀번호)이 복사본에도 그대로 복사된다. " +
-            "클라우드 호스트의 복사본은 직접 관리하는 호스트가 되며 원본이 실제로 쓰던 계정을 옮긴다. label·group 으로 이름·그룹을 지정할 수 있다. 항상 사용자 승인.",
+            "클라우드 호스트의 복사본은 직접 관리하는 호스트가 되며 원본이 실제로 쓰던 계정을 옮긴다. label·group 으로 이름·그룹을 지정할 수 있다. " +
+            "update_host 와 같은 항목(address · protocol · port · username · vault · public_ip · use_public_ip · favorite · tags · replace_tags · jump_host · rdp_gateway · rdp_disable_nla · " +
+            "clear_password · clear_key_path · clear_prompt_answers)을 함께 넘기면 복사본에 적용해 승인 한 번으로 저장한다 (같은 규칙·제한). 항상 사용자 승인.",
             Schema(new
             {
                 host = new { type = "string", description = "원본 호스트 (이름·IP·id, 정확히 1개)" },
                 label = new { type = "string", description = "복사본 이름 (생략 시 '<원본> (복사본)')" },
                 group = new { type = "string", description = "복사본 그룹 (생략 시 원본 그룹, 클라우드 원본은 프로필 이름. 빈 문자열 = 그룹 없음)" },
+                address = new { type = "string", description = "복사본 주소 (바꾸면 복사된 계정이 그 서버에 쓰인다)" },
+                protocol = new { type = "string", @enum = new[] { "ssh", "rdp" } },
+                port = new { type = "integer" },
+                username = new { type = "string", description = "빈 문자열 = 지우기" },
+                vault = new { type = "string", description = "Vault 계정 이름 또는 id. \"none\" = 연결 해제" },
+                public_ip = new { type = "string", description = "빈 문자열 = 지우기" },
+                use_public_ip = new { type = "boolean" },
+                favorite = new { type = "boolean" },
+                tags = new { type = "object", additionalProperties = new { type = "string" }, description = "update_host 의 tags 와 같음 (값이 빈 문자열이면 그 태그를 지움)" },
+                replace_tags = new { type = "boolean" },
+                jump_host = new { type = "string", description = "SSH 만: 점프 서버 호스트 이름·id, \"none\" = 해제" },
+                rdp_gateway = new { type = "string", description = "RDP 만: \"호스트\" 또는 \"호스트:포트\", 빈 문자열 = 지우기" },
+                rdp_disable_nla = new { type = "boolean" },
+                clear_password = new { type = "boolean", description = "true = 복사본에는 저장된 비밀번호를 복사하지 않음" },
+                clear_key_path = new { type = "boolean", description = "true = 복사본에는 키 파일 경로를 복사하지 않음" },
+                clear_prompt_answers = new { type = "boolean", description = "true = 복사본에는 기억한 인증 답을 복사하지 않음" },
             }, "host"),
             a => OnUiAsync(() => DuplicateHostFromClaude(a)));
 
@@ -282,17 +300,35 @@ public partial class MainWindow
         var (copy, note) = MakeDuplicate(src, label, group);
         // group="" 은 "그룹 없음" — 클라우드 원본은 DetachFromCloud 가 빈 그룹을 프로필 이름으로 채우므로 다시 비운다
         if (group is { Length: 0 }) copy.Group = "";
+        // update_host 와 같은 항목을 복사본에 적용 (같은 ApplyHostArgs — 검사·프로토콜 전용 값 정리·지우기 규칙이 같다).
+        // 원본 지정(host)과 이름·그룹(label·group, 위 MakeDuplicate 에서 처리)은 뺀다
+        var changes = ApplyHostArgs(copy, McpHostParity.Without(a, "host", "label", "group"), isNew: false);
+        // 주소를 바꾼 복사본은 다른 서버 — update_host·편집 창과 같게 사설 IP 를 새 주소로 맞추고(접속은 PrimaryAddress = 사설 IP 우선),
+        // 원본 서버의 SSH 배너·OS 판별은 지운다 (새 서버를 sh 로 잘못 보고 읽기 전용 자동 승인하지 않게)
+        if (!string.Equals(copy.Address, src.Address, StringComparison.OrdinalIgnoreCase))
+        {
+            if (copy.PrivateIp != null) copy.PrivateIp = copy.Address;
+            copy.SshBannerOs = null;
+            // 원본 서버의 공인 IP 도 새 서버에는 맞지 않는다 — 공인 IP 를 따로 주지 않았으면 지워 바꾼 주소로 접속하게
+            if (!Has(a, "public_ip")) { copy.PublicIp = null; copy.UsePublicIp = false; }
+            if (src.IsCloud) { copy.Os = null; copy.Purpose = null; }
+        }
 
         // 비밀번호는 있음/없음만 (값·암호문은 결과·로그·승인 창에 넣지 않는다)
         var hasPw = !string.IsNullOrEmpty(copy.ProtectedPassword);
         var hasKey = !string.IsNullOrWhiteSpace(copy.KeyPath);
-        var summary = HostSummary(copy) + $"\n저장된 비밀번호: {(hasPw ? "복사됨" : "없음")} · 키 파일: {(hasKey ? "복사됨" : "없음")}";
+        var changeText = changes.Count > 0 ? "\n복사본에 함께 바꿀 항목:\n" + string.Join("\n", changes) : "";
+        var summary = HostSummary(copy) + $"\n저장된 비밀번호: {(hasPw ? "복사됨" : "없음")} · 키 파일: {(hasKey ? "복사됨" : "없음")}" + changeText;
         var shown = HostSummary(copy) + "\n" + (hasPw ? L.T("저장된 비밀번호: 복사됨") : L.T("저장된 비밀번호: 없음")) + " · " +
-                    (hasKey ? L.T("키 파일: 복사됨") : L.T("키 파일: 없음"));
+                    (hasKey ? L.T("키 파일: 복사됨") : L.T("키 파일: 없음")) +
+                    (changes.Count > 0 ? "\n" + L.T("복사본에 함께 바꿀 항목:") + "\n" + string.Join("\n", changes) : "");
         var srcLabel = HostTarget(src);
+        var jumpShown = copy.JumpHostId is { } jid && _hosts.Any(x => x.Id == jid);
         var desc = L.F("'{0}' 를 복제해 새 호스트로 저장합니다. 원본의 계정(사용자명 · Vault 계정 지정 · 저장된 비밀번호)이 복사본에도 그대로 복사됩니다.", McpHelpers.VisibleControlChars(src.DisplayName)) +
                    (src.IsCloud ? "\n" + L.T("클라우드 호스트의 복사본은 직접 관리하는 호스트가 되며, 원본이 실제로 쓰던 계정(프로필 기본 계정 포함)을 복사본에 옮깁니다.") : "") +
-                   "\n" + L.T("나중에 복사본의 주소를 바꾸면 이 계정이 다른 서버에 쓰입니다.");
+                   (changes.Any(McpHostRules.IsRisky)
+                       ? "\n" + L.T("⚠ 복사본의 주소·포트·Vault 계정·점프 서버·RD 게이트웨이도 함께 바꿉니다. 복사된 계정이 그 서버·경로로 쓰이니 확인하세요.")
+                       : "\n" + L.T("나중에 복사본의 주소를 바꾸면 이 계정이 다른 서버에 쓰입니다."));
         if (!await AskApprovalAsync("duplicate_host", L.T("Claude 가 호스트 복제를 요청합니다"), desc, new[] { srcLabel }, shown))
         {
             AuditLog.Write("duplicate_host", new[] { srcLabel }, summary, "거부");
@@ -302,6 +338,13 @@ public partial class MainWindow
         {
             AuditLog.Write("duplicate_host", new[] { srcLabel }, summary, "승인 후 취소 (대기 중 원본이 지워짐)");
             throw new McpToolException("승인을 기다리는 동안 원본 호스트가 지워져 복제하지 않았습니다.");
+        }
+        // 승인 창에 보인 점프 서버가 그사이 지워졌거나 쓸 수 없게 됐으면 저장하지 않는다
+        // (요청 때 이미 없던 점프 서버 — 원본에서 복사된 끊긴 지정 — 는 예전처럼 그대로 복제)
+        if (jumpShown && JumpStillValid(copy, copy.JumpHostId, null) is { } jumpErr)
+        {
+            AuditLog.Write("duplicate_host", new[] { srcLabel }, summary, "승인 후 취소 (점프 서버 변경)");
+            throw new McpToolException(jumpErr);
         }
         _hosts.Add(copy);
         SaveHosts();
@@ -334,25 +377,42 @@ public partial class MainWindow
             throw new McpToolException("사용자가 여러 호스트 접속을 거부했습니다.");
         }
         var lines = new List<string>();
+        var notOpened = new List<string>();   // 요청 취소로 열지 않은 대상 (감사 로그에 한 건으로)
         foreach (var h in targets)
         {
             var label = HostTarget(h);
-            if (!_hosts.Contains(h)) { lines.Add($"{h.DisplayName}: 대기 중 목록에서 지워져 건너뜀"); continue; }
-            // 승인을 기다리는 동안 동기화로 중지됐거나 공인 IP 가 없어졌으면 건너뛴다 (사용자가 본 대상과 달라지지 않게)
-            if (h.IsStopped) { lines.Add($"{h.DisplayName}: 대기 중 중지된 서버가 되어 건너뜀"); continue; }
-            if (usePublic == true && !h.HasPublicIp) { lines.Add($"{h.DisplayName}: 대기 중 공인 IP 가 없어져 건너뜀"); continue; }
+            if (notOpened.Count > 0) { notOpened.Add(label); lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음"); continue; }
             try
             {
-                var tab = Connect(h, usePublic);
-                AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
-                lines.Add($"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})");
+                // 진행 중인 RDP 입력이 끝난 뒤, 잠금 안에서 대상 재확인 + 탭 열기 (새 탭이 선택되며 입력을 끊지 않게)
+                var line = await UnderRdpInputSectionAsync(() =>
+                {
+                    if (!_hosts.Contains(h)) return $"{h.DisplayName}: 대기 중 목록에서 지워져 건너뜀";
+                    // 승인을 기다리는 동안 동기화로 중지됐거나 공인 IP 가 없어졌으면 건너뛴다 (사용자가 본 대상과 달라지지 않게)
+                    if (h.IsStopped) return $"{h.DisplayName}: 대기 중 중지된 서버가 되어 건너뜀";
+                    if (usePublic == true && !h.HasPublicIp) return $"{h.DisplayName}: 대기 중 공인 IP 가 없어져 건너뜀";
+                    try
+                    {
+                        var tab = Connect(h, usePublic);
+                        AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
+                        return $"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})";
+                    }
+                    catch (Exception ex)   // 탭 열기 실패는 이 호스트만 실패로 남긴다 (바깥 catch 는 잠금 대기 중 요청 취소만 받음)
+                    {
+                        AuditLog.Write("connect_hosts", new[] { label }, cmd, "실패: " + ex.GetType().Name);
+                        return $"{h.DisplayName}: 탭을 열지 못함 ({ex.Message})";
+                    }
+                });
+                lines.Add(line);
             }
-            catch (Exception ex) when (ex is not McpToolException)
+            catch (McpToolException)
             {
-                AuditLog.Write("connect_hosts", new[] { label }, cmd, "실패: " + ex.GetType().Name);
-                lines.Add($"{h.DisplayName}: 탭을 열지 못함 ({ex.Message})");
+                // 잠금을 기다리다 요청이 취소됨 — 이미 연 탭은 결과에 남기고 나머지는 열지 않는다
+                notOpened.Add(label);
+                lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음");
             }
         }
+        if (notOpened.Count > 0) AuditLog.Write("connect_hosts", notOpened, cmd, "취소(요청 취소로 열지 않음)");
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         return $"세션 탭 {lines.Count(l => l.StartsWith("session_id="))}개를 열었습니다. 연결 결과는 잠시 후 list_sessions 로 확인하세요.\n" +

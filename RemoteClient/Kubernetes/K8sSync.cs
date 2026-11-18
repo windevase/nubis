@@ -35,7 +35,7 @@ public static class K8sSync
             if (!byId.TryGetValue(cc.Id, out var c))
             {
                 // 같은 API 서버를 kubeconfig 로 이미 직접 가져왔으면 새로 만들지 않는다 (같은 클러스터 카드가 둘 생기지 않게)
-                if (cc.Endpoint.Length > 0 && clusters.Any(x => !x.IsCloud && string.Equals(x.Endpoint.TrimEnd('/'), cc.Endpoint.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)))
+                if (cc.Endpoint.Length > 0 && clusters.Any(x => !x.IsCloud && SameEndpoint(x.Endpoint, cc.Endpoint)))
                     continue;
                 c = new K8sCluster
                 {
@@ -68,9 +68,12 @@ public static class K8sSync
         if (!result.HasUnexpectedErrors)
         {
             var denied = new HashSet<string>(result.DeniedRegions, StringComparer.OrdinalIgnoreCase);
+            var kept = new HashSet<string>(result.ProtectedIds, StringComparer.Ordinal);
             foreach (var c in mine.Except(duplicates).ToList())
             {
                 if (c.CloudClusterId == null || seen.Contains(c.CloudClusterId)) continue;
+                // 목록에는 있었지만 kubeconfig 를 못 받은 클러스터 — 있는 것이므로 지우지 않는다 (kubeconfig 등은 그대로 둔다)
+                if (kept.Contains(c.CloudClusterId)) { c.MissCount = 0; continue; }
                 // 권한 거부 리전·리전을 모르는 클러스터는 이번에 보지 못한 것 — 남긴다
                 if (string.IsNullOrEmpty(c.Region) || denied.Contains(c.Region) || denied.Any(r => c.Region.StartsWith(r + "-", StringComparison.OrdinalIgnoreCase)))
                     continue;
@@ -79,4 +82,28 @@ public static class K8sSync
         }
         return (added, updated, removed);
     }
+
+    /// <summary>
+    /// API 서버 주소 비교용 정규화: scheme·호스트 소문자, 기본 포트(https 443 · http 80)를 붙이고 끝 '/' 를 뗀다 —
+    /// `https://fqdn` 과 `https://fqdn:443/` 를 같게 본다. scheme 이 없으면 https 로 본다. 해석하지 못하면 다듬은 원문 (소문자)
+    /// </summary>
+    public static string NormalizeEndpoint(string? endpoint)
+    {
+        var s = (endpoint ?? "").Trim();
+        if (s.Length == 0) return "";
+        var withScheme = s.Contains("://", StringComparison.Ordinal) ? s : "https://" + s;
+        if (Uri.TryCreate(withScheme, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || u.Scheme == Uri.UriSchemeHttp) && u.Host.Length > 0)
+            return $"{u.Scheme}://{u.Host}:{u.Port}{u.AbsolutePath.TrimEnd('/')}".ToLowerInvariant();
+        return s.TrimEnd('/').ToLowerInvariant();
+    }
+
+    /// <summary>같은 API 서버인지 (둘 다 비어 있으면 같다고 본다)</summary>
+    public static bool SameEndpoint(string? a, string? b) => NormalizeEndpoint(a) == NormalizeEndpoint(b);
+
+    /// <summary>
+    /// kubeconfig 가져오기 중복 판정: 같은 context 이름 + 같은 API 서버(정규화 비교)인 클러스터가 이미 있으면 true.
+    /// 주소가 빈 기존 클러스터는 가져올 context 도 주소가 없을 때만 같은 것으로 본다
+    /// </summary>
+    public static bool AlreadyImported(IEnumerable<K8sCluster> existing, KubeContext c) =>
+        existing.Any(x => x.ContextName == c.Name && SameEndpoint(x.Endpoint, c.Server));
 }

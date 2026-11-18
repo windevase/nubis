@@ -1,0 +1,16 @@
+{
+  "등록하지 않은 주소에 세션 탭을 엽니다 (화면의 빠른 접속과 같음). 주소가 맞는지 확인하세요.": "Opens a session tab to an unregistered address (same as Quick Connect on screen). Check that the address is correct.",
+  "접속에 쓰일 계정: {0}": "Account used to connect: {0}",
+  "저장된 계정이 없어 접속할 때 사용자명·비밀번호를 묻습니다.": "No saved account applies, so the username and password will be asked when connecting.",
+  "같은 주소로 등록된 호스트가 있습니다: {0}": "Hosts registered with the same address: {0}",
+  "Claude 가 등록하지 않은 주소에 접속을 요청합니다": "Claude requests to connect to an unregistered address",
+  "(빠른 연결 탭 열기)": "(open quick connect tab)",
+  "끊긴 탭을 닫습니다.": "Closes the disconnected tab.",
+  "(탭 닫기 · 편집 중 파일 {0}개)": "(close tab · {0} file(s) being edited)",
+  "포트를 따로 지정하지 않은 클라우드 호스트 {0}개는 지금 포트를 그대로 씁니다 (기본 포트만 바꿈).": "{0} cloud host(s) without a profile-specific port keep their current port (only the default port changes).",
+  "⚠ 호스트에 저장된 비밀번호·키 파일 경로를 지웁니다. 지운 비밀번호는 되돌릴 수 없습니다.": "⚠ Clears the password / key file path saved on the host. A cleared password cannot be restored.",
+  "지운 뒤 접속에 쓰일 계정: {0}": "Account used to connect after clearing: {0}",
+  "지운 뒤에는 저장된 계정이 없어 접속할 때 묻습니다.": "After clearing, no saved account applies, so credentials will be asked when connecting.",
+  "복사본에 함께 바꿀 항목:": "Also changed on the copy:",
+  "⚠ 복사본의 주소·포트·Vault 계정·점프 서버·RD 게이트웨이도 함께 바꿉니다. 복사된 계정이 그 서버·경로로 쓰이니 확인하세요.": "⚠ Also changes the copy's address / port / Vault account / jump server / RD gateway. The copied account will be used with that server and route, so check it."
+}

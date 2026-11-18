@@ -198,12 +198,17 @@ public partial class MainWindow
         if (dependents.Count > 0)
             message += "\n\n" + L.F("주의: 이 프로필의 서버를 점프 호스트로 쓰는 다른 호스트 {0}개가 있습니다 — 제거하면 점프 호스트를 다시 지정해야 접속할 수 있습니다: {1}",
                 dependents.Count, NameList(dependents.Select(h => h.DisplayName)));
+        var k8sCount = K8sStore.All().Count(c => c.CloudProfileId == p.Id);
+        if (k8sCount > 0) message += "\n" + L.F("이 프로필에서 가져온 쿠버네티스 클러스터 {0}개도 목록에서 제거합니다.", k8sCount);
         if (Dialog.Show(this, message, L.T("프로필 제거"), MessageBoxButton.YesNo,
                 dependents.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         RemoveProfile(p);
     }
 
-    /// <summary>프로필과 동기화된 호스트를 제거 (UI 프로필 제거 · MCP cloud_remove_profile 공용). 지운 호스트 수를 돌려준다</summary>
+    /// <summary>
+    /// 프로필과 동기화된 호스트·쿠버네티스 클러스터를 제거 (UI 프로필 제거 · MCP cloud_remove_profile 공용). 지운 호스트 수를 돌려준다.
+    /// 클러스터를 남기면 프로필 없는 고아 카드가 되고, 같은 프로필을 다시 추가하면 같은 클러스터 카드가 둘 생긴다
+    /// </summary>
     private int RemoveProfile(CloudProfile p)
     {
         if (_syncCancels.TryGetValue(p, out var cts)) cts.Cancel();   // 진행 중인 동기화는 결과를 버린다
@@ -213,7 +218,22 @@ public partial class MainWindow
         SaveHosts();
         SaveProfiles();
         RefreshHosts();
+        RemoveProfileClusters(p.Id);
         return removed;
+    }
+
+    /// <summary>프로필의 클러스터를 저장소에서 지운다. 저장에 실패하면 알린다 (클러스터는 남으므로 Kubernetes 페이지에서 직접 지울 수 있다)</summary>
+    private void RemoveProfileClusters(Guid profileId)
+    {
+        var all = K8sStore.All();
+        if (!all.Any(c => c.CloudProfileId == profileId)) return;
+        try { K8sStore.ReplaceAll(all.Where(c => c.CloudProfileId != profileId).ToList()); }
+        catch (Exception ex)
+        {
+            Dialog.Show(this, L.F("쿠버네티스 클러스터 목록을 저장하지 못했습니다: {0}", ex.Message), L.T("프로필 제거"), MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        // 지운 클러스터의 연결 상태·인증 캐시는 RefreshK8s 에서 정리된다 (페이지를 열 때도 다시 그린다)
+        if (K8sPage.Visibility == Visibility.Visible) RefreshK8s();
     }
 }
 

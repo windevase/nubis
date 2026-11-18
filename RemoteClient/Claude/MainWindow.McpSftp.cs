@@ -48,27 +48,96 @@ public partial class MainWindow
             a => SftpReadAsync(a));
 
         yield return new McpTool("sftp_download",
-            "SSH 호스트의 원격 파일·폴더를 이 PC 의 다운로드\\Nubis\\<호스트> 폴더로 받는다 (경로는 앱이 정함, 기존 파일은 덮어쓰지 않음). 항상 사용자 승인.",
+            "SSH 호스트의 원격 파일·폴더를 이 PC 의 다운로드\\Nubis\\<호스트> 폴더로 받는다 (경로는 앱이 정함, 기존 파일은 덮어쓰지 않음). 항상 사용자 승인. " +
+            $"여러 개는 paths 로 한 번에 (승인 한 번, 최대 {McpSftpRules.MaxMultiPaths}개) — 없는 경로 등 받지 못한 항목은 결과에 따로 적는다.",
             Schema(new
             {
                 host = new { type = "string" },
                 session_id = new { type = "integer", description = SessionIdHelp },
-                path = new { type = "string", description = "원격 파일 또는 폴더" },
-            }, "path"),
+                path = new { type = "string", description = "원격 파일 또는 폴더 (paths 와 둘 중 하나)" },
+                paths = new { type = "array", items = new { type = "string" }, description = "원격 파일·폴더 여러 개 (path 와 둘 중 하나)" },
+            }),
             a => SftpDownloadAsync(a));
 
         yield return new McpTool("sftp_upload",
-            "이 PC 의 파일·폴더를 SSH 호스트의 원격 폴더로 올린다. 같은 이름이 있으면 overwrite=true 일 때만 덮어쓴다 " +
-            "(대상이 심볼릭 링크면 링크가 가리키는 파일에 쓰게 되므로 거부). 항상 사용자 승인. Nubis 데이터 폴더와 ~/.ssh, 개인키 파일은 올릴 수 없다.",
+            "이 PC 의 파일·폴더를 SSH 호스트의 원격 폴더로 올린다 (폴더는 하위까지, 원격에 같은 폴더가 있으면 병합). " +
+            "같은 이름 파일 처리는 on_conflict: overwrite = 덮어씀, skip = 건너뜀, fail(기본) = 하나라도 있으면 아무것도 올리지 않음 — SFTP 패널의 덮어쓰기/건너뛰기와 같다. " +
+            "예전 인자 overwrite=true 는 on_conflict=overwrite 와 같다. 대상(또는 폴더 자리)이 심볼릭 링크면 링크가 가리키는 곳에 쓰게 되므로 쓰지 않는다 (skip 이면 건너뜀, 아니면 거부). " +
+            $"여러 개는 local_paths 로 (최대 {McpSftpRules.MaxMultiPaths}개, 승인 한 번). 항상 사용자 승인. Nubis 데이터 폴더와 ~/.ssh, 개인키 파일은 올릴 수 없다.",
             Schema(new
             {
                 host = new { type = "string" },
                 session_id = new { type = "integer", description = SessionIdHelp },
-                local_path = new { type = "string", description = "이 PC 의 파일 또는 폴더 (절대 경로)" },
+                local_path = new { type = "string", description = "이 PC 의 파일 또는 폴더 (절대 경로, local_paths 와 둘 중 하나)" },
+                local_paths = new { type = "array", items = new { type = "string" }, description = "이 PC 의 파일·폴더 여러 개 (절대 경로)" },
                 remote_dir = new { type = "string", description = "올릴 원격 폴더" },
-                overwrite = new { type = "boolean" },
-            }, "local_path", "remote_dir"),
+                on_conflict = new { type = "string", @enum = McpSftpRules.UploadConflictModes, description = "같은 이름이 있을 때: overwrite / skip / fail (기본 fail)" },
+                overwrite = new { type = "boolean", description = "예전 인자 — true 는 on_conflict=overwrite" },
+            }, "remote_dir"),
             a => SftpUploadAsync(a));
+
+        yield return new McpTool("sftp_panel_navigate",
+            "SSH 탭 왼쪽 SFTP 패널이 보여 주는 폴더를 바꾼다 (패널 경로 칸에 입력하는 것과 같음 — 사용자 화면만 바뀌고 목록은 Claude 에게 돌려주지 않는다, " +
+            "목록이 필요하면 sftp_list). 승인 규칙은 sftp_list 와 같다 (패널이 sudo 권한이면 항상 승인). 패널이 열려 있어야 한다 (toggle_sftp_panel). path 는 절대 경로. session_id 생략 시 현재 탭.",
+            Schema(new
+            {
+                session_id = new { type = "integer" },
+                path = new { type = "string", description = "표시할 원격 폴더의 절대 경로" },
+            }, "path"),
+            a => OnUiAsync(() => SftpPanelNavigateAsync(a)));
+    }
+
+    /// <summary>
+    /// 문자열 목록 인자 (paths · local_paths). 없거나 null 이면 null, 배열이 아니거나 문자열이 아닌 항목이 있으면 오류
+    /// (잘못된 값을 말없이 빼고 나머지만 처리하지 않게)
+    /// </summary>
+    private static List<string>? StringListArg(JsonElement a, string name)
+    {
+        if (a.ValueKind != JsonValueKind.Object || !a.TryGetProperty(name, out var v) || v.ValueKind == JsonValueKind.Null) return null;
+        if (v.ValueKind != JsonValueKind.Array) throw new McpToolException($"{name} 는 문자열 배열이어야 합니다.");
+        var list = new List<string>();
+        foreach (var x in v.EnumerateArray())
+        {
+            if (x.ValueKind != JsonValueKind.String) throw new McpToolException($"{name} 의 항목은 모두 문자열이어야 합니다.");
+            list.Add(x.GetString() ?? "");
+        }
+        return list;
+    }
+
+    /// <summary>sftp_panel_navigate: 패널의 터미널 따라가기와 같은 경로(FollowAsync)로 이동 — 전송 중이면 끝난 뒤 이동</summary>
+    private async Task<string> SftpPanelNavigateAsync(JsonElement a)
+    {
+        if (McpSftpRules.ValidateRemotePath(Arg(a, "path"), out var path) is { } why) throw new McpToolException($"path: {why}");
+        var tab = RequireSession(a, allowCurrent: true);
+        if (tab.View is not SshSessionView ssh) throw new McpToolException($"session {tab.Id} 은 SSH 탭이 아닙니다 (SFTP 패널은 SSH 탭에만 있음).");
+        var panel = FindSftpPanels(ssh).FirstOrDefault(p => p.Visibility == System.Windows.Visibility.Visible);
+        if (panel == null || !panel.IsOpen)
+            throw new McpToolException($"session {tab.Id} 의 SFTP 패널이 열려 있지 않습니다. toggle_sftp_panel 로 먼저 여세요.");
+        // 패널 목록은 capture_screen 으로 읽을 수 있으므로 sftp_list 와 같은 승인 규칙: 읽기 전용 자동 승인 설정이 꺼져 있거나,
+        // 패널이 sudo 권한이거나, 비밀이 든 경로면 승인 창
+        var command = $"(SFTP 패널 폴더 이동: {path})";
+        var targets = new[] { SessionAuditTarget(tab) };
+        if (McpSftpRules.PanelNavigateNeedsApproval(SettingsStore.Current.AutoApproveReadOnly, panel.RunAs != null, McpHelpers.IsSensitiveRemotePath(path)))
+        {
+            var ok = await AskApprovalAsync("sftp_panel_navigate", L.T("Claude 가 SFTP 패널 폴더 이동을 요청합니다"),
+                L.T("승인하면 SFTP 패널이 아래 폴더의 목록을 보여 줍니다. 화면 캡처로 Claude 가 그 목록을 볼 수 있습니다.") +
+                (panel.RunAs is { } ra ? L.F("\n⚠ 이 탭의 SFTP 가 sudo 로 {0} 권한으로 열려 있어, 이 작업도 {0} 권한으로 실행됩니다.", McpHelpers.VisibleControlChars(ra)) : ""),
+                targets, command);
+            AuditLog.Write("sftp_panel_navigate", targets, command, ok ? "승인" : "거부");
+            if (!ok) throw new McpToolException("사용자가 거부했습니다.");
+            if (!_tabs.Contains(tab) || !panel.IsOpen) throw new McpToolException($"승인을 기다리는 사이 session {tab.Id} 탭이나 SFTP 패널이 닫혔습니다.");
+        }
+        else AuditLog.Write("sftp_panel_navigate", targets, command, "자동 승인(읽기 전용)");
+        // 패널이 sudo 로 다른 사용자(root 등)로 열려 있으면 이동 성공 여부도 알려 주지 않는다 —
+        // 승인 없이 그 권한으로만 보이는 폴더가 있는지 Claude 가 알아내지 않게 (목록은 sftp_list 의 승인을 거친다)
+        var elevated = panel.RunAs != null;
+        await panel.FollowAsync(path);
+        if (elevated || panel.RunAs != null)
+            return $"session {tab.Id} 의 SFTP 패널에 {path} 이동을 요청했습니다 (sudo 권한 패널이라 결과는 알려 주지 않음 — 사용자 화면에 표시됨).";
+        var now = panel.PathBox.Text;
+        return now == path
+            ? $"session {tab.Id} 의 SFTP 패널에 {path} 를 표시했습니다."
+            : $"session {tab.Id} 의 SFTP 패널이 {path} 로 가지 못했습니다 (지금 표시: {now}). 없는 폴더·권한 없음이거나 전송 중이면 끝난 뒤 이동합니다 — 패널에 오류가 표시됩니다.";
     }
 
     /// <summary>
