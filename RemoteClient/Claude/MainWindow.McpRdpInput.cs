@@ -45,11 +45,19 @@ public partial class MainWindow
     /// <summary>이 탭에 Claude 가 지금 입력하는 중인가 (탭 메뉴에 "Claude 입력 멈추기" 표시용)</summary>
     internal bool IsRdpInputRunning(SessionTab tab) => _rdpActiveInput.TryGetValue(tab, out _);
 
-    // 탭별 "사용자 멈춤" 번호 — 멈추기·Esc 마다 올린다. 한 메시지에 줄 서 있던 다음 rdp_* 요청이 멈춤 뒤 그대로 이어서 입력하지 않게,
-    // 요청은 시작할 때 번호를 기억했다가 탭 잠금·입력 구간 잠금을 얻은 뒤 바뀌었으면 입력하지 않는다 (Esc 는 훅 스레드에서 오므로 Interlocked)
-    private readonly ConditionalWeakTable<SessionTab, System.Runtime.CompilerServices.StrongBox<int>> _rdpStopEpoch = new();
-    private System.Runtime.CompilerServices.StrongBox<int> RdpStopEpoch(SessionTab tab) => _rdpStopEpoch.GetValue(tab, _ => new());
-    private void BumpRdpStopEpoch(SessionTab tab) => Interlocked.Increment(ref RdpStopEpoch(tab).Value);
+    // 탭별 사용자 멈춤 상태 — 멈추기·Esc 마다 번호를 올리고 "확인 필요" 를 켠다 (Esc 는 훅 스레드에서 오므로 Interlocked).
+    // 번호: 요청이 들어올 때 기억했다가 잠금을 얻은 뒤 바뀌었으면 입력하지 않는다 (동시에 와 있던 요청).
+    // 확인 필요: Claude Code 는 한 메시지의 도구를 하나씩 이어서 보내므로, 멈춘 뒤 도착한 다음 rdp_* 도 after_user_stop=true 없이는
+    // 받지 않는다 — 결과를 읽은 Claude 가 사용자에게 확인하고 붙여 보내야 이어진다
+    private sealed class RdpStopState { public int Epoch; public int Pending; }
+    private readonly ConditionalWeakTable<SessionTab, RdpStopState> _rdpStopEpoch = new();
+    private RdpStopState RdpStopEpoch(SessionTab tab) => _rdpStopEpoch.GetValue(tab, _ => new());
+    private void BumpRdpStopEpoch(SessionTab tab)
+    {
+        var s = RdpStopEpoch(tab);
+        Interlocked.Increment(ref s.Epoch);
+        Volatile.Write(ref s.Pending, 1);
+    }
 
     /// <summary>진행 중인 Claude 입력을 멈춘다 (누른 키·버튼은 떼고 끝남)</summary>
     internal void StopRdpInput(SessionTab tab)
@@ -92,6 +100,7 @@ public partial class MainWindow
         return true;
     }
 
+    private static readonly object AfterUserStopArg = new { type = "boolean", description = "사용자가 이 탭의 Claude 입력을 멈춘(Esc·멈추기) 뒤 이어서 입력할 때만 true — 멈춤 오류를 받았으면 사용자에게 계속할지 확인하고 계속하라고 한 경우에만 붙인다. 멈춘 뒤 이 값 없이 온 요청은 거부된다" };
     private static readonly object CaptureArgs = new { type = "boolean", description = "동작 뒤 화면을 다시 캡처해 함께 돌려준다 (기본 true). 여러 동작을 이어서 할 때 중간 것은 false 로 토큰 절약" };
     private static readonly object WaitArgs = new { type = "integer", description = "동작 뒤 캡처까지 기다릴 ms (기본 800, 0~10000) — 창이 뜨는 데 오래 걸리면 늘린다" };
     private static readonly object WidthArgs = new { type = "integer", description = "캡처 이미지 최대 가로 (기본: 마지막 캡처와 같은 크기 — 좌표 기준이 그대로 유지됨)" };
@@ -134,7 +143,7 @@ public partial class MainWindow
                 y = new { type = "number" },
                 button = new { type = "string", @enum = new[] { "left", "right", "middle" }, description = "기본 left" },
                 @double = new { type = "boolean", description = "더블 클릭" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, after_user_stop = AfterUserStopArg,
             }, "x", "y"),
             a => OnUiAsync(async () =>
             {
@@ -157,7 +166,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 to_x = new { type = "number" }, to_y = new { type = "number" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, after_user_stop = AfterUserStopArg,
             }, "x", "y", "to_x", "to_y"),
             a => OnUiAsync(async () =>
             {
@@ -178,7 +187,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 amount = new { type = "integer", description = "휠 칸 수 (양수 위, 음수 아래)" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, after_user_stop = AfterUserStopArg,
             }, "x", "y", "amount"),
             a => OnUiAsync(async () =>
             {
@@ -203,7 +212,7 @@ public partial class MainWindow
             {
                 session_id = new { type = "integer" },
                 keys = new { type = "array", items = new { type = "string" }, description = $"차례로 누를 키 조합 (최대 {RdpKeys.MaxCombos}개)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, after_user_stop = AfterUserStopArg,
             }, "keys"),
             a => OnUiAsync(async () =>
             {
@@ -228,7 +237,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 text = new { type = "string" },
                 press_enter = new { type = "boolean", description = "끝에 Enter (기본 true)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, after_user_stop = AfterUserStopArg,
             }, "text"),
             a => OnUiAsync(async () =>
             {
@@ -314,14 +323,16 @@ public partial class MainWindow
         // 한 탭의 입력은 한 번에 하나씩 — 승인 대기까지 포함해 잠근다 (첫 허용 승인 창이 두 번 뜨지 않고, 승인한 글자 사이에 다른 키가 끼지 않게)
         var gate = _rdpInputLocks.GetValue(tab, _ => new SemaphoreSlim(1, 1));
         var stopBox = RdpStopEpoch(tab);
-        var epoch = Volatile.Read(ref stopBox.Value);   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
+        var epoch = Volatile.Read(ref stopBox.Epoch);   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
+        var ackStop = BoolArg(a, "after_user_stop") == true;
+        bool StoppedSince() => Volatile.Read(ref stopBox.Epoch) != epoch || (!ackStop && Volatile.Read(ref stopBox.Pending) == 1);
         try { await gate.WaitAsync(ct); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
-        if (Volatile.Read(ref stopBox.Value) != epoch)
+        if (StoppedSince())
         {
             gate.Release();
             AuditLog.Write(tool, new[] { target }, action, "실행 안 함(사용자가 앞선 입력을 멈춤)");
-            throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 이어서 보낸 이 요청은 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤 다시 요청하세요.");
+            throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 이 요청은 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop=true 를 붙여 다시 요청하세요.");
         }
         // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
         using var userStop = new CancellationTokenSource();
@@ -361,8 +372,10 @@ public partial class MainWindow
                 // 다른 승인 창 등을 기다리는 사이 허용 10분이 지났거나(만료는 토큰으로 오지 않음) 사용자가 멈췄을 수 있다
                 if (grant && !ReferenceEquals(ActiveGrant(tab), grantObj))
                     throw new McpToolException("기다리는 동안 화면 조작 허용이 끝나 입력하지 않았습니다. 다시 요청하면 사용자에게 허용을 다시 묻습니다.");
-                if (Volatile.Read(ref stopBox.Value) != epoch)
-                    throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤 다시 요청하세요.");
+                if (StoppedSince())
+                    throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop=true 를 붙여 다시 요청하세요.");
+                // 멈춤 확인을 받은 요청이 실제로 입력에 들어간다 — 확인 필요를 끈다 (이후 다시 멈추면 다시 켜짐)
+                if (ackStop) Interlocked.CompareExchange(ref stopBox.Pending, 0, 1);
                 // 앱에 대화상자(계정 입력·호스트키·안내 창 등)가 떠 있으면 입력하지 않는다 — 다른 도구가 나중으로 미룬 창이 이 입력과 겹치면
                 // 사용자가 그 창에 치는 비밀번호가 키 차단에 막히고, 포커스도 서로 빼앗는다
                 if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
@@ -399,6 +412,7 @@ public partial class MainWindow
             RdpKeyboardGuard? guard = null;
             var started = false;        // act 를 시작했는가 — 시작 전 중단은 "아무것도 입력되지 않음"
             var focusLost = false;
+            var stoppedAtEnd = false;
             try
             {
                 var focus = CaptureFocusForRdpInput(view);
@@ -425,6 +439,8 @@ public partial class MainWindow
                     await act(tab, ih, linked.Token);
                     // 입력하는 사이 포커스가 빠졌으면(사용자가 다른 곳을 클릭 등) 그 뒤 마우스 입력은 컨트롤이 버렸을 수 있다
                     focusLost = !view.HasInputFocus;
+                    // 입력이 막 끝난 순간 Esc·멈추기가 들어오면 취소를 볼 곳이 없다 — 결과에 남겨 Claude 가 이어서 하지 않게
+                    stoppedAtEnd = userStop.IsCancellationRequested;
                 }
                 finally
                 {
@@ -463,8 +479,10 @@ public partial class MainWindow
                     : $"입력하지 않았습니다: {ex.Message}");
             }
             AuditLog.Write(tool, new[] { target }, action,
-                (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : ""));
+                (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : "") +
+                (stoppedAtEnd ? " — 입력이 끝나는 순간 사용자가 멈춤" : ""));
             if (focusLost) action += " (입력 중 RDP 포커스가 빠져 일부 입력이 버려졌을 수 있음 — 화면으로 확인할 것)";
+            if (stoppedAtEnd) action += " (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것)";
             holdForCapture = captureAfter;
         }
         finally

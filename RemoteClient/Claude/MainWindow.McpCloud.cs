@@ -354,8 +354,14 @@ public partial class MainWindow
                 AuditLog.Write("cloud_login", new[] { target }, cmd, "거부");
                 throw new McpToolException("사용자가 로그인 명령 실행을 거부했습니다.");
             }
-            // 승인한 명령 그대로 실행 (다시 만들지 않음)
-            var msg = LaunchLoginCommand(cmd, out var started);
+            // 승인한 명령 그대로 실행 (다시 만들지 않음). 새 콘솔 창이 앞으로 나오므로 진행 중인 RDP 입력이 끝난 뒤
+            string msg; bool started;
+            try { (msg, started) = await UnderRdpInputSectionAsync(() => (LaunchLoginCommand(cmd, out var ok), ok)); }
+            catch (McpToolException)
+            {
+                AuditLog.Write("cloud_login", new[] { target }, cmd, "승인 후 취소(요청 취소)");
+                throw;
+            }
             _sections.First(s => s.Provider == kind).Message = msg;
             if (profile != null && _profiles.Contains(profile)) profile.StatusText = msg;
             AuditLog.Write("cloud_login", new[] { target }, cmd, started ? "승인·실행" : "승인·실행 실패");
