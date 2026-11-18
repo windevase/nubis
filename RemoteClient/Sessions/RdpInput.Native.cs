@@ -18,7 +18,7 @@ internal static partial class RdpInputSender
     private static void Check(RdpTarget ih, bool release)
     {
         if (!IsWindow(ih.Hwnd) || !(release ? ih.CanRelease() : ih.Alive()))
-            throw new InvalidOperationException("탭이 닫혔거나 연결이 바뀌어 입력을 멈췄습니다.");
+            throw new InvalidOperationException("탭이 닫혔거나, 다른 탭이 선택됐거나, 연결이 바뀌어 입력을 멈췄습니다.");
     }
 
     /// <summary>

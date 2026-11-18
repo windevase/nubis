@@ -208,7 +208,6 @@ internal static class RdpKeys
 
     private static string Describe(Rune r) => Rune.IsControl(r) || Rune.IsWhiteSpace(r) ? $"\\u{r.Value:X4}" : $"'{r}'";
 
-    /// <summary>Enter 키 누름·뗌 (rdp_type 의 press_enter)</summary>
     /// <summary>
     /// 키 이벤트를 "조합" 단위로 나눈다 — 누른 키가 모두 떼질 때까지가 한 묶음 (Shift↓ 4↓ 4↑ Shift↑ · Win↓ R↓ R↑ Win↑ · a↓ a↑).
     /// sendkeys 방식은 묶음 하나를 한 번에 보내야 수정 키가 유지된다. 끝까지 떼지 않은 키가 남으면 마지막 묶음에 그대로 둔다
@@ -228,6 +227,7 @@ internal static class RdpKeys
         return result;
     }
 
+    /// <summary>Enter 키 누름·뗌 (rdp_type 의 press_enter)</summary>
     public static IEnumerable<RdpKeyEvent> EnterEvents() => new[] { new RdpKeyEvent(0x0D, 0x1C, false, false), new RdpKeyEvent(0x0D, 0x1C, false, true) };
 
     /// <summary>
@@ -318,7 +318,7 @@ internal static partial class RdpInputSender
     private static void Send(RdpTarget ih, uint msg, IntPtr w, IntPtr l, bool release = false)
     {
         if (!IsWindow(ih.Hwnd) || !(release ? ih.CanRelease() : ih.Alive()))
-            throw new InvalidOperationException("탭이 닫혔거나 연결이 바뀌어 입력을 멈췄습니다.");
+            throw new InvalidOperationException("탭이 닫혔거나, 다른 탭이 선택됐거나, 연결이 바뀌어 입력을 멈췄습니다.");
         if (!PostMessage(ih.Hwnd, msg, w, l)) throw new InvalidOperationException("RDP 입력 창에 보내지 못했습니다.");
     }
 

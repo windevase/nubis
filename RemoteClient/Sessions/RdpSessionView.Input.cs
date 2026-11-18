@@ -22,14 +22,27 @@ public sealed partial class RdpSessionView
         catch { return IntPtr.Zero; }
     }
 
-    /// <summary>RDP 컨트롤에 키보드 포커스를 준다 (입력 방식 실험: focus_post · sendkeys · sendinput). UI 스레드에서 호출</summary>
+    /// <summary>RDP 컨트롤에 키보드 포커스를 준다 — 컨트롤은 포커스가 있어야 입력을 원격으로 넘긴다 (Claude 입력 때). UI 스레드에서 호출</summary>
     internal void FocusRdpControl()
     {
         if (_closed) return;
         try { _rdp.Focus(); } catch { }
     }
 
-    /// <summary>공식 키 전송 인터페이스 (sendkeys 방식)</summary>
+    /// <summary>
+    /// 키보드 포커스가 이 RDP 화면 안에 있는가 — WPF 상태와 ActiveX 안의 Win32 포커스를 함께 본다
+    /// (WPF 는 HwndHost 안 ActiveX 포커스를 놓칠 수 있다. OnDisconnected 의 판정과 같음)
+    /// </summary>
+    internal bool HasInputFocus
+    {
+        get
+        {
+            if (_closed) return false;
+            try { return _wfh.IsKeyboardFocusWithin || _rdp.ContainsFocus; } catch { return _wfh.IsKeyboardFocusWithin; }
+        }
+    }
+
+    /// <summary>공식 키 전송 인터페이스 (키 입력)</summary>
     internal RdpAxHost.IMsRdpClientNonScriptable? NonScriptable => _closed ? null : _rdp.NonScriptable;
 
     /// <summary>전체 화면 중인가 — 전체 화면은 별도 창에 그려져 탭 캡처·좌표가 맞지 않는다</summary>

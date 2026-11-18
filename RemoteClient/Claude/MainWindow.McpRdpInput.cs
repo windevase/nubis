@@ -191,7 +191,7 @@ public partial class MainWindow
             "사용 가능: 수정 키 ctrl·shift·alt·win + 글자 1개 / enter·tab·esc·backspace·delete·insert·home·end·pageup·pagedown·up·down·left·right·f1~f12·apps·capslock·printscreen·hangul·ralt. " +
             "글자·공백을 수정 키 없이(또는 shift 만으로) 누를 수는 없다 — 글자는 rdp_type. 붙여넣기(ctrl+v·shift+insert·win+v)·화상 키보드(ctrl+win+o)·ctrl+alt+글자(AltGr)는 막혀 있다. " +
             "입력은 원격에서 지금 포커스를 가진 창으로 간다. " + GrantNote +
-            "win 키 조합이 원격에 전달되지 않으면(창 모드에서는 Win 키를 로컬이 가질 수 있음) 시작 단추를 rdp_click 으로 누를 것.",
+            "win 조합(win+r 등)도 원격에 전달된다 (RDP 컨트롤의 키 전송 기능). 입력하는 동안 사용자의 실제 키 누름은 막히고, 사용자가 Esc 를 누르면 멈춘다.",
             Schema(new
             {
                 session_id = new { type = "integer" },
@@ -246,25 +246,25 @@ public partial class MainWindow
     private sealed record RdpFocusState(bool RdpHadFocus, bool ClaudeHadFocus, IInputElement? Element);
 
     private RdpFocusState CaptureFocusForRdpInput(RdpSessionView view) =>
-        new(view.IsKeyboardFocusWithin, _claudeView?.IsKeyboardFocusWithin == true, Keyboard.FocusedElement);
+        new(view.HasInputFocus, _claudeView?.IsKeyboardFocusWithin == true, Keyboard.FocusedElement);
 
     /// <summary>
-    /// 입력 뒤 포커스 되돌리기: 원래 RDP 화면에 있었으면 그대로, Claude 패널이면 패널로, 다른 요소면 그 요소로,
-    /// 알 수 없으면(창이 비활성이었음 등) 숨은 세션에서 빼낸다 — 어느 경우든 RDP 컨트롤에 포커스가 남아 이후 키가 원격으로 가지 않게
+    /// 입력 뒤 포커스 되돌리기: 원래 RDP 화면에 있었으면 그대로, 입력하는 사이 사용자가 다른 곳(다른 탭 등)을 골랐으면 그대로,
+    /// 아니면 Claude 패널·원래 요소로 — 마지막에 RDP 컨트롤에 포커스가 남아 있으면 창 자체로 빼낸다 (이후 키가 원격으로 가지 않게)
     /// </summary>
     private void RestoreFocusAfterRdpInput(RdpSessionView view, RdpFocusState s)
     {
-        if (s.RdpHadFocus) return;
-        if (s.ClaudeHadFocus && _claudeView != null) { _claudeView.FocusSession(); return; }
-        if (s.Element is DependencyObject d && PresentationSource.FromDependencyObject(d) != null && s.Element.Focusable)
-        {
+        if (s.RdpHadFocus || !view.HasInputFocus) return;
+        if (s.ClaudeHadFocus && _claudeView != null) _claudeView.FocusSession();
+        else if (s.Element is DependencyObject d && PresentationSource.FromDependencyObject(d) != null && s.Element.Focusable)
             Keyboard.Focus(s.Element);
-            if (!view.IsKeyboardFocusWithin) return;
-        }
-        // 되돌릴 곳을 모르면 창 자체로 — RDP 컨트롤(ActiveX)에서 Win32 포커스를 빼낸다
+        if (!view.HasInputFocus) return;
         Keyboard.ClearFocus();
         Focus();
     }
+
+    // 여러 RDP 탭의 입력 구간(포커스 주기 → 키 차단 → 입력 → 되돌리기)은 창 전체에서 한 번에 하나 — 포커스는 하나라 동시에 하면 서로의 키가 버려진다
+    private readonly SemaphoreSlim _rdpInputSection = new(1, 1);
 
     private static double RequireNum(JsonElement a, string name) =>
         NumArg(a, name) is { } v && double.IsFinite(v) ? v : throw new McpToolException($"{name} 좌표(숫자)가 필요합니다.");
@@ -325,7 +325,8 @@ public partial class MainWindow
                 if (hwnd == IntPtr.Zero) throw new McpToolException("RDP 입력 창을 찾지 못했습니다 (연결 중이거나 끊김). list_sessions 로 상태를 확인하세요.");
                 // 메시지마다 확인: 같은 탭이 열려 있고 · 같은 연결이고 · 입력 창이 그대로인가 (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게)
                 ih = new RdpTarget(hwnd,
-                    () => _tabs.Contains(tab) && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
+                    // 사용자가 입력 중 다른 탭을 고르면(포커스가 빠져 남은 입력이 버려짐) 멈춘다 — "완료" 로 보고하지 않게
+                    () => _tabs.Contains(tab) && tab.IsSelected && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen)
                 { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null };
@@ -341,20 +342,38 @@ public partial class MainWindow
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
             // RDP 컨트롤에 포커스를 주고, 그동안 사용자의 실제 키 입력은 막는다 (포커스가 RDP 에 있는 사이 Claude 패널 등에 치던 키가
             // 원격으로 새어 승인하지 않은 입력이 되지 않게). 끝나면 원래 포커스로 되돌린다 — 예외·취소에도 (finally)
-            var focus = CaptureFocusForRdpInput(view);
+            // 입력 중 Esc 를 누르면(키 차단이 받아) 멈춘다 — 키보드로 멈출 수 있는 유일한 길 (나머지 키는 막힘)
             RdpKeyboardGuard? guard = null;
+            var entered = false;
             try
             {
+                await _rdpInputSection.WaitAsync(linked.Token);
+                entered = true;
+                var focus = CaptureFocusForRdpInput(view);
+                var focused = false;
                 try
                 {
-                    guard = new RdpKeyboardGuard();
+                    guard = new RdpKeyboardGuard(() => { try { userStop.Cancel(); } catch (ObjectDisposedException) { } });
+                    if (!guard.Active)
+                        throw new McpToolException("입력 중 사용자 키 입력을 막는 장치(키보드 훅)를 걸지 못해 입력하지 않았습니다 — 사용자 키가 원격으로 섞일 수 있어서입니다.");
+                    // Ctrl·Shift·Alt 가 실제로 눌린 채면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다 — 뗄 때까지 잠깐 기다린다
+                    for (var i = 0; i < 20 && RdpKeyboardGuard.ModifierHeld(); i++) await Task.Delay(100, linked.Token);
+                    if (RdpKeyboardGuard.ModifierHeld())
+                        throw new McpToolException("Ctrl·Shift·Alt 키가 눌려 있어 입력하지 않았습니다 (눌린 채 입력하면 글자가 조합키로 바뀜). 키에서 손을 뗀 뒤 다시 요청하세요.");
+                    if (!tab.IsSelected) throw new McpToolException("그 사이 다른 탭이 선택되어 입력하지 않았습니다.");
                     view.FocusRdpControl();
+                    focused = true;
                     await Task.Delay(120, linked.Token);   // 포커스가 컨트롤 안 입력 창(별도 스레드)까지 닿을 시간
                     await act(tab, ih, linked.Token);
                 }
                 finally
                 {
-                    RestoreFocusAfterRdpInput(view, focus);
+                    if (focused)
+                    {
+                        // 마지막 버튼 뗌 등이 입력 창 스레드에서 처리될 시간을 준 뒤 포커스를 빼낸다 (포커스가 없으면 그 메시지가 버려짐)
+                        try { await Task.Delay(80); } catch { }
+                        try { RestoreFocusAfterRdpInput(view, focus); } catch { }
+                    }
                     guard?.Dispose();
                     if (guard is { Blocked: > 0 } g)
                         Toast.Show(L.F("Claude 가 원격에 입력하는 동안 누른 키 {0}개는 원격으로 가지 않게 막았습니다.", g.Blocked), ToastKind.Warning);
@@ -378,6 +397,10 @@ public partial class MainWindow
             {
                 AuditLog.Write(tool, new[] { target }, action, "중단 — 일부 입력됐을 수 있음: " + ex.Message);
                 throw new McpToolException($"입력을 멈췄습니다: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것).");
+            }
+            finally
+            {
+                if (entered) _rdpInputSection.Release();
             }
             AuditLog.Write(tool, new[] { target }, action, grant ? "실행(화면 조작 허용 중)" : "승인·입력");
         }
