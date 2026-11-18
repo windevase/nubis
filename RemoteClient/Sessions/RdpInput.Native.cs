@@ -40,7 +40,7 @@ internal static partial class RdpInputSender
                 throw new InvalidOperationException("입력 도중 Ctrl·Shift·Alt·Win 키가 눌려 남은 입력을 멈췄습니다 (보낸 글자가 단축키로 바뀌지 않게).");
             var ups = group.Select(e => (short)(e.Up ? -1 : 0)).ToArray();
             var data = group.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray();
-            try { keys.SendKeys(group.Count, ups, data); }
+            try { await SendChordAsync(ih, keys, group.Count, ups, data, ct); }
             catch
             {
                 // 이 묶음에서 누른 키를 역순으로 뗀다 (토큰·재시도 없이 한 번)
@@ -58,6 +58,28 @@ internal static partial class RdpInputSender
             }
             // 원격이 따라오게 묶음 사이에 잠깐 쉰다 (실행 창·UAC 전환 직후 키를 놓치지 않게)
             await Task.Delay(15 + 4 * group.Count, ct);
+        }
+    }
+
+    private const int EUnexpected = unchecked((int)0x8000FFFF);
+
+    /// <summary>
+    /// 묶음 하나를 보낸다. 컨트롤이 E_UNEXPECTED 로 거절하면 잠깐 뒤 두 번까지 다시 보낸다 — tg01 실측: 입력 도중 한 묶음이
+    /// E_UNEXPECTED 로 실패했고 그 묶음의 글자는 화면에 하나도 찍히지 않았다(묶음 전체 거절). 다른 오류는 일부가 들어갔을 수 있어 다시 보내지 않는다
+    /// </summary>
+    private static async Task SendChordAsync(RdpTarget ih, RdpAxHost.IMsRdpClientNonScriptable keys, int n, short[] ups, int[] data, CancellationToken ct)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try { keys.SendKeys(n, ups, data); return; }
+            catch (COMException ex) when (ex.HResult == EUnexpected && attempt < 2)
+            {
+                await Task.Delay(200, ct);
+                // 기다린 사이 탭·연결이 바뀌었거나 사용자가 수정 키를 눌렀으면 다시 보내지 않는다
+                Check(ih, false);
+                if (RdpKeyboardGuard.ModifierHeld())
+                    throw new InvalidOperationException("입력 도중 Ctrl·Shift·Alt·Win 키가 눌려 남은 입력을 멈췄습니다 (보낸 글자가 단축키로 바뀌지 않게).");
+            }
         }
     }
 }
