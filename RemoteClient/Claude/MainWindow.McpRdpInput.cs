@@ -409,7 +409,7 @@ public partial class MainWindow
                           !System.Windows.Interop.ComponentDispatcher.IsThreadModal,   // 입력 도중 대화상자가 뜨면 멈춘다
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen)
-                { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null };
+                { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null, HasFocus = () => view.HasInputFocus, Refocus = view.FocusRdpControl };
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {

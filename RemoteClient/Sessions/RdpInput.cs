@@ -15,6 +15,9 @@ internal readonly record struct RdpTarget(IntPtr Hwnd, Func<bool> Alive, Func<bo
     public RdpInputMethod Method { get; init; }
     /// <summary>sendkeys 방식의 공식 키 전송 인터페이스</summary>
     public RdpAxHost.IMsRdpClientNonScriptable? Keys { get; init; }
+    /// <summary>RDP 컨트롤에 키보드 포커스가 있는가 / 다시 준다 — 키 전송이 일시적으로 거절됐을 때 다시 보내기 전에 쓴다</summary>
+    public Func<bool>? HasFocus { get; init; }
+    public Action? Refocus { get; init; }
 }
 
 /// <summary>
