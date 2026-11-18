@@ -377,24 +377,40 @@ public partial class MainWindow
             throw new McpToolException("사용자가 여러 호스트 접속을 거부했습니다.");
         }
         var lines = new List<string>();
+        var cancelled = false;
         foreach (var h in targets)
         {
             var label = HostTarget(h);
-            if (!_hosts.Contains(h)) { lines.Add($"{h.DisplayName}: 대기 중 목록에서 지워져 건너뜀"); continue; }
-            // 승인을 기다리는 동안 동기화로 중지됐거나 공인 IP 가 없어졌으면 건너뛴다 (사용자가 본 대상과 달라지지 않게)
-            if (h.IsStopped) { lines.Add($"{h.DisplayName}: 대기 중 중지된 서버가 되어 건너뜀"); continue; }
-            if (usePublic == true && !h.HasPublicIp) { lines.Add($"{h.DisplayName}: 대기 중 공인 IP 가 없어져 건너뜀"); continue; }
+            if (cancelled) { lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음"); continue; }
             try
             {
-                await WaitRdpInputIdleAsync();
-                var tab = Connect(h, usePublic);
-                AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
-                lines.Add($"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})");
+                // 진행 중인 RDP 입력이 끝난 뒤, 잠금 안에서 대상 재확인 + 탭 열기 (새 탭이 선택되며 입력을 끊지 않게)
+                var line = await UnderRdpInputSectionAsync(() =>
+                {
+                    if (!_hosts.Contains(h)) return $"{h.DisplayName}: 대기 중 목록에서 지워져 건너뜀";
+                    // 승인을 기다리는 동안 동기화로 중지됐거나 공인 IP 가 없어졌으면 건너뛴다 (사용자가 본 대상과 달라지지 않게)
+                    if (h.IsStopped) return $"{h.DisplayName}: 대기 중 중지된 서버가 되어 건너뜀";
+                    if (usePublic == true && !h.HasPublicIp) return $"{h.DisplayName}: 대기 중 공인 IP 가 없어져 건너뜀";
+                    try
+                    {
+                        var tab = Connect(h, usePublic);
+                        AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
+                        return $"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})";
+                    }
+                    catch (Exception ex) when (ex is not McpToolException)
+                    {
+                        AuditLog.Write("connect_hosts", new[] { label }, cmd, "실패: " + ex.GetType().Name);
+                        return $"{h.DisplayName}: 탭을 열지 못함 ({ex.Message})";
+                    }
+                });
+                lines.Add(line);
             }
-            catch (Exception ex) when (ex is not McpToolException)
+            catch (McpToolException)
             {
-                AuditLog.Write("connect_hosts", new[] { label }, cmd, "실패: " + ex.GetType().Name);
-                lines.Add($"{h.DisplayName}: 탭을 열지 못함 ({ex.Message})");
+                // 잠금을 기다리다 요청이 취소됨 — 이미 연 탭은 결과에 남기고 나머지는 열지 않는다
+                cancelled = true;
+                AuditLog.Write("connect_hosts", new[] { label }, cmd, "취소(요청 취소)");
+                lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음");
             }
         }
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;

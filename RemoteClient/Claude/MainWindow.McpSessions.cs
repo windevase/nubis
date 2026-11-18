@@ -38,15 +38,20 @@ public partial class MainWindow
                 var tab = RequireSession(a, allowCurrent: false);
                 if (tab.Status != SessionStatus.Disconnected)
                     return $"session {tab.Id} 은 이미 {(tab.Status == SessionStatus.Connected ? "연결돼" : "연결 중")} 있습니다.";
-                AuditLog.Write("reconnect_session", new[] { SessionAuditTarget(tab) }, "(다시 연결)", "실행");
-                // UI 와 같이 탭을 보여 준 뒤 다시 연결 — 확인 창이 그 탭 위에서 뜨게
-                await WaitRdpInputIdleAsync();   // 진행 중인 RDP 입력의 탭을 바꿔 끊지 않게
-                SelectTab(tab);
-                _ = Dispatcher.BeginInvoke(() =>
+                // UI 와 같이 탭을 보여 준 뒤 다시 연결 — 확인 창이 그 탭 위에서 뜨게. 탭 표시는 진행 중인 RDP 입력이 끝난 뒤 (입력 중 탭을 바꿔 끊지 않게)
+                return await UnderRdpInputSectionAsync(() =>
                 {
-                    if (_tabs.Contains(tab) && tab.Status == SessionStatus.Disconnected) tab.Session.Reconnect();
+                    // 기다리는 사이 닫혔거나 다시 연결됐을 수 있다
+                    if (!_tabs.Contains(tab)) throw new McpToolException($"session {tab.Id} 은 기다리는 사이 닫혔습니다.");
+                    if (tab.Status != SessionStatus.Disconnected) return $"session {tab.Id} 은 기다리는 사이 이미 다시 연결됐습니다.";
+                    AuditLog.Write("reconnect_session", new[] { SessionAuditTarget(tab) }, "(다시 연결)", "실행");
+                    SelectTab(tab);
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        if (_tabs.Contains(tab) && tab.Status == SessionStatus.Disconnected) tab.Session.Reconnect();
+                    });
+                    return $"session {tab.Id} 의 다시 연결을 시작했습니다. 결과는 list_sessions 또는 read_terminal 로 확인하세요.";
                 });
-                return $"session {tab.Id} 의 다시 연결을 시작했습니다. 결과는 list_sessions 또는 read_terminal 로 확인하세요.";
             }));
 
         yield return new McpTool("select_session",
@@ -57,18 +62,22 @@ public partial class MainWindow
             }, "session_id"),
             a => OnUiAsync(async () =>
             {
+                // 화면 전환은 진행 중인 RDP 입력이 끝난 뒤 (입력 중 탭을 바꿔 끊지 않게)
                 if (Arg(a, "session_id").Trim().Equals("home", StringComparison.OrdinalIgnoreCase))
-                {
-                    await WaitRdpInputIdleAsync();
-                    SelectHome();
-                    AuditLog.Write("select_session", new[] { "home" }, "(홈 화면 표시)", "실행");
-                    return "호스트 목록(홈) 화면으로 전환했습니다.";
-                }
+                    return await UnderRdpInputSectionAsync(() =>
+                    {
+                        SelectHome();
+                        AuditLog.Write("select_session", new[] { "home" }, "(홈 화면 표시)", "실행");
+                        return "호스트 목록(홈) 화면으로 전환했습니다.";
+                    });
                 var tab = RequireSession(a, allowCurrent: false);
-                await WaitRdpInputIdleAsync();
-                SelectTab(tab);
-                AuditLog.Write("select_session", new[] { SessionAuditTarget(tab) }, "(탭 표시)", "실행");
-                return $"session {tab.Id} ({tab.Title}) 을 표시했습니다.";
+                return await UnderRdpInputSectionAsync(() =>
+                {
+                    if (!_tabs.Contains(tab)) throw new McpToolException($"session {tab.Id} 은 기다리는 사이 닫혔습니다.");
+                    SelectTab(tab);
+                    AuditLog.Write("select_session", new[] { SessionAuditTarget(tab) }, "(탭 표시)", "실행");
+                    return $"session {tab.Id} ({tab.Title}) 을 표시했습니다.";
+                });
             }));
 
         yield return new McpTool("rename_session",
@@ -100,7 +109,7 @@ public partial class MainWindow
         yield return new McpTool("open_local_terminal",
             "이 PC 의 PowerShell 탭을 새로 연다 (Ctrl+Shift+T 와 같음). 입력은 send_to_terminal(사용자 승인)로 보낸다.",
             Schema(new { }),
-            _ => OnUi(() =>
+            _ => OnUiAsync(() => UnderRdpInputSectionAsync(() =>   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
             {
                 var before = _tabs.Count;
                 OpenLocalTerminal();
@@ -108,7 +117,7 @@ public partial class MainWindow
                 var tab = _tabs.Count > before ? _tabs[^1] : null;
                 AuditLog.Write("open_local_terminal", new[] { tab != null ? $"session {tab.Id}: PowerShell" : "PowerShell" }, "(로컬 터미널 열기)", "실행");
                 return tab != null ? $"로컬 PowerShell 탭을 열었습니다: session_id={tab.Id}." : "로컬 PowerShell 탭을 열지 못했습니다.";
-            }));
+            })));
 
         yield return new McpTool("close_sessions",
             "여러 세션 탭을 한 번에 닫는다 (탭 우클릭 메뉴와 같음). filter: others = session_id 말고 모두, right = session_id 오른쪽 모두, disconnected = 끊긴 탭 모두. " +
@@ -128,23 +137,31 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 open = new { type = "boolean", description = "true = 열기, false = 닫기" },
             }),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 var tab = RequireSession(a, allowCurrent: true);
                 if (tab.View is not SshSessionView ssh) throw new McpToolException($"session {tab.Id} 은 SSH 탭이 아닙니다 (SFTP 패널은 SSH 탭에만 있음).");
                 var was = IsSftpPanelOpen(ssh);
                 var want = BoolArg(a, "open") ?? !was;
                 if (want == was) return $"session {tab.Id} 의 SFTP 패널은 이미 {(was ? "열려" : "닫혀")} 있습니다.";
-                ssh.ToggleSftp(want);
-                // 패널을 닫으면 ToggleSftp 가 그 탭 터미널에 포커스를 준다 — 보이지 않는 탭이면 사용자가 Claude 패널 등에 치던 글자가
-                // 숨은 원격 터미널로 가므로 포커스를 되돌린다 (보이는 탭이면 UI 버튼과 같음)
-                if (!want && !tab.IsSelected)
-                    Dispatcher.BeginInvoke(() =>
-                    {
-                        if (ClaudeColumn.Width.Value > 0) _claudeView?.FocusSession();
-                        else if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) cur.Session.FocusSession();
-                        else ReleaseHiddenSessionFocus();
-                    }, System.Windows.Threading.DispatcherPriority.Input);
+                // 패널 닫기는 그 탭 터미널로 포커스를 옮긴다 — 진행 중인 RDP 입력의 포커스를 빼앗지 않게 입력이 끝난 뒤, 포커스 되돌리기까지 잠금 안에서
+                try { await _rdpInputSection.WaitAsync(McpRequest.Token); }
+                catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
+                try
+                {
+                    if (!_tabs.Contains(tab)) throw new McpToolException($"session {tab.Id} 은 기다리는 사이 닫혔습니다.");
+                    ssh.ToggleSftp(want);
+                    // 패널을 닫으면 ToggleSftp 가 그 탭 터미널에 포커스를 준다 — 보이지 않는 탭이면 사용자가 Claude 패널 등에 치던 글자가
+                    // 숨은 원격 터미널로 가므로 포커스를 되돌린다 (보이는 탭이면 UI 버튼과 같음)
+                    if (!want && !tab.IsSelected)
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            if (ClaudeColumn.Width.Value > 0) _claudeView?.FocusSession();
+                            else if (_tabs.FirstOrDefault(t => t.IsSelected) is { } cur) cur.Session.FocusSession();
+                            else ReleaseHiddenSessionFocus();
+                        }, System.Windows.Threading.DispatcherPriority.Input);
+                }
+                finally { _rdpInputSection.Release(); }
                 AuditLog.Write("toggle_sftp_panel", new[] { SessionAuditTarget(tab) }, want ? "(SFTP 패널 열기)" : "(SFTP 패널 닫기)", "실행");
                 return $"session {tab.Id} 의 SFTP 패널을 {(want ? "열었습니다 (Claude 가 파일을 읽으려면 sftp_list·sftp_read 를 쓰세요)" : "닫았습니다")}.";
             }));
@@ -223,7 +240,7 @@ public partial class MainWindow
             "마지막으로 닫은 탭을 같은 호스트·같은 주소(공인/사설)로 다시 연다 (Ctrl+Shift+R 과 같음). 접속은 open_session 처럼 저장된 계정으로 시작되고, " +
             "비밀번호·OTP·호스트키 확인은 사용자가 답한다.",
             Schema(new { }),
-            _ => OnUi(() =>
+            _ => OnUiAsync(() => UnderRdpInputSectionAsync(() =>   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
             {
                 if (!CanReopenClosedTab) return "다시 열 수 있는 닫은 탭이 없습니다.";
                 var before = _tabs.Count;
@@ -232,7 +249,7 @@ public partial class MainWindow
                 if (tab == null) return "닫은 탭을 다시 열지 못했습니다.";
                 AuditLog.Write("reopen_closed_tab", new[] { SessionAuditTarget(tab) }, $"(닫은 탭 다시 열기: session {tab.Id})", "실행");
                 return $"닫은 탭을 다시 열었습니다: session_id={tab.Id}, {tab.Title}. 연결 결과는 list_sessions 로 확인하세요.";
-            }));
+            })));
     }
 
     /// <summary>close_sessions: 고른 탭에 연결된 탭이 있으면 그 목록으로 승인 한 번, 승인 사이 바뀐 탭은 다시 확인</summary>

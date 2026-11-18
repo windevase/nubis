@@ -142,9 +142,10 @@ public partial class MainWindow
                 AuditLog.Write("send_to_terminal", new[] { target }, logged,
                     ok ? (auto ? "자동 승인(읽기 전용)·입력" : "승인·입력") : "실패(세션 끊김)");
                 if (!ok) throw new McpToolException("세션이 연결되어 있지 않아 입력하지 못했습니다.");
-                await WaitRdpInputIdleAsync();   // 진행 중인 RDP 입력의 탭을 바꿔 끊지 않게
-                SelectTab(tab);
                 var head = auto ? "읽기 전용 명령이라 승인 없이 입력했습니다." : "입력했습니다.";
+                // 탭 표시는 진행 중인 RDP 입력이 끝난 뒤 (입력 중 탭을 바꿔 끊지 않게). 여기서 취소돼도 명령은 이미 입력됐다
+                try { await UnderRdpInputSectionAsync(() => { if (_tabs.Contains(tab)) SelectTab(tab); }); }
+                catch (McpToolException) { throw new McpToolException($"{head} 결과 기다리기는 요청 취소로 중단했습니다 (명령은 이미 입력됨 — 다시 보내지 말 것)."); }
 
                 // 결과까지 기다려 함께 돌려준다 (Claude 가 wait_for_output 을 따로 부르는 왕복을 줄임):
                 // 화면이 바뀌고, 0.3초 동안 그대로이고, 셸 프롬프트로 돌아오면 끝.

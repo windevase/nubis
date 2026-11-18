@@ -267,15 +267,20 @@ public partial class MainWindow
     private readonly SemaphoreSlim _rdpInputSection = new(1, 1);
 
     /// <summary>
-    /// Claude 가 탭·화면을 바꾸기 직전에 부른다 — 진행 중인 RDP 입력(·입력 뒤 캡처·승인 창)이 끝날 때까지 기다린다.
-    /// 끝난 뒤 바로(다른 await 없이) 탭을 바꾸면, UI 스레드라 그 사이 새 RDP 입력이 끼어들지 못한다 (입력 중 탭이 바뀌면 남은 입력이 끊긴다)
+    /// Claude 가 탭·화면을 바꾸거나 포커스를 옮기는 동작을 RDP 입력 구간 잠금을 쥔 채 실행한다 — 진행 중인 RDP 입력(·입력 뒤 캡처·승인 창)이
+    /// 끝날 때까지 기다린 뒤 하고, 하는 동안 새 RDP 입력이 끼어들지 못한다 (입력 중 탭이 바뀌면 남은 입력이 끊긴다).
+    /// "기다렸다 놓고 바로 전환" 은 WPF 가 await 뒤 코드를 다시 예약해 그 틈에 줄 서 있던 입력이 먼저 시작될 수 있어 쓰지 않는다.
+    /// action 은 동기여야 하고 안에서 이 잠금·승인을 다시 기다리면 안 된다 (모달 창은 BeginInvoke 로 나중에 뜨는 것만)
     /// </summary>
-    private async Task WaitRdpInputIdleAsync()
+    private async Task<T> UnderRdpInputSectionAsync<T>(Func<T> action)
     {
         try { await _rdpInputSection.WaitAsync(McpRequest.Token); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
-        _rdpInputSection.Release();
+        try { return action(); }
+        finally { _rdpInputSection.Release(); }
     }
+
+    private Task UnderRdpInputSectionAsync(Action action) => UnderRdpInputSectionAsync(() => { action(); return 0; });
 
     private static double RequireNum(JsonElement a, string name) =>
         NumArg(a, name) is { } v && double.IsFinite(v) ? v : throw new McpToolException($"{name} 좌표(숫자)가 필요합니다.");

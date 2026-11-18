@@ -142,16 +142,29 @@ public partial class MainWindow
             AuditLog.Write("open_session", new[] { target }, command, "거부");
             throw new McpToolException("사용자가 빠른 연결을 거부했습니다.");
         }
-        await WaitRdpInputIdleAsync();   // 계정 재확인과 탭 열기 사이에 다른 await 가 끼지 않게 먼저 기다린다
-        // 승인 창이 큐에서 기다리는 사이 설정의 기본 Vault 계정이 바뀌었으면 사용자가 본 것과 다른 계정이 이 주소로 간다 — 실행하지 않는다
-        if (host.ResolveVault(null) != credBefore)
+        // 진행 중인 RDP 입력이 끝난 뒤, 계정 재확인과 탭 열기를 같은 잠금 안에서 (사이에 다른 동작이 끼지 않게)
+        var entered = false;
+        try
         {
-            AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(대기 중 접속 계정이 바뀜)");
-            throw new McpToolException("승인을 기다리는 동안 접속에 쓰일 기본 계정이 바뀌어 접속하지 않았습니다. 다시 요청하세요.");
+            return await UnderRdpInputSectionAsync(() =>
+            {
+                entered = true;
+                // 승인 창이 큐에서 기다리는 사이 설정의 기본 Vault 계정이 바뀌었으면 사용자가 본 것과 다른 계정이 이 주소로 간다 — 실행하지 않는다
+                if (host.ResolveVault(null) != credBefore)
+                {
+                    AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(대기 중 접속 계정이 바뀜)");
+                    throw new McpToolException("승인을 기다리는 동안 접속에 쓰일 기본 계정이 바뀌어 접속하지 않았습니다. 다시 요청하세요.");
+                }
+                var tab = Connect(host);
+                AuditLog.Write("open_session", new[] { target }, command + $" (session {tab.Id})", "승인·실행");
+                return tab;
+            });
         }
-        var tab = Connect(host);
-        AuditLog.Write("open_session", new[] { target }, command + $" (session {tab.Id})", "승인·실행");
-        return tab;
+        catch (McpToolException) when (!entered)   // 잠금을 기다리다 요청이 취소됨 — 승인된 건이라 취소도 기록
+        {
+            AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(요청 취소)");
+            throw;
+        }
     }
 
     /// <summary>open_session 공통: 창을 앞으로 가져오고, 요청하면 연결이 끝날 때까지 기다린다</summary>

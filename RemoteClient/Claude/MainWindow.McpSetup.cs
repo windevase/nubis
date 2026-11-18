@@ -39,10 +39,9 @@ public partial class MainWindow
                 name = new { type = "string", description = "vault_new: 미리 채울 계정 이름" },
                 username = new { type = "string", description = "vault_new: 미리 채울 사용자명" },
             }, "page"),
-            a => OnUiAsync(async () =>
+            a => OnUiAsync(() => UnderRdpInputSectionAsync(() =>   // 화면을 바꾸며 진행 중인 RDP 입력을 끊지 않게
             {
                 var page = Arg(a, "page").Trim();
-                await WaitRdpInputIdleAsync();   // 화면을 바꾸며 진행 중인 RDP 입력을 끊지 않게
                 if (OpenEditDialogPage(page, a) is { } opened)
                 {
                     AuditLog.Write("open_app_page", new[] { McpHelpers.VisibleControlChars(page) }, "(입력 창 열기)", "조회");
@@ -54,7 +53,7 @@ public partial class MainWindow
                 var shown = NormalizeAppPage(page);
                 AuditLog.Write("open_app_page", new[] { shown }, "(화면 열기)", "조회");
                 return $"'{shown}' 화면을 열었습니다. 사용자가 지금 그 화면을 보고 있습니다.";
-            }));
+            })));
 
         yield return new McpTool("set_language",
             "Nubis 화면 언어를 바꾼다 (Settings → 언어와 같음). 모든 프로필이 함께 쓰는 공통 설정이라 앱이 사용자 승인을 받는다. " +

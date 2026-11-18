@@ -51,7 +51,7 @@ public partial class MainWindow
                 container = new { type = "string", description = "컨테이너 (생략하면 기본 컨테이너)" },
                 previous = new { type = "boolean", description = "logs: 재시작 전 컨테이너의 로그" },
             }, "cluster"),
-            a => OnUi(() => OpenK8sFromClaude(a)));
+            a => OnUiAsync(() => UnderRdpInputSectionAsync(() => OpenK8sFromClaude(a))));   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
 
         // ----- 관리 (Kubernetes 페이지의 손 동작과 같음 — MainWindow.McpK8sManage.cs · McpK8sImport.cs) -----
 

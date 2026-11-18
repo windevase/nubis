@@ -159,8 +159,13 @@ public partial class MainWindow
                                                string.Join("\n", found.Take(15).Select(HostLine)));
                 var mode = Arg(a, "address");
                 if (mode == "public" && !found[0].HasPublicIp) throw new McpToolException($"'{found[0].DisplayName}' 에는 공인 IP 가 없습니다.");
-                await WaitRdpInputIdleAsync();   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
-                var tab = Connect(found[0], mode switch { "public" => true, "private" => false, _ => null });
+                // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게 — 기다린 뒤 잠금 안에서 다시 확인하고 연다
+                var tab = await UnderRdpInputSectionAsync(() =>
+                {
+                    if (!_hosts.Contains(found[0])) throw new McpToolException($"'{found[0].DisplayName}' 이 기다리는 사이 목록에서 지워졌습니다.");
+                    if (mode == "public" && !found[0].HasPublicIp) throw new McpToolException($"'{found[0].DisplayName}' 의 공인 IP 가 기다리는 사이 없어졌습니다.");
+                    return Connect(found[0], mode switch { "public" => true, "private" => false, _ => null });
+                });
                 // 승인 없이 접속(저장된 계정으로 로그인)하는 동작이라 감사 로그에는 남긴다 — 어떤 서버에 언제 Claude 가 탭을 열었는지 추적용
                 AuditLog.Write("open_session",
                     new[] { $"{McpHelpers.VisibleControlChars(found[0].DisplayName)}  ({found[0].ProtocolText} {tab.Host?.Address ?? found[0].Address}:{tab.Host?.Port ?? found[0].Port})" },
