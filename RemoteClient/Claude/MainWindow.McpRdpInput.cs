@@ -487,6 +487,12 @@ public partial class MainWindow
                 AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함: " + ex.Message);
                 throw new McpToolException(ex.Message);
             }
+            catch (RdpInputSender.RdpNothingSentException ex)
+            {
+                // 첫 키 묶음부터 멈춰 원격에는 아무것도 가지 않았다 (시작은 했지만 "일부 입력됐을 수 있음" 이 아님)
+                AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함: " + ex.Message);
+                throw new McpToolException($"입력하지 않았습니다: {ex.Message}");
+            }
             catch (Exception ex)
             {
                 AuditLog.Write(tool, new[] { target }, action, (started ? "중단 — 일부 입력됐을 수 있음: " : "승인했으나 실행 안 함: ") + ex.Message);

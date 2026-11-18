@@ -68,11 +68,10 @@ internal static partial class RdpInputSender
         {
             throw new InvalidOperationException($"{Describe(ex)} — 앞 {sent}개 키 묶음(글자 입력이면 앞 {sent}글자)까지 입력됐고, {Tail(ex)} 화면으로 확인한 뒤 남은 부분만 보낼 것.", ex);
         }
-        catch (Exception ex) when (ex is COMException or RdpKeySendException)
+        catch (Exception ex) when (ex is not OperationCanceledException and not RdpNothingSentException)   // 첫 묶음에서 멈춤 (sent == 0)
         {
-            throw new InvalidOperationException(Partial(ex)
-                ? $"{Describe(ex)} — 첫 묶음(한 글자·한 조합)이 일부 들어갔을 수 있고 그 뒤는 입력되지 않았습니다."
-                : $"{Describe(ex)} — 아무것도 입력되지 않았습니다.", ex);
+            if (!Partial(ex)) throw new RdpNothingSentException($"{Describe(ex)} — 아무것도 입력되지 않았습니다.", ex);
+            throw new InvalidOperationException($"{Describe(ex)} — 첫 묶음(한 글자·한 조합)이 일부 들어갔을 수 있고 그 뒤는 입력되지 않았습니다.", ex);
         }
     }
 
@@ -85,6 +84,9 @@ internal static partial class RdpInputSender
     private static string Tail(Exception ex) => Partial(ex)
         ? "실패한 묶음(한 글자·한 조합)은 일부 들어갔을 수 있고 그 뒤는 입력되지 않았습니다."
         : "그 뒤는 입력되지 않았습니다.";
+
+    /// <summary>키 입력이 하나도 원격에 가지 않고 멈춤 — 호출하는 쪽이 "일부 입력됐을 수 있음" 대신 "입력하지 않음" 으로 보고하게</summary>
+    internal sealed class RdpNothingSentException(string message, Exception inner) : InvalidOperationException(message, inner);
 
     private const int EUnexpected = unchecked((int)0x8000FFFF);
     private const int EFail = unchecked((int)0x80004005);
