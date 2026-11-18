@@ -45,19 +45,32 @@ public partial class MainWindow
     /// <summary>이 탭에 Claude 가 지금 입력하는 중인가 (탭 메뉴에 "Claude 입력 멈추기" 표시용)</summary>
     internal bool IsRdpInputRunning(SessionTab tab) => _rdpActiveInput.TryGetValue(tab, out _);
 
-    // 탭별 사용자 멈춤 상태 — 멈추기·Esc 마다 번호를 올리고 "확인 필요" 를 켠다 (Esc 는 훅 스레드에서 오므로 Interlocked).
-    // 번호: 요청이 들어올 때 기억했다가 잠금을 얻은 뒤 바뀌었으면 입력하지 않는다 (동시에 와 있던 요청).
-    // 확인 필요: Claude Code 는 한 메시지의 도구를 하나씩 이어서 보내므로, 멈춘 뒤 도착한 다음 rdp_* 도 after_user_stop=true 없이는
-    // 받지 않는다 — 결과를 읽은 Claude 가 사용자에게 확인하고 붙여 보내야 이어진다
-    private sealed class RdpStopState { public int Epoch; public int Pending; }
+    // 탭별 사용자 멈춤 상태 — 멈추기·Esc 마다 번호를 올리고 "확인 필요" 를 켜고, 확인용 stop_id 를 새로 뽑는다 (Esc 는 스레드 풀에서 오므로 lock).
+    // 번호(Epoch): 요청이 들어올 때 기억했다가 잠금을 얻은 뒤 바뀌었으면 입력하지 않는다 (동시에 와 있던 요청).
+    // 확인 필요: Claude Code 는 한 메시지의 도구를 하나씩 이어서 보내므로, 멈춘 뒤 도착한 다음 rdp_* 도 after_user_stop=<stop_id> 없이는
+    // 받지 않는다 — 결과를 읽은 Claude 가 사용자에게 확인하고 붙여 보내야 이어진다. stop_id 는 무작위라 다음 멈춤의 값을 미리 맞힐 수 없다
+    private sealed class RdpStopState
+    {
+        public readonly object Sync = new();
+        public int Epoch; public bool Pending; public int StopId;
+        public int ReadEpoch() { lock (Sync) return Epoch; }
+        public int ReadStopId() { lock (Sync) return StopId; }
+        public void Bump() { lock (Sync) { Epoch++; Pending = true; StopId = System.Security.Cryptography.RandomNumberGenerator.GetInt32(1, int.MaxValue); } }
+        /// <summary>입력해도 되는가 — 도착 뒤 멈춤이 없고, 확인 필요면 지금 stop_id 로 확인받았을 때. clear 면 통과와 함께 확인 필요를 끈다 (한 번에)</summary>
+        public bool Pass(int arrivedEpoch, int? ackId, bool clear)
+        {
+            lock (Sync)
+            {
+                if (Epoch != arrivedEpoch) return false;
+                if (Pending && ackId != StopId) return false;
+                if (clear) Pending = false;
+                return true;
+            }
+        }
+    }
     private readonly ConditionalWeakTable<SessionTab, RdpStopState> _rdpStopEpoch = new();
     private RdpStopState RdpStopEpoch(SessionTab tab) => _rdpStopEpoch.GetValue(tab, _ => new());
-    private void BumpRdpStopEpoch(SessionTab tab)
-    {
-        var s = RdpStopEpoch(tab);
-        Interlocked.Increment(ref s.Epoch);
-        Volatile.Write(ref s.Pending, 1);
-    }
+    private void BumpRdpStopEpoch(SessionTab tab) => RdpStopEpoch(tab).Bump();
 
     /// <summary>진행 중인 Claude 입력을 멈춘다 (누른 키·버튼은 떼고 끝남)</summary>
     internal void StopRdpInput(SessionTab tab)
@@ -323,11 +336,10 @@ public partial class MainWindow
         // 한 탭의 입력은 한 번에 하나씩 — 승인 대기까지 포함해 잠근다 (첫 허용 승인 창이 두 번 뜨지 않고, 승인한 글자 사이에 다른 키가 끼지 않게)
         var gate = _rdpInputLocks.GetValue(tab, _ => new SemaphoreSlim(1, 1));
         var stopBox = RdpStopEpoch(tab);
-        var epoch = Volatile.Read(ref stopBox.Epoch);   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
+        var epoch = stopBox.ReadEpoch();   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
         var ackId = IntArg(a, "after_user_stop");   // 사용자 확인을 받은 멈춤 번호 — 지금 번호와 같을 때만 그 멈춤을 확인한 것
-        bool Acked() => ackId is { } n && n == Volatile.Read(ref stopBox.Epoch);
-        bool StoppedSince() => Volatile.Read(ref stopBox.Epoch) != epoch || (Volatile.Read(ref stopBox.Pending) == 1 && !Acked());
-        string StopRefusal(string head) => $"{head} 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop={Volatile.Read(ref stopBox.Epoch)} (stop_id) 를 붙여 다시 요청하세요.";
+        bool StoppedSince() => !stopBox.Pass(epoch, ackId, clear: false);
+        string StopRefusal(string head) => $"{head} 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop={stopBox.ReadStopId()} (stop_id) 를 붙여 다시 요청하세요.";
         try { await gate.WaitAsync(ct); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
         if (StoppedSince())
@@ -374,10 +386,9 @@ public partial class MainWindow
                 // 다른 승인 창 등을 기다리는 사이 허용 10분이 지났거나(만료는 토큰으로 오지 않음) 사용자가 멈췄을 수 있다
                 if (grant && !ReferenceEquals(ActiveGrant(tab), grantObj))
                     throw new McpToolException("기다리는 동안 화면 조작 허용이 끝나 입력하지 않았습니다. 다시 요청하면 사용자에게 허용을 다시 묻습니다.");
-                if (StoppedSince())
+                // 확인과 "확인 필요" 끄기를 한 번에 (사이에 새 멈춤이 끼어 그 표시를 지우지 않게) — 지금 멈춤을 확인받은 요청이 실제 입력에 들어간다
+                if (!stopBox.Pass(epoch, ackId, clear: true))
                     throw new McpToolException(StopRefusal("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다."));
-                // 지금 멈춤을 확인받은 요청이 실제로 입력에 들어간다 — 확인 필요를 끈다 (이후 다시 멈추면 번호가 바뀌고 다시 켜짐)
-                if (Acked()) Interlocked.CompareExchange(ref stopBox.Pending, 0, 1);
                 // 앱에 대화상자(계정 입력·호스트키·안내 창 등)가 떠 있으면 입력하지 않는다 — 다른 도구가 나중으로 미룬 창이 이 입력과 겹치면
                 // 사용자가 그 창에 치는 비밀번호가 키 차단에 막히고, 포커스도 서로 빼앗는다
                 if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
@@ -404,7 +415,7 @@ public partial class MainWindow
             {
                 var why = ex is OperationCanceledException ? $"({StopReason()})" : ": " + ex.Message;
                 AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함" + why);
-                if (ex is OperationCanceledException) throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
+                if (ex is OperationCanceledException) throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음)." + (userStop.IsCancellationRequested ? " " + StopRefusal("이 탭의 다음 입력은 사용자 확인 전까지 거부됩니다.") : ""));
                 throw;
             }
 
@@ -453,7 +464,7 @@ public partial class MainWindow
                     guard?.Dispose();
                     // 입력이 막 끝난 순간(뗌 처리 대기 80ms 포함) Esc·멈추기가 들어오면 취소를 볼 곳이 없다 — 결과에 남겨 Claude 가 이어서 하지 않게.
                     // Esc 콜백은 스레드 풀에서 늦게 돌 수 있어 번호도 함께 본다
-                    stoppedAtEnd = userStop.IsCancellationRequested || Volatile.Read(ref stopBox.Epoch) != epoch;
+                    stoppedAtEnd = userStop.IsCancellationRequested || stopBox.ReadEpoch() != epoch;
                     if (guard is { Blocked: > 0 } g)
                         Toast.Show(L.F("Claude 가 원격에 입력하는 동안 누른 키 {0}개는 원격으로 가지 않게 막았습니다.", g.Blocked), ToastKind.Warning);
                 }
@@ -463,7 +474,7 @@ public partial class MainWindow
                 if (!started)
                 {
                     AuditLog.Write(tool, new[] { target }, action, $"승인했으나 실행 안 함({StopReason()})");
-                    throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
+                    throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음)." + (userStop.IsCancellationRequested ? " " + StopRefusal("이 탭의 다음 입력은 사용자 확인 전까지 거부됩니다.") : ""));
                 }
                 AuditLog.Write(tool, new[] { target }, action, $"중단({StopReason()}) — 일부 입력됐을 수 있음");
                 throw new McpToolException($"{StopReason()} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것)." +
@@ -486,7 +497,7 @@ public partial class MainWindow
                 (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : "") +
                 (stoppedAtEnd ? " — 입력이 끝나는 순간 사용자가 멈춤" : ""));
             if (focusLost) action += " (입력 중 RDP 포커스가 빠져 일부 입력이 버려졌을 수 있음 — 화면으로 확인할 것)";
-            if (stoppedAtEnd) action += $" (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것. 계속하라고 하면 다음 요청에 after_user_stop={Volatile.Read(ref stopBox.Epoch)})";
+            if (stoppedAtEnd) action += $" (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것. 계속하라고 하면 다음 요청에 after_user_stop={stopBox.ReadStopId()})";
             holdForCapture = captureAfter;
         }
         finally
