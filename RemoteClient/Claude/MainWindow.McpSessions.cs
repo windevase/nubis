@@ -24,7 +24,7 @@ public partial class MainWindow
                 session_id = new { type = "integer", description = "다시 연결할 탭" },
                 all_disconnected = new { type = "boolean", description = "true 면 끊긴 탭 모두" },
             }),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 if (BoolArg(a, "all_disconnected") == true)
                 {
@@ -32,7 +32,7 @@ public partial class MainWindow
                     if (list.Count == 0) return "끊긴 탭이 없습니다.";
                     AuditLog.Write("reconnect_session", list.Select(SessionAuditTarget), "(끊긴 탭 모두 다시 연결)", "실행");
                     // RDP 계정 입력 창(중첩 메시지 루프)이 도구 응답을 붙잡지 않게 다음 차례에 시작한다. ReconnectAll 이 탭마다 다시 확인한다
-                    Dispatcher.BeginInvoke(() => ReconnectAll(list));
+                    _ = Dispatcher.BeginInvoke(() => ReconnectAll(list));
                     return $"끊긴 탭 {list.Count}개의 다시 연결을 시작했습니다: {string.Join(", ", list.Select(t => t.Id))}. 결과는 list_sessions 로 확인하세요.";
                 }
                 var tab = RequireSession(a, allowCurrent: false);
@@ -40,8 +40,9 @@ public partial class MainWindow
                     return $"session {tab.Id} 은 이미 {(tab.Status == SessionStatus.Connected ? "연결돼" : "연결 중")} 있습니다.";
                 AuditLog.Write("reconnect_session", new[] { SessionAuditTarget(tab) }, "(다시 연결)", "실행");
                 // UI 와 같이 탭을 보여 준 뒤 다시 연결 — 확인 창이 그 탭 위에서 뜨게
+                await WaitRdpInputIdleAsync();   // 진행 중인 RDP 입력의 탭을 바꿔 끊지 않게
                 SelectTab(tab);
-                Dispatcher.BeginInvoke(() =>
+                _ = Dispatcher.BeginInvoke(() =>
                 {
                     if (_tabs.Contains(tab) && tab.Status == SessionStatus.Disconnected) tab.Session.Reconnect();
                 });
@@ -54,15 +55,17 @@ public partial class MainWindow
             {
                 session_id = new { type = new[] { "integer", "string" }, description = "탭 번호 또는 \"home\"" },
             }, "session_id"),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 if (Arg(a, "session_id").Trim().Equals("home", StringComparison.OrdinalIgnoreCase))
                 {
+                    await WaitRdpInputIdleAsync();
                     SelectHome();
                     AuditLog.Write("select_session", new[] { "home" }, "(홈 화면 표시)", "실행");
                     return "호스트 목록(홈) 화면으로 전환했습니다.";
                 }
                 var tab = RequireSession(a, allowCurrent: false);
+                await WaitRdpInputIdleAsync();
                 SelectTab(tab);
                 AuditLog.Write("select_session", new[] { SessionAuditTarget(tab) }, "(탭 표시)", "실행");
                 return $"session {tab.Id} ({tab.Title}) 을 표시했습니다.";

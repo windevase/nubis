@@ -39,9 +39,10 @@ public partial class MainWindow
                 name = new { type = "string", description = "vault_new: 미리 채울 계정 이름" },
                 username = new { type = "string", description = "vault_new: 미리 채울 사용자명" },
             }, "page"),
-            a => OnUi(() =>
+            a => OnUiAsync(async () =>
             {
                 var page = Arg(a, "page").Trim();
+                await WaitRdpInputIdleAsync();   // 화면을 바꾸며 진행 중인 RDP 입력을 끊지 않게
                 if (OpenEditDialogPage(page, a) is { } opened)
                 {
                     AuditLog.Write("open_app_page", new[] { McpHelpers.VisibleControlChars(page) }, "(입력 창 열기)", "조회");

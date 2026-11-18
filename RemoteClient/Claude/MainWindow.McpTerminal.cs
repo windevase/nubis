@@ -142,6 +142,7 @@ public partial class MainWindow
                 AuditLog.Write("send_to_terminal", new[] { target }, logged,
                     ok ? (auto ? "자동 승인(읽기 전용)·입력" : "승인·입력") : "실패(세션 끊김)");
                 if (!ok) throw new McpToolException("세션이 연결되어 있지 않아 입력하지 못했습니다.");
+                await WaitRdpInputIdleAsync();   // 진행 중인 RDP 입력의 탭을 바꿔 끊지 않게
                 SelectTab(tab);
                 var head = auto ? "읽기 전용 명령이라 승인 없이 입력했습니다." : "입력했습니다.";
 

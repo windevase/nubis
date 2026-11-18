@@ -266,6 +266,17 @@ public partial class MainWindow
     // 여러 RDP 탭의 입력 구간(포커스 주기 → 키 차단 → 입력 → 되돌리기)은 창 전체에서 한 번에 하나 — 포커스는 하나라 동시에 하면 서로의 키가 버려진다
     private readonly SemaphoreSlim _rdpInputSection = new(1, 1);
 
+    /// <summary>
+    /// Claude 가 탭·화면을 바꾸기 직전에 부른다 — 진행 중인 RDP 입력(·입력 뒤 캡처·승인 창)이 끝날 때까지 기다린다.
+    /// 끝난 뒤 바로(다른 await 없이) 탭을 바꾸면, UI 스레드라 그 사이 새 RDP 입력이 끼어들지 못한다 (입력 중 탭이 바뀌면 남은 입력이 끊긴다)
+    /// </summary>
+    private async Task WaitRdpInputIdleAsync()
+    {
+        try { await _rdpInputSection.WaitAsync(McpRequest.Token); }
+        catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
+        _rdpInputSection.Release();
+    }
+
     private static double RequireNum(JsonElement a, string name) =>
         NumArg(a, name) is { } v && double.IsFinite(v) ? v : throw new McpToolException($"{name} 좌표(숫자)가 필요합니다.");
 
@@ -345,7 +356,7 @@ public partial class MainWindow
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
-                var why = ex is OperationCanceledException ? $"({StopReason()})" : "";
+                var why = ex is OperationCanceledException ? $"({StopReason()})" : ": " + ex.Message;
                 AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함" + why);
                 if (ex is OperationCanceledException) throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
                 throw;

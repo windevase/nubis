@@ -142,6 +142,7 @@ public partial class MainWindow
             AuditLog.Write("open_session", new[] { target }, command, "거부");
             throw new McpToolException("사용자가 빠른 연결을 거부했습니다.");
         }
+        await WaitRdpInputIdleAsync();   // 계정 재확인과 탭 열기 사이에 다른 await 가 끼지 않게 먼저 기다린다
         // 승인 창이 큐에서 기다리는 사이 설정의 기본 Vault 계정이 바뀌었으면 사용자가 본 것과 다른 계정이 이 주소로 간다 — 실행하지 않는다
         if (host.ResolveVault(null) != credBefore)
         {

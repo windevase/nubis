@@ -49,6 +49,12 @@ public partial class MainWindow
             catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 캡처하지 않았습니다."); }
             acquired = true;
             if (!_tabs.Contains(tab)) { _rdpInputSection.Release(); throw new McpToolException("탭이 닫혀 캡처하지 않았습니다."); }
+            // 기다리는 사이(승인 창이 떠 있던 동안 등) 전체 화면이 됐을 수 있다 — 원격 화면이 빠진 이미지를 정상 결과로 돌려주지 않게
+            if (tab.View is RdpSessionView { IsFullScreen: true })
+            {
+                _rdpInputSection.Release();
+                throw new McpToolException("RDP 탭이 전체 화면이라 캡처할 수 없습니다. 전체 화면을 나와 달라고 사용자에게 요청하세요.");
+            }
         }
         var switched = !tab.IsSelected;
         // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다

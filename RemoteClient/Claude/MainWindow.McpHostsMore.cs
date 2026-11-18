@@ -386,6 +386,7 @@ public partial class MainWindow
             if (usePublic == true && !h.HasPublicIp) { lines.Add($"{h.DisplayName}: 대기 중 공인 IP 가 없어져 건너뜀"); continue; }
             try
             {
+                await WaitRdpInputIdleAsync();
                 var tab = Connect(h, usePublic);
                 AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
                 lines.Add($"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})");
