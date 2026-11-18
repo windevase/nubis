@@ -100,7 +100,7 @@ public partial class MainWindow
         return true;
     }
 
-    private static readonly object AfterUserStopArg = new { type = "boolean", description = "사용자가 이 탭의 Claude 입력을 멈춘(Esc·멈추기) 뒤 이어서 입력할 때만 true — 멈춤 오류를 받았으면 사용자에게 계속할지 확인하고 계속하라고 한 경우에만 붙인다. 멈춘 뒤 이 값 없이 온 요청은 거부된다" };
+    private static readonly object AfterUserStopArg = new { type = "integer", description = "사용자가 이 탭의 Claude 입력을 멈춘(Esc·멈추기) 뒤 이어서 입력할 때만, 멈춤 오류에 적힌 stop_id 를 그대로 넣는다 — 사용자에게 계속할지 확인하고 계속하라고 한 경우에만. 그 뒤 사용자가 다시 멈추면 번호가 바뀌어 예전 번호는 통하지 않는다" };
     private static readonly object CaptureArgs = new { type = "boolean", description = "동작 뒤 화면을 다시 캡처해 함께 돌려준다 (기본 true). 여러 동작을 이어서 할 때 중간 것은 false 로 토큰 절약" };
     private static readonly object WaitArgs = new { type = "integer", description = "동작 뒤 캡처까지 기다릴 ms (기본 800, 0~10000) — 창이 뜨는 데 오래 걸리면 늘린다" };
     private static readonly object WidthArgs = new { type = "integer", description = "캡처 이미지 최대 가로 (기본: 마지막 캡처와 같은 크기 — 좌표 기준이 그대로 유지됨)" };
@@ -324,15 +324,17 @@ public partial class MainWindow
         var gate = _rdpInputLocks.GetValue(tab, _ => new SemaphoreSlim(1, 1));
         var stopBox = RdpStopEpoch(tab);
         var epoch = Volatile.Read(ref stopBox.Epoch);   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
-        var ackStop = BoolArg(a, "after_user_stop") == true;
-        bool StoppedSince() => Volatile.Read(ref stopBox.Epoch) != epoch || (!ackStop && Volatile.Read(ref stopBox.Pending) == 1);
+        var ackId = IntArg(a, "after_user_stop");   // 사용자 확인을 받은 멈춤 번호 — 지금 번호와 같을 때만 그 멈춤을 확인한 것
+        bool Acked() => ackId is { } n && n == Volatile.Read(ref stopBox.Epoch);
+        bool StoppedSince() => Volatile.Read(ref stopBox.Epoch) != epoch || (Volatile.Read(ref stopBox.Pending) == 1 && !Acked());
+        string StopRefusal(string head) => $"{head} 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop={Volatile.Read(ref stopBox.Epoch)} (stop_id) 를 붙여 다시 요청하세요.";
         try { await gate.WaitAsync(ct); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
         if (StoppedSince())
         {
             gate.Release();
             AuditLog.Write(tool, new[] { target }, action, "실행 안 함(사용자가 앞선 입력을 멈춤)");
-            throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 이 요청은 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop=true 를 붙여 다시 요청하세요.");
+            throw new McpToolException(StopRefusal("사용자가 이 탭의 Claude 입력을 멈춰 이 요청은 입력하지 않았습니다."));
         }
         // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
         using var userStop = new CancellationTokenSource();
@@ -373,9 +375,9 @@ public partial class MainWindow
                 if (grant && !ReferenceEquals(ActiveGrant(tab), grantObj))
                     throw new McpToolException("기다리는 동안 화면 조작 허용이 끝나 입력하지 않았습니다. 다시 요청하면 사용자에게 허용을 다시 묻습니다.");
                 if (StoppedSince())
-                    throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤, 계속하라고 하면 after_user_stop=true 를 붙여 다시 요청하세요.");
-                // 멈춤 확인을 받은 요청이 실제로 입력에 들어간다 — 확인 필요를 끈다 (이후 다시 멈추면 다시 켜짐)
-                if (ackStop) Interlocked.CompareExchange(ref stopBox.Pending, 0, 1);
+                    throw new McpToolException(StopRefusal("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다."));
+                // 지금 멈춤을 확인받은 요청이 실제로 입력에 들어간다 — 확인 필요를 끈다 (이후 다시 멈추면 번호가 바뀌고 다시 켜짐)
+                if (Acked()) Interlocked.CompareExchange(ref stopBox.Pending, 0, 1);
                 // 앱에 대화상자(계정 입력·호스트키·안내 창 등)가 떠 있으면 입력하지 않는다 — 다른 도구가 나중으로 미룬 창이 이 입력과 겹치면
                 // 사용자가 그 창에 치는 비밀번호가 키 차단에 막히고, 포커스도 서로 빼앗는다
                 if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
@@ -439,8 +441,6 @@ public partial class MainWindow
                     await act(tab, ih, linked.Token);
                     // 입력하는 사이 포커스가 빠졌으면(사용자가 다른 곳을 클릭 등) 그 뒤 마우스 입력은 컨트롤이 버렸을 수 있다
                     focusLost = !view.HasInputFocus;
-                    // 입력이 막 끝난 순간 Esc·멈추기가 들어오면 취소를 볼 곳이 없다 — 결과에 남겨 Claude 가 이어서 하지 않게
-                    stoppedAtEnd = userStop.IsCancellationRequested;
                 }
                 finally
                 {
@@ -451,6 +451,9 @@ public partial class MainWindow
                         try { RestoreFocusAfterRdpInput(view, focus); } catch { }
                     }
                     guard?.Dispose();
+                    // 입력이 막 끝난 순간(뗌 처리 대기 80ms 포함) Esc·멈추기가 들어오면 취소를 볼 곳이 없다 — 결과에 남겨 Claude 가 이어서 하지 않게.
+                    // Esc 콜백은 스레드 풀에서 늦게 돌 수 있어 번호도 함께 본다
+                    stoppedAtEnd = userStop.IsCancellationRequested || Volatile.Read(ref stopBox.Epoch) != epoch;
                     if (guard is { Blocked: > 0 } g)
                         Toast.Show(L.F("Claude 가 원격에 입력하는 동안 누른 키 {0}개는 원격으로 가지 않게 막았습니다.", g.Blocked), ToastKind.Warning);
                 }
@@ -463,7 +466,8 @@ public partial class MainWindow
                     throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
                 }
                 AuditLog.Write(tool, new[] { target }, action, $"중단({StopReason()}) — 일부 입력됐을 수 있음");
-                throw new McpToolException($"{StopReason()} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것).");
+                throw new McpToolException($"{StopReason()} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것)." +
+                    (userStop.IsCancellationRequested ? " " + StopRefusal("이 탭의 다음 입력은 사용자 확인 전까지 거부됩니다.") : ""));
             }
             catch (McpToolException ex)
             {
@@ -482,7 +486,7 @@ public partial class MainWindow
                 (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : "") +
                 (stoppedAtEnd ? " — 입력이 끝나는 순간 사용자가 멈춤" : ""));
             if (focusLost) action += " (입력 중 RDP 포커스가 빠져 일부 입력이 버려졌을 수 있음 — 화면으로 확인할 것)";
-            if (stoppedAtEnd) action += " (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것)";
+            if (stoppedAtEnd) action += $" (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것. 계속하라고 하면 다음 요청에 after_user_stop={Volatile.Read(ref stopBox.Epoch)})";
             holdForCapture = captureAfter;
         }
         finally
