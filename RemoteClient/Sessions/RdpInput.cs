@@ -209,6 +209,25 @@ internal static class RdpKeys
     private static string Describe(Rune r) => Rune.IsControl(r) || Rune.IsWhiteSpace(r) ? $"\\u{r.Value:X4}" : $"'{r}'";
 
     /// <summary>Enter 키 누름·뗌 (rdp_type 의 press_enter)</summary>
+    /// <summary>
+    /// 키 이벤트를 "조합" 단위로 나눈다 — 누른 키가 모두 떼질 때까지가 한 묶음 (Shift↓ 4↓ 4↑ Shift↑ · Win↓ R↓ R↑ Win↑ · a↓ a↑).
+    /// sendkeys 방식은 묶음 하나를 한 번에 보내야 수정 키가 유지된다. 끝까지 떼지 않은 키가 남으면 마지막 묶음에 그대로 둔다
+    /// </summary>
+    public static List<List<RdpKeyEvent>> Chords(IReadOnlyList<RdpKeyEvent> events)
+    {
+        var result = new List<List<RdpKeyEvent>>();
+        var cur = new List<RdpKeyEvent>();
+        var held = new HashSet<(byte, bool)>();
+        foreach (var e in events)
+        {
+            cur.Add(e);
+            if (e.Up) held.Remove((e.Scan, e.Extended)); else held.Add((e.Scan, e.Extended));
+            if (held.Count == 0) { result.Add(cur); cur = new List<RdpKeyEvent>(); }
+        }
+        if (cur.Count > 0) result.Add(cur);
+        return result;
+    }
+
     public static IEnumerable<RdpKeyEvent> EnterEvents() => new[] { new RdpKeyEvent(0x0D, 0x1C, false, false), new RdpKeyEvent(0x0D, 0x1C, false, true) };
 
     /// <summary>
@@ -325,6 +344,7 @@ internal static partial class RdpInputSender
 
     public static async Task KeysAsync(RdpTarget ih, IReadOnlyList<RdpKeyEvent> events, CancellationToken ct)
     {
+        if (ih.Method == RdpInputMethod.SendKeys) { await SendKeysBatchedAsync(ih, events, ct); return; }
         bool alt = false, ctrl = false;
         var held = new List<RdpKeyEvent>();   // 눌렀지만 아직 안 뗀 키 (누른 순서)
         try

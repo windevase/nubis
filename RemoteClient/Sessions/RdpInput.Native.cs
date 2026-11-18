@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -51,6 +53,32 @@ internal static partial class RdpInputSender
         }
         var flags = KEYEVENTF_SCANCODE | (e.Extended ? KEYEVENTF_EXTENDEDKEY : 0) | (e.Up ? KEYEVENTF_KEYUP : 0);
         Input(new INPUT { Type = INPUT_KEYBOARD, U = new INPUTUNION { Ki = new KEYBDINPUT { Scan = e.Scan, Flags = flags } } });
+    }
+
+    /// <summary>
+    /// 공식 SendKeys 로 키 이벤트를 보낸다. 한 글자·한 조합(수정 키를 누른 뒤 모두 뗄 때까지)을 **한 번의 호출**로 묶는다 —
+    /// 키를 하나씩 따로 보내면 컨트롤이 호출마다 수정 키 상태를 로컬 키보드에 맞춰 Shift 가 풀린다 ($ → 4, P → p 로 찍힘, tg01 실측).
+    /// 묶음 단위로만 보내므로 취소돼도 눌린 채 남는 키가 없다. 일시적인 COM 오류는 한 번 다시 시도한다
+    /// </summary>
+    internal static async Task SendKeysBatchedAsync(RdpTarget ih, IReadOnlyList<RdpKeyEvent> events, CancellationToken ct)
+    {
+        var keys = ih.Keys ?? throw new InvalidOperationException("이 RDP 컨트롤은 SendKeys 를 지원하지 않습니다.");
+        foreach (var group in RdpKeys.Chords(events))
+        {
+            ct.ThrowIfCancellationRequested();
+            Check(ih, false);
+            var ups = group.Select(e => (short)(e.Up ? -1 : 0)).ToArray();
+            var data = group.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray();
+            try { keys.SendKeys(group.Count, ups, data); }
+            catch (COMException)
+            {
+                await Task.Delay(80, ct);
+                Check(ih, false);
+                keys.SendKeys(group.Count, ups, data);
+            }
+            // 원격이 따라오게 묶음 사이에 잠깐 쉰다 (실행 창·UAC 전환 직후 키를 놓치지 않게)
+            await Task.Delay(15 + 4 * group.Count, ct);
+        }
     }
 
     private static void Input(INPUT input)

@@ -243,19 +243,21 @@ public partial class MainWindow
     private static readonly object MethodArg = new
     {
         type = "string",
-        @enum = new[] { "message", "post", "focus_post", "sendkeys", "sendinput" },
-        description = "입력 전달 방식 (실험 중 — 기본 message). post = 메시지 큐 · focus_post = RDP 컨트롤에 포커스를 준 뒤 · " +
+        @enum = new[] { "auto", "message", "post", "focus_post", "sendkeys", "sendinput" },
+        description = "입력 전달 방식 — 보통은 생략(auto: 키는 sendkeys, 마우스는 focus_post · 실서버에서 확인된 방식). 진단용: message · post · focus_post · " +
                       "sendkeys = 키는 컨트롤의 공식 SendKeys(마우스는 focus_post) · sendinput = 실제 입력(Nubis 창이 앞으로 오고 커서가 잠깐 움직였다 돌아옴)",
     };
 
-    private static RdpInputMethod ParseInputMethod(string s) => s.Trim().ToLowerInvariant() switch
+    private static RdpInputMethod ParseInputMethod(string s, bool keyboard) => s.Trim().ToLowerInvariant() switch
     {
-        "" or "message" => RdpInputMethod.Message,
+        // auto: RDP 컨트롤은 포커스가 있어야 입력을 원격으로 넘긴다(포커스 없는 창 메시지는 버려짐) · Win 키는 창 모드에서 로컬이 가져가므로 키는 공식 SendKeys
+        "" or "auto" => keyboard ? RdpInputMethod.SendKeys : RdpInputMethod.FocusPost,
+        "message" => RdpInputMethod.Message,
         "post" => RdpInputMethod.Post,
         "focus_post" => RdpInputMethod.FocusPost,
         "sendkeys" => RdpInputMethod.SendKeys,
         "sendinput" => RdpInputMethod.SendInput,
-        _ => throw new McpToolException("input_method 는 message / post / focus_post / sendkeys / sendinput 중 하나입니다."),
+        _ => throw new McpToolException("input_method 는 auto / message / post / focus_post / sendkeys / sendinput 중 하나입니다."),
     };
 
     private static double RequireNum(JsonElement a, string name) =>
@@ -272,7 +274,7 @@ public partial class MainWindow
         var captureAfter = BoolArg(a, "capture_after") != false;
         var waitMs = Math.Clamp(IntArg(a, "wait_ms") ?? 800, 0, 10000);
         var maxWidthArg = IntArg(a, "max_width");
-        var method = ParseInputMethod(Arg(a, "input_method"));
+        var method = ParseInputMethod(Arg(a, "input_method"), keyboard: tool is "rdp_key" or "rdp_type");
         var tab = RequireSession(a, allowCurrent: true);
         CheckRdpTab(tab);
         var target = SessionAuditTarget(tab);

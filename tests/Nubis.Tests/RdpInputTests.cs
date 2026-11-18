@@ -532,4 +532,29 @@ public class RdpInputTests
     [Fact]
     public void win_r_조합은_전부_일반_KEY() =>
         Assert.Equal(new[] { WM_KEYDOWN, WM_KEYDOWN, WM_KEYUP, WM_KEYUP }, Messages("win+r"));
+
+    // ---------------------------------------------------------------- sendkeys 묶음 (실서버: 키를 하나씩 보내면 Shift 가 풀림)
+
+    [Fact]
+    public void 글자_하나와_조합은_한_묶음()
+    {
+        var chords = RdpKeys.Chords(RdpKeys.TextToEvents("a$B"));
+        Assert.Equal(3, chords.Count);
+        Assert.Equal(2, chords[0].Count);   // a↓ a↑
+        Assert.Equal(4, chords[1].Count);   // Shift↓ 4↓ 4↑ Shift↑
+        Assert.Equal(0x2A, chords[1][0].Scan);
+        Assert.Equal(4, chords[2].Count);
+        var win = RdpKeys.Chords(RdpKeys.ParseCombo("win+r"));
+        Assert.Single(win);
+        Assert.Equal(4, win[0].Count);
+    }
+
+    [Fact]
+    public void 떼지_않은_키는_마지막_묶음에_남는다()
+    {
+        var ev = new List<RdpKeyEvent> { new(0x10, 0x2A, false, false), new(0x41, 0x1E, false, false), new(0x41, 0x1E, false, true) };
+        var chords = RdpKeys.Chords(ev);
+        Assert.Single(chords);
+        Assert.Equal(3, chords[0].Count);
+    }
 }
