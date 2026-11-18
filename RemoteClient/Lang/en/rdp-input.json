@@ -8,5 +8,6 @@
   "{0} 화면의 Claude 조작 허용을 끝냈습니다.": "Ended Claude's control of the {0} screen.",
   "승인하면 {0}분 동안 이 RDP 연결에서 Claude 의 마우스 클릭·끌기·스크롤·키 조합 입력을 다시 묻지 않습니다. 글자 입력은 매번 따로 승인을 받고, 모든 동작은 감사 로그에 남습니다. 탭 우클릭 메뉴에서 언제든 끝낼 수 있습니다.": "If you approve, Claude's mouse clicks, drags, scrolling and key combinations on this RDP connection won't be asked about again for {0} minutes. Typing text is approved separately each time, and every action is recorded in the audit log. You can end this anytime from the tab's right-click menu.",
   "주의: 클릭·키 조합만으로도 원격에서 프로그램을 실행하거나 이전 명령을 다시 실행할 수 있고, 클립보드 공유가 켜져 있으면 이 PC 의 클립보드 내용이 원격에 붙여넣어질 수 있습니다.": "Caution: clicks and key combinations alone can launch programs or re-run earlier commands on the remote PC, and if clipboard sharing is on, this PC's clipboard contents can be pasted on the remote side.",
-  "{0} 화면을 Claude 가 {1}분 동안 조작할 수 있습니다. 탭 우클릭 메뉴에서 끝낼 수 있습니다.": "Claude can control the {0} screen for {1} minutes. You can end this from the tab's right-click menu."
+  "{0} 화면을 Claude 가 {1}분 동안 조작할 수 있습니다. 탭 우클릭 메뉴에서 끝낼 수 있습니다.": "Claude can control the {0} screen for {1} minutes. You can end this from the tab's right-click menu.",
+  "Claude 가 원격에 입력하는 동안 누른 키 {0}개는 원격으로 가지 않게 막았습니다.": "{0} keys you pressed while Claude was typing on the remote desktop were blocked so they wouldn't reach the remote side."
 }

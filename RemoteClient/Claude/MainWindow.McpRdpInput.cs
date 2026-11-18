@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace Nubis;
@@ -17,7 +18,8 @@ namespace Nubis;
 //   다만 클릭·키 조합만으로도 원격에서 프로그램 실행·명령 기록 재실행·(클립보드 공유 시) 붙여넣기가 가능하므로 허용 승인 창에 그대로 알린다.
 // - 허용은 그 탭의 그 연결에만 (다시 연결하면 새로 승인). 탭 메뉴에서 끝내면 진행 중인 입력도 멈춘다.
 // - 한 탭의 입력은 한 번에 하나씩 (탭별 잠금) — 동시에 온 요청의 키가 섞여 Ctrl+글자 같은 다른 입력이 되지 않게.
-// - 입력은 RDP 컨트롤의 입력 창에 직접 — 사용자의 실제 커서·키보드 포커스는 건드리지 않는다.
+// - 입력은 RDP 컨트롤로 (클릭은 입력 창 메시지, 키는 공식 SendKeys) — 실제 마우스 커서는 움직이지 않는다. 컨트롤은 포커스가 있어야 입력을 넘기므로
+//   입력하는 동안만 포커스를 주고 사용자의 실제 키 입력을 막은 뒤(RdpKeyboardGuard), 끝나면 원래 포커스로 되돌린다.
 // - 좌표는 Claude 가 본 마지막 캡처 이미지 기준. 그 뒤 탭 크기가 바뀌었으면 다시 캡처하게 한다 (엉뚱한 곳을 누르지 않게).
 public partial class MainWindow
 {
@@ -115,7 +117,7 @@ public partial class MainWindow
 
         yield return new McpTool("rdp_click",
             "RDP(원격 데스크톱) 탭 화면을 클릭한다. " + CoordNote + GrantNote +
-            "사용자의 실제 마우스 커서는 움직이지 않는다. 결과는 동작 뒤 캡처로 확인. " +
+            "사용자의 실제 마우스 커서는 움직이지 않는다 (입력하는 동안만 키보드 포커스가 RDP 로 가고 사용자 키 입력은 막힘). 결과는 동작 뒤 캡처로 확인. " +
             "PowerShell 을 열 때는 시작 메뉴를 찾아 누르기보다 rdp_key 'win+r' → rdp_type 'powershell' 이 빠르고 정확하다. " +
             "콘솔 창(PowerShell·cmd)에서 오른쪽 클릭은 붙여넣기이므로 쓰지 말 것.",
             Schema(new
@@ -125,7 +127,7 @@ public partial class MainWindow
                 y = new { type = "number" },
                 button = new { type = "string", @enum = new[] { "left", "right", "middle" }, description = "기본 left" },
                 @double = new { type = "boolean", description = "더블 클릭" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
             }, "x", "y"),
             a => OnUiAsync(async () =>
             {
@@ -148,7 +150,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 to_x = new { type = "number" }, to_y = new { type = "number" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
             }, "x", "y", "to_x", "to_y"),
             a => OnUiAsync(async () =>
             {
@@ -169,7 +171,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 x = new { type = "number" }, y = new { type = "number" },
                 amount = new { type = "integer", description = "휠 칸 수 (양수 위, 음수 아래)" },
-                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
+                image_width = ImageWidthArg, capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
             }, "x", "y", "amount"),
             a => OnUiAsync(async () =>
             {
@@ -194,7 +196,7 @@ public partial class MainWindow
             {
                 session_id = new { type = "integer" },
                 keys = new { type = "array", items = new { type = "string" }, description = $"차례로 누를 키 조합 (최대 {RdpKeys.MaxCombos}개)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
             }, "keys"),
             a => OnUiAsync(async () =>
             {
@@ -219,7 +221,7 @@ public partial class MainWindow
                 session_id = new { type = "integer" },
                 text = new { type = "string" },
                 press_enter = new { type = "boolean", description = "끝에 Enter (기본 true)" },
-                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs, input_method = MethodArg,
+                capture_after = CaptureArgs, wait_ms = WaitArgs, max_width = WidthArgs,
             }, "text"),
             a => OnUiAsync(async () =>
             {
@@ -240,25 +242,29 @@ public partial class MainWindow
             }));
     }
 
-    private static readonly object MethodArg = new
-    {
-        type = "string",
-        @enum = new[] { "auto", "message", "post", "focus_post", "sendkeys", "sendinput" },
-        description = "입력 전달 방식 — 보통은 생략(auto: 키는 sendkeys, 마우스는 focus_post · 실서버에서 확인된 방식). 진단용: message · post · focus_post · " +
-                      "sendkeys = 키는 컨트롤의 공식 SendKeys(마우스는 focus_post) · sendinput = 실제 입력(Nubis 창이 앞으로 오고 커서가 잠깐 움직였다 돌아옴)",
-    };
+    /// <summary>Claude 입력 전 키보드 포커스 상태 (끝나면 그대로 되돌린다)</summary>
+    private sealed record RdpFocusState(bool RdpHadFocus, bool ClaudeHadFocus, IInputElement? Element);
 
-    private static RdpInputMethod ParseInputMethod(string s, bool keyboard) => s.Trim().ToLowerInvariant() switch
+    private RdpFocusState CaptureFocusForRdpInput(RdpSessionView view) =>
+        new(view.IsKeyboardFocusWithin, _claudeView?.IsKeyboardFocusWithin == true, Keyboard.FocusedElement);
+
+    /// <summary>
+    /// 입력 뒤 포커스 되돌리기: 원래 RDP 화면에 있었으면 그대로, Claude 패널이면 패널로, 다른 요소면 그 요소로,
+    /// 알 수 없으면(창이 비활성이었음 등) 숨은 세션에서 빼낸다 — 어느 경우든 RDP 컨트롤에 포커스가 남아 이후 키가 원격으로 가지 않게
+    /// </summary>
+    private void RestoreFocusAfterRdpInput(RdpSessionView view, RdpFocusState s)
     {
-        // auto: RDP 컨트롤은 포커스가 있어야 입력을 원격으로 넘긴다(포커스 없는 창 메시지는 버려짐) · Win 키는 창 모드에서 로컬이 가져가므로 키는 공식 SendKeys
-        "" or "auto" => keyboard ? RdpInputMethod.SendKeys : RdpInputMethod.FocusPost,
-        "message" => RdpInputMethod.Message,
-        "post" => RdpInputMethod.Post,
-        "focus_post" => RdpInputMethod.FocusPost,
-        "sendkeys" => RdpInputMethod.SendKeys,
-        "sendinput" => RdpInputMethod.SendInput,
-        _ => throw new McpToolException("input_method 는 auto / message / post / focus_post / sendkeys / sendinput 중 하나입니다."),
-    };
+        if (s.RdpHadFocus) return;
+        if (s.ClaudeHadFocus && _claudeView != null) { _claudeView.FocusSession(); return; }
+        if (s.Element is DependencyObject d && PresentationSource.FromDependencyObject(d) != null && s.Element.Focusable)
+        {
+            Keyboard.Focus(s.Element);
+            if (!view.IsKeyboardFocusWithin) return;
+        }
+        // 되돌릴 곳을 모르면 창 자체로 — RDP 컨트롤(ActiveX)에서 Win32 포커스를 빼낸다
+        Keyboard.ClearFocus();
+        Focus();
+    }
 
     private static double RequireNum(JsonElement a, string name) =>
         NumArg(a, name) is { } v && double.IsFinite(v) ? v : throw new McpToolException($"{name} 좌표(숫자)가 필요합니다.");
@@ -274,7 +280,9 @@ public partial class MainWindow
         var captureAfter = BoolArg(a, "capture_after") != false;
         var waitMs = Math.Clamp(IntArg(a, "wait_ms") ?? 800, 0, 10000);
         var maxWidthArg = IntArg(a, "max_width");
-        var method = ParseInputMethod(Arg(a, "input_method"), keyboard: tool is "rdp_key" or "rdp_type");
+        // 실서버(tg01)에서 확인된 방식: RDP 컨트롤은 포커스가 있어야 입력을 원격으로 넘기고(포커스 없는 창 메시지는 버려짐),
+        // 창 모드의 Win 키는 공식 SendKeys 로만 넘어간다 → 키는 SendKeys, 마우스는 포커스를 준 뒤 PostMessage
+        var method = tool is "rdp_key" or "rdp_type" ? RdpInputMethod.SendKeys : RdpInputMethod.FocusPost;
         var tab = RequireSession(a, allowCurrent: true);
         CheckRdpTab(tab);
         var target = SessionAuditTarget(tab);
@@ -331,18 +339,26 @@ public partial class MainWindow
 
             _rdpActiveInput.AddOrUpdate(tab, userStop);
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
-            // 포커스가 필요한 방식은 RDP 컨트롤에 포커스를 주고(sendinput 은 창도 앞으로), 끝나면 Claude 패널 등 원래 자리로 되돌린다
-            var hadClaudeFocus = _claudeView?.IsKeyboardFocusWithin == true;
-            if (method is RdpInputMethod.FocusPost or RdpInputMethod.SendKeys or RdpInputMethod.SendInput)
-            {
-                if (method == RdpInputMethod.SendInput) Activate();
-                view.FocusRdpControl();
-                await Task.Delay(120, ct);
-            }
+            // RDP 컨트롤에 포커스를 주고, 그동안 사용자의 실제 키 입력은 막는다 (포커스가 RDP 에 있는 사이 Claude 패널 등에 치던 키가
+            // 원격으로 새어 승인하지 않은 입력이 되지 않게). 끝나면 원래 포커스로 되돌린다 — 예외·취소에도 (finally)
+            var focus = CaptureFocusForRdpInput(view);
+            RdpKeyboardGuard? guard = null;
             try
             {
-                try { await act(tab, ih, linked.Token); }
-                finally { if (method is not (RdpInputMethod.Message or RdpInputMethod.Post) && hadClaudeFocus) _claudeView?.FocusSession(); }
+                try
+                {
+                    guard = new RdpKeyboardGuard();
+                    view.FocusRdpControl();
+                    await Task.Delay(120, linked.Token);   // 포커스가 컨트롤 안 입력 창(별도 스레드)까지 닿을 시간
+                    await act(tab, ih, linked.Token);
+                }
+                finally
+                {
+                    RestoreFocusAfterRdpInput(view, focus);
+                    guard?.Dispose();
+                    if (guard is { Blocked: > 0 } g)
+                        Toast.Show(L.F("Claude 가 원격에 입력하는 동안 누른 키 {0}개는 원격으로 가지 않게 막았습니다.", g.Blocked), ToastKind.Warning);
+                }
             }
             catch (OperationCanceledException)
             {

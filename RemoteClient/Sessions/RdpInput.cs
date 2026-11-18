@@ -11,17 +11,17 @@ namespace Nubis;
 /// <summary>입력을 보낼 RDP 입력 창과, 아직 같은 탭·같은 연결인지 확인하는 함수 (UI 스레드에서 부른다)</summary>
 internal readonly record struct RdpTarget(IntPtr Hwnd, Func<bool> Alive, Func<bool> CanRelease)
 {
-    /// <summary>입력 전달 방식 (실험 중 — 실서버에서 통하는 방식을 고른다)</summary>
+    /// <summary>입력 전달 방식 — 키는 SendKeys, 마우스는 FocusPost (호출하는 쪽이 RDP 컨트롤에 포커스를 준다)</summary>
     public RdpInputMethod Method { get; init; }
     /// <summary>sendkeys 방식의 공식 키 전송 인터페이스</summary>
     public RdpAxHost.IMsRdpClientNonScriptable? Keys { get; init; }
 }
 
 /// <summary>
-/// RDP 입력 전달 방식. message = 입력 창에 SendMessage · post = PostMessage · focus_post = 컨트롤에 포커스를 준 뒤 PostMessage ·
-/// sendkeys = 키는 컨트롤의 공식 SendKeys(마우스는 focus_post) · sendinput = 실제 입력(SendInput — 창이 앞으로 오고 커서가 잠깐 움직였다 돌아옴)
+/// RDP 입력 전달 방식 (tg01 실측으로 확정): FocusPost = RDP 컨트롤에 포커스를 준 뒤 입력 창에 PostMessage (포커스가 없으면 컨트롤이 버림) ·
+/// SendKeys = 키를 컨트롤의 공식 SendKeys 로 (창 모드의 Win 키까지 원격으로 넘어감)
 /// </summary>
-internal enum RdpInputMethod { Message, Post, FocusPost, SendKeys, SendInput }
+internal enum RdpInputMethod { FocusPost, SendKeys }
 
 /// <summary>원격으로 보낼 키 하나의 누름/뗌 (스캔코드 기준 — RDP 는 스캔코드를 보내고 원격의 자판 배열이 글자를 정한다)</summary>
 internal readonly record struct RdpKeyEvent(ushort Vk, byte Scan, bool Extended, bool Up);
@@ -246,9 +246,8 @@ internal static class RdpKeys
 
 /// <summary>
 /// mstscax 의 입력 창(IHWindowClass)에 마우스·키 메시지를 보내 원격 세션에 입력한다.
-/// 사용자의 실제 마우스 커서·키보드 포커스는 건드리지 않는다. UI 스레드에서 호출.
-/// SendMessage 로 입력 창의 창 프로시저를 바로 부른다 — PostMessage 는 메시지 루프를 거치며 WPF·WinForms 의
-/// 사전 처리(Tab·방향키 키보드 탐색 등)에 가로채일 수 있다.
+/// 실제 마우스 커서는 움직이지 않는다. 컨트롤은 키보드 포커스가 있어야 입력을 원격으로 넘기므로 호출하는 쪽(RdpActAsync)이 입력하는 동안
+/// 포커스를 주고 사용자의 실제 키 입력을 막는다(RdpKeyboardGuard). UI 스레드에서 호출.
 /// 중간에 취소·실패해도 누른 키·버튼은 반드시 뗀다 (원격에 Ctrl·Win·마우스 버튼이 눌린 채 남지 않게).
 /// </summary>
 internal static partial class RdpInputSender
@@ -257,7 +256,6 @@ internal static partial class RdpInputSender
     private const uint WM_MOUSEMOVE = 0x200, WM_MOUSEWHEEL = 0x20A;
     private const int MK_LBUTTON = 0x1, MK_RBUTTON = 0x2, MK_MBUTTON = 0x10;
 
-    [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr parent, EnumProc cb, IntPtr lParam);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, StringBuilder name, int max);
@@ -321,20 +319,11 @@ internal static partial class RdpInputSender
     {
         if (!IsWindow(ih.Hwnd) || !(release ? ih.CanRelease() : ih.Alive()))
             throw new InvalidOperationException("탭이 닫혔거나 연결이 바뀌어 입력을 멈췄습니다.");
-        if (ih.Method == RdpInputMethod.Message) SendMessage(ih.Hwnd, msg, w, l);
-        else if (!PostMessage(ih.Hwnd, msg, w, l)) throw new InvalidOperationException("RDP 입력 창에 보내지 못했습니다.");
+        if (!PostMessage(ih.Hwnd, msg, w, l)) throw new InvalidOperationException("RDP 입력 창에 보내지 못했습니다.");
     }
 
     private static void SendKey(RdpTarget ih, RdpKeyEvent e, ref bool alt, ref bool ctrl, bool release = false)
     {
-        // sendkeys · sendinput 은 창 메시지가 아니라 스캔코드로 보낸다 (Alt·Ctrl 상태는 원격이 따라간다)
-        if (ih.Method is RdpInputMethod.SendKeys or RdpInputMethod.SendInput)
-        {
-            NativeKey(ih, e, release);
-            if (e.Vk == 0x12) alt = !e.Up;
-            if (e.Vk == 0x11) ctrl = !e.Up;
-            return;
-        }
         var (msg, w, l) = BuildKeyMessage(e, alt, ctrl);
         if (w == IntPtr.Zero) w = (IntPtr)MapVirtualKey(e.Scan, 1 /* MAPVK_VSC_TO_VK */);
         Send(ih, msg, w, l, release);
@@ -372,7 +361,6 @@ internal static partial class RdpInputSender
 
     public static async Task ClickAsync(RdpTarget ih, int x, int y, string button, int count, CancellationToken ct)
     {
-        if (ih.Method == RdpInputMethod.SendInput) { await NativeClickAsync(ih, x, y, button, count, ct); return; }
         var (down, up, mk) = button switch
         {
             "right" => (0x204u, 0x205u, MK_RBUTTON),
@@ -392,7 +380,6 @@ internal static partial class RdpInputSender
 
     public static async Task DragAsync(RdpTarget ih, (int X, int Y) from, (int X, int Y) to, CancellationToken ct)
     {
-        if (ih.Method == RdpInputMethod.SendInput) { await NativeDragAsync(ih, from, to, ct); return; }
         Send(ih, WM_MOUSEMOVE, IntPtr.Zero, XY(from.X, from.Y));
         await Task.Delay(40, ct);
         Send(ih, 0x201, (IntPtr)MK_LBUTTON, XY(from.X, from.Y));
@@ -418,7 +405,6 @@ internal static partial class RdpInputSender
     /// <summary>휠: notches 양수 = 위로, 음수 = 아래로. WM_MOUSEWHEEL 의 좌표는 화면 좌표</summary>
     public static async Task ScrollAsync(RdpTarget ih, (int X, int Y) client, (int X, int Y) screen, int notches, CancellationToken ct)
     {
-        if (ih.Method == RdpInputMethod.SendInput) { await NativeScrollAsync(ih, client, notches, ct); return; }
         Send(ih, WM_MOUSEMOVE, IntPtr.Zero, XY(client.X, client.Y));
         await Task.Delay(30, ct);
         var dir = Math.Sign(notches);
