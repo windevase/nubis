@@ -375,6 +375,7 @@ public partial class MainWindow
 
             // 창 전체 입력 구간 잠금은 승인 직후, 탭을 바꾸기 전에 잡는다 — 다른 탭 요청이 진행 중인 입력의 탭을 바꿔 끊지 않게
             RdpTarget ih;
+            var refocused = false;   // 키 전송이 포커스 없음으로 거절돼 RDP 에 포커스를 다시 줬는가 — 결과에 남긴다 (사용자가 고른 곳으로 되돌리지 못했을 수 있음)
             try
             {
                 await _rdpInputSection.WaitAsync(linked.Token);
@@ -409,7 +410,7 @@ public partial class MainWindow
                           !System.Windows.Interop.ComponentDispatcher.IsThreadModal,   // 입력 도중 대화상자가 뜨면 멈춘다
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen)
-                { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null, HasFocus = () => view.HasInputFocus, Refocus = view.FocusRdpControl };
+                { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null, HasFocus = () => view.HasInputFocus, Refocus = () => { refocused = true; view.FocusRdpControl(); } };
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
@@ -495,8 +496,9 @@ public partial class MainWindow
             }
             AuditLog.Write(tool, new[] { target }, action,
                 (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : "") +
-                (stoppedAtEnd ? " — 입력이 끝나는 순간 사용자가 멈춤" : ""));
+                (stoppedAtEnd ? " — 입력이 끝나는 순간 사용자가 멈춤" : "") + (refocused ? " — 입력 중 포커스가 빠져 다시 줌" : ""));
             if (focusLost) action += " (입력 중 RDP 포커스가 빠져 일부 입력이 버려졌을 수 있음 — 화면으로 확인할 것)";
+            if (refocused) action += " (입력 중 RDP 포커스가 빠져 다시 준 뒤 이어서 입력함 — 사용자가 입력 중 다른 곳을 눌렀다면 끝난 뒤 포커스는 입력 전 위치로 돌아감)";
             if (stoppedAtEnd) action += $" (입력은 끝났지만 사용자가 그 순간 Claude 입력을 멈췄습니다 — 이어서 입력하지 말고 사용자에게 계속할지 확인할 것. 계속하라고 하면 다음 요청에 after_user_stop={stopBox.ReadStopId()})";
             holdForCapture = captureAfter;
         }
