@@ -293,6 +293,7 @@ public partial class MainWindow
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
         // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
         using var userStop = new CancellationTokenSource();
+        var entered = false;   // 창 전체 입력 구간 잠금(_rdpInputSection)을 잡았는가
         try
         {
             // 승인을 묻기 전 연결 번호 — 승인 창이 떠 있는 사이 다시 연결됐으면 승인하지 않은 새 연결에 입력하지 않는다
@@ -307,9 +308,12 @@ public partial class MainWindow
                 throw new McpToolException("사용자가 입력을 거부했습니다.");
             }
 
+            // 창 전체 입력 구간 잠금은 승인 직후, 탭을 바꾸기 전에 잡는다 — 다른 탭 요청이 진행 중인 입력의 탭을 바꿔 끊지 않게 (해제는 맨 끝 finally)
             RdpTarget ih;
             try
             {
+                await _rdpInputSection.WaitAsync(ct);
+                entered = true;
                 // 승인을 기다리는 동안 탭이 닫혔거나 끊겼거나 다시 연결됐을 수 있다
                 if (!_tabs.Contains(tab)) throw new McpToolException("승인을 기다리는 동안 탭이 닫혀 입력하지 않았습니다.");
                 CheckRdpTab(tab);
@@ -344,11 +348,8 @@ public partial class MainWindow
             // 원격으로 새어 승인하지 않은 입력이 되지 않게). 끝나면 원래 포커스로 되돌린다 — 예외·취소에도 (finally)
             // 입력 중 Esc 를 누르면(키 차단이 받아) 멈춘다 — 키보드로 멈출 수 있는 유일한 길 (나머지 키는 막힘)
             RdpKeyboardGuard? guard = null;
-            var entered = false;
             try
             {
-                await _rdpInputSection.WaitAsync(linked.Token);
-                entered = true;
                 var focus = CaptureFocusForRdpInput(view);
                 var focused = false;
                 try
@@ -356,10 +357,10 @@ public partial class MainWindow
                     guard = new RdpKeyboardGuard(() => { try { userStop.Cancel(); } catch (ObjectDisposedException) { } });
                     if (!guard.Active)
                         throw new McpToolException("입력 중 사용자 키 입력을 막는 장치(키보드 훅)를 걸지 못해 입력하지 않았습니다 — 사용자 키가 원격으로 섞일 수 있어서입니다.");
-                    // Ctrl·Shift·Alt 가 실제로 눌린 채면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다 — 뗄 때까지 잠깐 기다린다
+                    // Ctrl·Shift·Alt·Win 이 실제로 눌린 채면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다 — 뗄 때까지 잠깐 기다린다
                     for (var i = 0; i < 20 && RdpKeyboardGuard.ModifierHeld(); i++) await Task.Delay(100, linked.Token);
                     if (RdpKeyboardGuard.ModifierHeld())
-                        throw new McpToolException("Ctrl·Shift·Alt 키가 눌려 있어 입력하지 않았습니다 (눌린 채 입력하면 글자가 조합키로 바뀜). 키에서 손을 뗀 뒤 다시 요청하세요.");
+                        throw new McpToolException("Ctrl·Shift·Alt·Win 키가 눌려 있어 입력하지 않았습니다 (눌린 채 입력하면 글자가 조합키로 바뀜). 키에서 손을 뗀 뒤 다시 요청하세요.");
                     if (!tab.IsSelected) throw new McpToolException("그 사이 다른 탭이 선택되어 입력하지 않았습니다.");
                     view.FocusRdpControl();
                     focused = true;
@@ -398,15 +399,12 @@ public partial class MainWindow
                 AuditLog.Write(tool, new[] { target }, action, "중단 — 일부 입력됐을 수 있음: " + ex.Message);
                 throw new McpToolException($"입력을 멈췄습니다: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것).");
             }
-            finally
-            {
-                if (entered) _rdpInputSection.Release();
-            }
             AuditLog.Write(tool, new[] { target }, action, grant ? "실행(화면 조작 허용 중)" : "승인·입력");
         }
         finally
         {
             if (_rdpActiveInput.TryGetValue(tab, out var cur) && ReferenceEquals(cur, userStop)) _rdpActiveInput.Remove(tab);
+            if (entered) _rdpInputSection.Release();
             gate.Release();
         }
 

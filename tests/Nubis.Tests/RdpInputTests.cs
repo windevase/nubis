@@ -569,7 +569,7 @@ public class RdpInputTests
         Assert.Equal((false, false), RdpKeyboardGuard.Decide(0x105, 0x11, injected: false, ours: true));
         Assert.Equal((false, false), RdpKeyboardGuard.Decide(0x100, 0x41, injected: true, ours: true));    // 주입된 키 — 통과
         Assert.Equal((false, false), RdpKeyboardGuard.Decide(0x100, 0x41, injected: false, ours: false));  // 다른 앱이 앞 — 통과
-        Assert.Equal((false, false), RdpKeyboardGuard.Decide(0x100, 0x5B, injected: false, ours: true));   // Win — 통과
+        Assert.Equal((true, false), RdpKeyboardGuard.Decide(0x100, 0x5B, injected: false, ours: true));    // Win 누름 — 막음 (키보드 훅 설정에 따라 원격으로 갈 수 있음)
         Assert.Equal((true, true), RdpKeyboardGuard.Decide(0x100, 0x1B, injected: false, ours: true));     // Esc — 막고 멈춤
     }
 }

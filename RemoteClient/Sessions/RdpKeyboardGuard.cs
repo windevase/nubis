@@ -10,7 +10,7 @@ namespace Nubis;
 /// 원격의 PowerShell 같은 창으로 새어 승인하지 않은 입력이 되지 않게 한다.
 /// - Claude 의 키는 RDP 프로토콜로 바로 가는 공식 SendKeys 라 이 훅을 거치지 않는다
 /// - 누름만 막고 뗌은 통과시킨다 — 뗌을 막으면 그 키가 로컬에서 눌린 채로 남는다 (SendKeys 는 로컬 수정 키 상태를 따라간다)
-/// - Esc 누름은 막고 '멈춤' 신호로 쓴다 (onEscape). Win 키는 통과(창 모드에서는 로컬이 처리)
+/// - Esc 누름은 막고 '멈춤' 신호로 쓴다 (onEscape). Win 도 막는다 (RDP 키보드 훅 설정에 따라 원격으로 갈 수 있음)
 /// - 주입된 키(화상 키보드·자동 입력 도구)는 막지 않는다 — 실제 키보드 입력만
 /// 훅은 전용 스레드에서 돈다 — UI 스레드가 바빠도 LowLevelHooksTimeout 으로 키가 새거나 훅이 조용히 제거되지 않게
 /// </summary>
@@ -31,6 +31,7 @@ internal sealed class RdpKeyboardGuard : IDisposable
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     [DllImport("user32.dll")] private static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
+    [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG msg, IntPtr hWnd, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint threadId, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
@@ -42,7 +43,7 @@ internal sealed class RdpKeyboardGuard : IDisposable
     private readonly Thread _thread;
     private uint _threadId;
     private IntPtr _hook;
-    private int _blocked, _disposed;
+    private int _blocked, _disposed, _abandoned;
 
     /// <summary>막은 키 누름 수</summary>
     public int Blocked => Volatile.Read(ref _blocked);
@@ -54,20 +55,25 @@ internal sealed class RdpKeyboardGuard : IDisposable
     {
         _onEscape = onEscape;
         _proc = Callback;
-        using var ready = new ManualResetEventSlim();
+        // ready 는 Dispose 하지 않는다 — 시간 초과 뒤 스레드가 늦게 Set 할 수 있다 (GC 가 정리)
+        var ready = new ManualResetEventSlim();
         _thread = new Thread(() =>
         {
+            PeekMessage(out _, IntPtr.Zero, 0, 0, 0);   // 메시지 큐를 먼저 만든다 — 그래야 Dispose 의 WM_QUIT 이 언제든 도착한다
             _threadId = GetCurrentThreadId();
-            _hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+            var hook = SetWindowsHookEx(WH_KEYBOARD_LL, _proc, GetModuleHandle(null), 0);
+            // 생성자가 기다리다 포기했으면(시간 초과)·이미 Dispose 됐으면 걸린 훅을 바로 풀고 끝낸다 — 키 차단이 영구히 남지 않게
+            if (hook != IntPtr.Zero && Volatile.Read(ref _abandoned) == 1) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+            _hook = hook;
             ready.Set();
-            if (_hook == IntPtr.Zero) return;
+            if (hook == IntPtr.Zero) return;
             while (GetMessage(out _, IntPtr.Zero, 0, 0) > 0) { }   // WM_QUIT 까지 — 훅 콜백은 이 루프 안에서 불린다
-            UnhookWindowsHookEx(_hook);
+            UnhookWindowsHookEx(hook);
             _hook = IntPtr.Zero;
         }) { IsBackground = true, Name = "Nubis RDP key guard" };
         _thread.Start();
-        ready.Wait(TimeSpan.FromSeconds(3));
-        Active = _hook != IntPtr.Zero;
+        if (!ready.Wait(TimeSpan.FromSeconds(3))) Volatile.Write(ref _abandoned, 1);
+        Active = Volatile.Read(ref _abandoned) == 0 && _hook != IntPtr.Zero;
     }
 
     /// <summary>
@@ -79,12 +85,13 @@ internal sealed class RdpKeyboardGuard : IDisposable
         if (injected || !ours) return (false, false);
         var down = message is 0x100 or 0x104;   // WM_KEYDOWN · WM_SYSKEYDOWN — 뗌은 통과
         if (!down) return (false, false);
-        if (vk is 0x5B or 0x5C) return (false, false);   // Win (창 모드에서는 로컬이 처리)
+        // Win 도 막는다 — RDP 키보드 훅 설정이 "원격"(keyboardhook:i:1)이면 포커스를 가진 RDP 컨트롤이 Win 을 원격으로 넘겨 시작 메뉴가 열린다
         return (true, vk == 0x1B);
     }
 
-    /// <summary>Ctrl·Shift·Alt 가 지금 실제로 눌려 있는가 — 눌린 채 입력하면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다</summary>
+    /// <summary>Ctrl·Shift·Alt·Win 이 지금 실제로 눌려 있는가 — 눌린 채 입력하면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다</summary>
     internal static bool ModifierHeld() =>
+        (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0 ||
         (GetAsyncKeyState(0x10) & 0x8000) != 0 || (GetAsyncKeyState(0x11) & 0x8000) != 0 || (GetAsyncKeyState(0x12) & 0x8000) != 0;
 
     private IntPtr Callback(int code, IntPtr wParam, IntPtr lParam)
@@ -107,6 +114,7 @@ internal sealed class RdpKeyboardGuard : IDisposable
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 1) return;
+        Volatile.Write(ref _abandoned, 1);   // 스레드가 아직 훅을 걸기 전이면 걸자마자 스스로 푼다
         if (_threadId != 0) PostThreadMessage(_threadId, WM_QUIT, IntPtr.Zero, IntPtr.Zero);
         _thread.Join(TimeSpan.FromSeconds(2));
     }
