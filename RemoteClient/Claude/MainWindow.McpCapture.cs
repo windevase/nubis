@@ -31,7 +31,7 @@ public partial class MainWindow
     /// 탭 영역을 PrintWindow(전체 렌더링 포함)로 캡처. RDP ActiveX·WebView2 처럼 자체 창에 그리는 화면도 담긴다.
     /// UI 스레드에서 호출.
     /// </summary>
-    private async Task<McpImage> CaptureSessionAsync(SessionTab? tab, int maxWidth)
+    private async Task<McpImage> CaptureSessionAsync(SessionTab? tab, int maxWidth, bool holdsInputSection = false)
     {
         if (tab == null) throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
         if (WindowState == WindowState.Minimized)
@@ -40,6 +40,16 @@ public partial class MainWindow
         if (tab.View is RdpSessionView { IsFullScreen: true })
             throw new McpToolException("RDP 탭이 전체 화면이라 캡처할 수 없습니다. 전체 화면을 나와 달라고 사용자에게 요청하세요.");
 
+        // 탭을 바꿔야 하는 캡처는 RDP 입력 구간 잠금을 잡는다 — 다른 탭에 Claude 가 입력하는 중이면 그 탭을 바꿔 입력을 끊지 않게
+        // (rdp_* 의 입력 뒤 캡처는 이미 잠금을 쥐고 부른다)
+        var acquired = false;
+        if (!tab.IsSelected && !holdsInputSection)
+        {
+            try { await _rdpInputSection.WaitAsync(McpRequest.Token); }
+            catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 캡처하지 않았습니다."); }
+            acquired = true;
+            if (!_tabs.Contains(tab)) { _rdpInputSection.Release(); throw new McpToolException("탭이 닫혀 캡처하지 않았습니다."); }
+        }
         var switched = !tab.IsSelected;
         // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다
         var previous = _tabs.FirstOrDefault(t => t.IsSelected);
@@ -62,6 +72,7 @@ public partial class MainWindow
                 }
                 else SelectHome();
             }
+            if (acquired) _rdpInputSection.Release();
         }
     }
 

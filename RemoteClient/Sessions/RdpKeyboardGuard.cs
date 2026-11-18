@@ -34,6 +34,7 @@ internal sealed class RdpKeyboardGuard : IDisposable
     [DllImport("user32.dll")] private static extern bool PeekMessage(out MSG msg, IntPtr hWnd, uint min, uint max, uint remove);
     [DllImport("user32.dll")] private static extern bool PostThreadMessage(uint threadId, uint msg, IntPtr w, IntPtr l);
     [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll")] private static extern short GetKeyState(int vk);
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr GetModuleHandle(string? name);
 
@@ -44,6 +45,7 @@ internal sealed class RdpKeyboardGuard : IDisposable
     private uint _threadId;
     private IntPtr _hook;
     private int _blocked, _disposed, _abandoned;
+    private readonly System.Collections.Generic.HashSet<uint> _heldBlocked = new();   // 훅 스레드에서만 — 막은 누름 중 아직 안 뗀 키 (자동 반복을 한 번만 세게)
 
     /// <summary>막은 키 누름 수</summary>
     public int Blocked => Volatile.Read(ref _blocked);
@@ -94,6 +96,9 @@ internal sealed class RdpKeyboardGuard : IDisposable
         (GetAsyncKeyState(0x5B) & 0x8000) != 0 || (GetAsyncKeyState(0x5C) & 0x8000) != 0 ||
         (GetAsyncKeyState(0x10) & 0x8000) != 0 || (GetAsyncKeyState(0x11) & 0x8000) != 0 || (GetAsyncKeyState(0x12) & 0x8000) != 0;
 
+    /// <summary>이 PC 의 CapsLock 이 켜져 있는가 — RDP 는 포커스를 받을 때 이 상태를 원격에 맞춰 글자 대소문자가 뒤집힌다</summary>
+    internal static bool CapsLockOn() => (GetKeyState(0x14) & 1) != 0;
+
     private IntPtr Callback(int code, IntPtr wParam, IntPtr lParam)
     {
         if (code >= 0)
@@ -103,10 +108,15 @@ internal sealed class RdpKeyboardGuard : IDisposable
             var (block, stop) = Decide((uint)wParam, k.VkCode, (k.Flags & 0x10) != 0, ours);
             if (block)
             {
-                if ((k.Flags & 0x80) == 0) Interlocked.Increment(ref _blocked);
-                if (stop) ThreadPool.QueueUserWorkItem(_ => { try { _onEscape(); } catch { } });
+                // 꾹 눌러 생기는 자동 반복은 한 번만 센다 (뗄 때까지 같은 키)
+                if (_heldBlocked.Add(k.VkCode))
+                {
+                    Interlocked.Increment(ref _blocked);
+                    if (stop) ThreadPool.QueueUserWorkItem(_ => { try { _onEscape(); } catch { } });
+                }
                 return (IntPtr)1;
             }
+            if ((uint)wParam is 0x101 or 0x105) _heldBlocked.Remove(k.VkCode);   // 뗌 — 다음 누름은 새로 센다
         }
         return CallNextHookEx(_hook, code, wParam, lParam);
     }

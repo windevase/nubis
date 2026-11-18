@@ -30,8 +30,13 @@ public partial class MainWindow
         try { await _approvalGate.WaitAsync(ct); }
         catch (OperationCanceledException) { SetApprovalWaiting(-1); ThrowCancelled(tool, targets, command, false); }
         SetApprovalWaiting(-1);
+        // Claude 가 RDP 에 입력하는 중이면 그 입력이 끝난 뒤 승인 창을 띄운다 — 입력 중에 모달 창이 뜨면 RDP 포커스를 빼앗아 남은 입력이 버려지고,
+        // 사용자가 승인 창에 누른 키는 입력 중 키 차단에 막히며 Esc 가 엉뚱한 입력을 멈춘다. 창이 떠 있는 동안에는 새 RDP 입력도 기다린다.
+        // (RDP 입력·캡처는 이 잠금을 쥔 채 승인을 묻지 않으므로 교착은 없다)
+        try { await _rdpInputSection.WaitAsync(ct); }
+        catch (OperationCanceledException) { _approvalGate.Release(); ThrowCancelled(tool, targets, command, false); }
         try { return ShowApproval(tool, title, description, targets, command, ct); }
-        finally { _approvalGate.Release(); }
+        finally { _rdpInputSection.Release(); _approvalGate.Release(); }
     }
 
     /// <summary>승인 창을 한 번에 하나만 띄우기 위한 게이트 (UI 스레드에서만 사용)</summary>

@@ -293,7 +293,8 @@ public partial class MainWindow
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
         // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
         using var userStop = new CancellationTokenSource();
-        var entered = false;   // 창 전체 입력 구간 잠금(_rdpInputSection)을 잡았는가
+        var entered = false;            // 창 전체 입력 구간 잠금(_rdpInputSection)을 잡았는가
+        var holdForCapture = false;     // 입력 뒤 캡처까지 잠금을 쥐고 있다가 캡처가 끝나면 푼다 (캡처의 탭 전환이 다른 탭 입력을 끊지 않게)
         try
         {
             // 승인을 묻기 전 연결 번호 — 승인 창이 떠 있는 사이 다시 연결됐으면 승인하지 않은 새 연결에 입력하지 않는다
@@ -308,11 +309,18 @@ public partial class MainWindow
                 throw new McpToolException("사용자가 입력을 거부했습니다.");
             }
 
-            // 창 전체 입력 구간 잠금은 승인 직후, 탭을 바꾸기 전에 잡는다 — 다른 탭 요청이 진행 중인 입력의 탭을 바꿔 끊지 않게 (해제는 맨 끝 finally)
+            // 승인 뒤부터는 탭 메뉴 '멈추기'·허용 끝내기가 통하게 — 다른 탭 입력이 끝나기를 기다리는 동안에도
+            _rdpActiveInput.AddOrUpdate(tab, userStop);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
+            string StopReason() => userStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰"
+                : grantStop.IsCancellationRequested ? grantObj?.StopReason ?? "화면 조작 허용이 끝나"
+                : "요청이 취소되어";
+
+            // 창 전체 입력 구간 잠금은 승인 직후, 탭을 바꾸기 전에 잡는다 — 다른 탭 요청이 진행 중인 입력의 탭을 바꿔 끊지 않게
             RdpTarget ih;
             try
             {
-                await _rdpInputSection.WaitAsync(ct);
+                await _rdpInputSection.WaitAsync(linked.Token);
                 entered = true;
                 // 승인을 기다리는 동안 탭이 닫혔거나 끊겼거나 다시 연결됐을 수 있다
                 if (!_tabs.Contains(tab)) throw new McpToolException("승인을 기다리는 동안 탭이 닫혀 입력하지 않았습니다.");
@@ -322,14 +330,14 @@ public partial class MainWindow
                 if (!tab.IsSelected)
                 {
                     ShowRdpTabForInput(tab);
-                    await Task.Delay(400, ct);
+                    await Task.Delay(400, linked.Token);
                     if (!_tabs.Contains(tab)) throw new McpToolException("탭이 닫혀 입력하지 않았습니다.");
                 }
                 var hwnd = view.FindInputWindow();
                 if (hwnd == IntPtr.Zero) throw new McpToolException("RDP 입력 창을 찾지 못했습니다 (연결 중이거나 끊김). list_sessions 로 상태를 확인하세요.");
-                // 메시지마다 확인: 같은 탭이 열려 있고 · 같은 연결이고 · 입력 창이 그대로인가 (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게)
+                // 메시지마다 확인: 같은 탭이 열려 있고 · 선택돼 있고 · 같은 연결이고 · 입력 창이 그대로인가
+                // (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게, 사용자가 다른 탭을 고르면 "완료" 로 보고하지 않고 멈추게)
                 ih = new RdpTarget(hwnd,
-                    // 사용자가 입력 중 다른 탭을 고르면(포커스가 빠져 남은 입력이 버려짐) 멈춘다 — "완료" 로 보고하지 않게
                     () => _tabs.Contains(tab) && tab.IsSelected && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen)
@@ -337,17 +345,18 @@ public partial class MainWindow
             }
             catch (Exception ex) when (ex is McpToolException or OperationCanceledException)
             {
-                AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함" + (ex is OperationCanceledException ? "(요청 취소)" : ""));
-                if (ex is OperationCanceledException) throw new McpToolException("요청이 취소되어 입력하지 않았습니다.");
+                var why = ex is OperationCanceledException ? $"({StopReason()})" : "";
+                AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함" + why);
+                if (ex is OperationCanceledException) throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
                 throw;
             }
 
-            _rdpActiveInput.AddOrUpdate(tab, userStop);
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, grantStop, userStop.Token);
-            // RDP 컨트롤에 포커스를 주고, 그동안 사용자의 실제 키 입력은 막는다 (포커스가 RDP 에 있는 사이 Claude 패널 등에 치던 키가
+            // RDP 컨트롤에 포커스를 주고, 그동안 사용자의 실제 키 누름은 막는다 (포커스가 RDP 에 있는 사이 Claude 패널 등에 치던 키가
             // 원격으로 새어 승인하지 않은 입력이 되지 않게). 끝나면 원래 포커스로 되돌린다 — 예외·취소에도 (finally)
-            // 입력 중 Esc 를 누르면(키 차단이 받아) 멈춘다 — 키보드로 멈출 수 있는 유일한 길 (나머지 키는 막힘)
+            // 입력 중 Esc 를 누르면(키 차단이 받아) 멈춘다 — 키보드로 멈출 수 있는 길 (나머지 키는 막힘)
             RdpKeyboardGuard? guard = null;
+            var started = false;        // act 를 시작했는가 — 시작 전 중단은 "아무것도 입력되지 않음"
+            var focusLost = false;
             try
             {
                 var focus = CaptureFocusForRdpInput(view);
@@ -361,11 +370,17 @@ public partial class MainWindow
                     for (var i = 0; i < 20 && RdpKeyboardGuard.ModifierHeld(); i++) await Task.Delay(100, linked.Token);
                     if (RdpKeyboardGuard.ModifierHeld())
                         throw new McpToolException("Ctrl·Shift·Alt·Win 키가 눌려 있어 입력하지 않았습니다 (눌린 채 입력하면 글자가 조합키로 바뀜). 키에서 손을 뗀 뒤 다시 요청하세요.");
+                    // RDP 는 포커스를 받을 때 로컬 CapsLock 상태를 원격에 맞춘다 — 켜져 있으면 글자의 대소문자가 뒤집힌다
+                    if (tool == "rdp_type" && RdpKeyboardGuard.CapsLockOn())
+                        throw new McpToolException("이 PC 의 CapsLock 이 켜져 있어 입력하지 않았습니다 (켜진 채 입력하면 대소문자가 뒤집힘). 사용자에게 CapsLock 을 꺼 달라고 요청한 뒤 다시 보내세요.");
                     if (!tab.IsSelected) throw new McpToolException("그 사이 다른 탭이 선택되어 입력하지 않았습니다.");
                     view.FocusRdpControl();
                     focused = true;
                     await Task.Delay(120, linked.Token);   // 포커스가 컨트롤 안 입력 창(별도 스레드)까지 닿을 시간
+                    started = true;
                     await act(tab, ih, linked.Token);
+                    // 입력하는 사이 포커스가 빠졌으면(사용자가 다른 곳을 클릭 등) 그 뒤 마우스 입력은 컨트롤이 버렸을 수 있다
+                    focusLost = !view.HasInputFocus;
                 }
                 finally
                 {
@@ -382,46 +397,58 @@ public partial class MainWindow
             }
             catch (OperationCanceledException)
             {
-                var why = userStop.IsCancellationRequested ? "사용자가 Claude 입력을 멈춰"
-                    : grantStop.IsCancellationRequested ? grantObj?.StopReason ?? "화면 조작 허용이 끝나"
-                    : "요청이 취소되어";
-                AuditLog.Write(tool, new[] { target }, action, $"중단({why}) — 일부 입력됐을 수 있음");
-                throw new McpToolException($"{why} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것).");
+                if (!started)
+                {
+                    AuditLog.Write(tool, new[] { target }, action, $"승인했으나 실행 안 함({StopReason()})");
+                    throw new McpToolException($"{StopReason()} 입력하지 않았습니다 (아무것도 입력되지 않음).");
+                }
+                AuditLog.Write(tool, new[] { target }, action, $"중단({StopReason()}) — 일부 입력됐을 수 있음");
+                throw new McpToolException($"{StopReason()} 입력을 중단했습니다 (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인하고 같은 입력을 그대로 다시 보내지 말 것).");
             }
             catch (McpToolException ex)
             {
-                // 좌표 오류 등 — 입력 전에 확인하므로 입력되지 않았다
-                AuditLog.Write(tool, new[] { target }, action, "실행 안 함");
+                // 입력 전 확인(좌표·키 차단·수정 키·CapsLock·탭 선택)에서 멈춤 — 입력되지 않았다
+                AuditLog.Write(tool, new[] { target }, action, "승인했으나 실행 안 함: " + ex.Message);
                 throw new McpToolException(ex.Message);
             }
             catch (Exception ex)
             {
-                AuditLog.Write(tool, new[] { target }, action, "중단 — 일부 입력됐을 수 있음: " + ex.Message);
-                throw new McpToolException($"입력을 멈췄습니다: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것).");
+                AuditLog.Write(tool, new[] { target }, action, (started ? "중단 — 일부 입력됐을 수 있음: " : "승인했으나 실행 안 함: ") + ex.Message);
+                throw new McpToolException(started
+                    ? $"입력을 멈췄습니다: {ex.Message} (일부는 이미 입력됐을 수 있음 — 화면을 캡처해 확인할 것)."
+                    : $"입력하지 않았습니다: {ex.Message}");
             }
-            AuditLog.Write(tool, new[] { target }, action, grant ? "실행(화면 조작 허용 중)" : "승인·입력");
+            AuditLog.Write(tool, new[] { target }, action,
+                (grant ? "실행(화면 조작 허용 중)" : "승인·입력") + (focusLost ? " — 입력 중 포커스가 빠져 일부가 버려졌을 수 있음" : ""));
+            if (focusLost) action += " (입력 중 RDP 포커스가 빠져 일부 입력이 버려졌을 수 있음 — 화면으로 확인할 것)";
+            holdForCapture = captureAfter;
         }
         finally
         {
             if (_rdpActiveInput.TryGetValue(tab, out var cur) && ReferenceEquals(cur, userStop)) _rdpActiveInput.Remove(tab);
-            if (entered) _rdpInputSection.Release();
+            if (entered && !holdForCapture) _rdpInputSection.Release();
             gate.Release();
         }
 
         var done = $"{action} 완료.";
         if (!captureAfter) return done + " 결과는 capture_screen 으로 확인하세요.";
-        // 여기부터는 입력이 이미 끝났다 — 캡처가 어떤 이유로 실패해도 입력을 다시 보내지 않게 알린다
+        // 여기부터는 입력이 이미 끝났다 — 캡처가 어떤 이유로 실패해도 입력을 다시 보내지 않게 알린다.
+        // 입력 구간 잠금은 캡처가 끝날 때까지 쥐고 있다 (탭을 바꾸는 캡처가 다른 탭의 입력을 끊지 않게)
         try
         {
             if (waitMs > 0) await Task.Delay(waitMs, ct);
             if (!_tabs.Contains(tab)) return done + " 캡처 전에 탭이 닫혔습니다.";
             var width = maxWidthArg ?? (_captureGeometry.TryGetValue(tab, out var g) ? g.ImageW : 1600);
-            var img = await CaptureSessionAsync(tab, width);
+            var img = await CaptureSessionAsync(tab, width, holdsInputSection: true);
             return img with { Caption = done + " " + img.Caption };
         }
         catch (Exception ex)
         {
             return done + $" 화면은 다시 캡처하지 못했습니다 ({(ex is OperationCanceledException ? "요청 취소" : ex.Message)}) — capture_screen 으로 확인하세요 (입력은 이미 됨, 다시 보내지 말 것).";
+        }
+        finally
+        {
+            if (holdForCapture) _rdpInputSection.Release();
         }
     }
 
