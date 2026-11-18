@@ -34,6 +34,10 @@ internal static partial class RdpInputSender
         {
             ct.ThrowIfCancellationRequested();
             Check(ih, false);
+            // SendKeys 는 호출마다 로컬 수정 키 상태를 따라간다 — 입력 도중 사용자가 다른 앱에서 Ctrl 등을 누르고 있으면(그 앱이 앞이라 차단되지 않음)
+            // 남은 글자가 원격에 단축키(Ctrl+W 등)로 들어가므로 멈춘다. SendKeys 는 로컬 키 상태를 바꾸지 않아 Claude 의 조합 키와 헷갈리지 않는다
+            if (RdpKeyboardGuard.ModifierHeld())
+                throw new InvalidOperationException("입력 도중 Ctrl·Shift·Alt·Win 키가 눌려 남은 입력을 멈췄습니다 (보낸 글자가 단축키로 바뀌지 않게).");
             var ups = group.Select(e => (short)(e.Up ? -1 : 0)).ToArray();
             var data = group.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray();
             try { keys.SendKeys(group.Count, ups, data); }

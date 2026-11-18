@@ -377,11 +377,11 @@ public partial class MainWindow
             throw new McpToolException("사용자가 여러 호스트 접속을 거부했습니다.");
         }
         var lines = new List<string>();
-        var cancelled = false;
+        var notOpened = new List<string>();   // 요청 취소로 열지 않은 대상 (감사 로그에 한 건으로)
         foreach (var h in targets)
         {
             var label = HostTarget(h);
-            if (cancelled) { lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음"); continue; }
+            if (notOpened.Count > 0) { notOpened.Add(label); lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음"); continue; }
             try
             {
                 // 진행 중인 RDP 입력이 끝난 뒤, 잠금 안에서 대상 재확인 + 탭 열기 (새 탭이 선택되며 입력을 끊지 않게)
@@ -397,7 +397,7 @@ public partial class MainWindow
                         AuditLog.Write("connect_hosts", new[] { label }, $"(탭 열기: session {tab.Id}{(usePublic != null ? $", {mode} 주소" : "")})", approved ? "승인·실행" : "실행");
                         return $"session_id={tab.Id} | {h.DisplayName} ({h.ProtocolText} {tab.Host?.Address ?? h.Address}:{tab.Host?.Port ?? h.Port})";
                     }
-                    catch (Exception ex) when (ex is not McpToolException)
+                    catch (Exception ex)   // 탭 열기 실패는 이 호스트만 실패로 남긴다 (바깥 catch 는 잠금 대기 중 요청 취소만 받음)
                     {
                         AuditLog.Write("connect_hosts", new[] { label }, cmd, "실패: " + ex.GetType().Name);
                         return $"{h.DisplayName}: 탭을 열지 못함 ({ex.Message})";
@@ -408,11 +408,11 @@ public partial class MainWindow
             catch (McpToolException)
             {
                 // 잠금을 기다리다 요청이 취소됨 — 이미 연 탭은 결과에 남기고 나머지는 열지 않는다
-                cancelled = true;
-                AuditLog.Write("connect_hosts", new[] { label }, cmd, "취소(요청 취소)");
+                notOpened.Add(label);
                 lines.Add($"{h.DisplayName}: 요청 취소로 열지 않음");
             }
         }
+        if (notOpened.Count > 0) AuditLog.Write("connect_hosts", notOpened, cmd, "취소(요청 취소로 열지 않음)");
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();
         return $"세션 탭 {lines.Count(l => l.StartsWith("session_id="))}개를 열었습니다. 연결 결과는 잠시 후 list_sessions 로 확인하세요.\n" +

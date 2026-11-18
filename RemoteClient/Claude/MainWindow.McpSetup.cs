@@ -65,7 +65,7 @@ public partial class MainWindow
             "Nubis 메인 창 상태를 바꾼다: normal(이전 크기) · maximized(최대화) · minimized(최소화). 창 닫기는 할 수 없다. " +
             "주의: 최소화하면 화면 캡처·RDP 화면 조작이 되지 않고, 사용자가 보던 Claude 패널도 함께 내려간다 — 다시 쓰려면 normal 또는 maximized 로 되돌리세요.",
             Schema(new { state = new { type = "string", @enum = new[] { "normal", "maximized", "minimized" } } }, "state"),
-            a => OnUi(() => SetWindowStateFromClaude(Arg(a, "state"))));
+            a => OnUiAsync(() => UnderRdpInputSectionAsync(() => SetWindowStateFromClaude(Arg(a, "state")))));   // 크기가 바뀌면 진행 중인 RDP 입력 좌표가 어긋남
     }
 
     /// <summary>미리 채우는 값: 제어 문자(줄 바꿈 포함)를 빼고 길이 제한 — 입력 칸에 보이지 않는 글자가 숨어 들지 않게</summary>

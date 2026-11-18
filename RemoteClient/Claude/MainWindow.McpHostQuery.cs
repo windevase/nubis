@@ -155,7 +155,13 @@ public partial class MainWindow
                     AuditLog.Write("open_session", new[] { target }, command, "승인 후 취소(대기 중 접속 계정이 바뀜)");
                     throw new McpToolException("승인을 기다리는 동안 접속에 쓰일 기본 계정이 바뀌어 접속하지 않았습니다. 다시 요청하세요.");
                 }
-                var tab = Connect(host);
+                SessionTab tab;
+                try { tab = Connect(host); }
+                catch (Exception ex) when (ex is not McpToolException)
+                {
+                    AuditLog.Write("open_session", new[] { target }, command, "실패: " + ex.GetType().Name);
+                    throw new McpToolException($"탭을 열지 못했습니다: {ex.Message}");
+                }
                 AuditLog.Write("open_session", new[] { target }, command + $" (session {tab.Id})", "승인·실행");
                 return tab;
             });

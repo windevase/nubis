@@ -67,18 +67,23 @@ public partial class MainWindow
         }
         finally
         {
-            // 캡처하는 동안(0.7초 대기 포함) 사용자가 다른 탭·홈으로 옮겼으면 그 선택을 존중하고 되돌리지 않는다.
-            // 캡처가 바꿔 놓은 탭이 아직 선택돼 있을 때만 원래 화면으로 돌아간다
-            if (switched && tab.IsSelected && _tabs.Contains(tab))
+            try
             {
-                if (previous != null && _tabs.Contains(previous))
+                // 캡처하는 동안(0.7초 대기 포함) 사용자가 다른 탭·홈으로 옮겼으면 그 선택을 존중하고 되돌리지 않는다.
+                // 캡처가 바꿔 놓은 탭이 아직 선택돼 있을 때만 원래 화면으로 돌아간다
+                if (switched && tab.IsSelected && _tabs.Contains(tab))
                 {
-                    ShowTabWithoutFocus(previous);
-                    if (previousHadFocus) previous.Session.FocusSession();
+                    if (previous != null && _tabs.Contains(previous))
+                    {
+                        ShowTabWithoutFocus(previous);
+                        if (previousHadFocus) previous.Session.FocusSession();
+                    }
+                    else SelectHome();
                 }
-                else SelectHome();
             }
-            if (acquired) _rdpInputSection.Release();
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine("캡처 뒤 화면 되돌리기 실패: " + ex.Message); }
+            // 되돌리기가 실패해도 잠금은 반드시 푼다 — 남으면 이후 모든 RDP 입력·승인 창이 멈춘다
+            finally { if (acquired) _rdpInputSection.Release(); }
         }
     }
 

@@ -45,10 +45,17 @@ public partial class MainWindow
     /// <summary>이 탭에 Claude 가 지금 입력하는 중인가 (탭 메뉴에 "Claude 입력 멈추기" 표시용)</summary>
     internal bool IsRdpInputRunning(SessionTab tab) => _rdpActiveInput.TryGetValue(tab, out _);
 
+    // 탭별 "사용자 멈춤" 번호 — 멈추기·Esc 마다 올린다. 한 메시지에 줄 서 있던 다음 rdp_* 요청이 멈춤 뒤 그대로 이어서 입력하지 않게,
+    // 요청은 시작할 때 번호를 기억했다가 탭 잠금·입력 구간 잠금을 얻은 뒤 바뀌었으면 입력하지 않는다 (Esc 는 훅 스레드에서 오므로 Interlocked)
+    private readonly ConditionalWeakTable<SessionTab, System.Runtime.CompilerServices.StrongBox<int>> _rdpStopEpoch = new();
+    private System.Runtime.CompilerServices.StrongBox<int> RdpStopEpoch(SessionTab tab) => _rdpStopEpoch.GetValue(tab, _ => new());
+    private void BumpRdpStopEpoch(SessionTab tab) => Interlocked.Increment(ref RdpStopEpoch(tab).Value);
+
     /// <summary>진행 중인 Claude 입력을 멈춘다 (누른 키·버튼은 떼고 끝남)</summary>
     internal void StopRdpInput(SessionTab tab)
     {
         if (!_rdpActiveInput.TryGetValue(tab, out var cts)) return;
+        BumpRdpStopEpoch(tab);
         try { cts.Cancel(); } catch (ObjectDisposedException) { }
         AuditLog.Write("rdp_control", new[] { SessionAuditTarget(tab) }, "(진행 중인 입력 멈춤)", "사용자 중단");
     }
@@ -68,7 +75,7 @@ public partial class MainWindow
     internal bool RevokeRdpControl(SessionTab tab, bool byClaude = false)
     {
         // 사용자가 끝내면 진행 중인 입력(허용과 무관한 rdp_type 포함)도 멈춘다. Claude 반납은 허용으로 하던 입력만 멈춘다 (허용 토큰 취소)
-        if (!byClaude && _rdpActiveInput.TryGetValue(tab, out var running)) { try { running.Cancel(); } catch (ObjectDisposedException) { } }
+        if (!byClaude && _rdpActiveInput.TryGetValue(tab, out var running)) { BumpRdpStopEpoch(tab); try { running.Cancel(); } catch (ObjectDisposedException) { } }
         if (!_rdpGrants.TryGetValue(tab, out var g)) return false;
         var wasActive = ActiveGrant(tab) != null;
         _rdpGrants.Remove(tab);
@@ -270,7 +277,8 @@ public partial class MainWindow
     /// Claude 가 탭·화면을 바꾸거나 포커스를 옮기는 동작을 RDP 입력 구간 잠금을 쥔 채 실행한다 — 진행 중인 RDP 입력(·입력 뒤 캡처·승인 창)이
     /// 끝날 때까지 기다린 뒤 하고, 하는 동안 새 RDP 입력이 끼어들지 못한다 (입력 중 탭이 바뀌면 남은 입력이 끊긴다).
     /// "기다렸다 놓고 바로 전환" 은 WPF 가 await 뒤 코드를 다시 예약해 그 틈에 줄 서 있던 입력이 먼저 시작될 수 있어 쓰지 않는다.
-    /// action 은 동기여야 하고 안에서 이 잠금·승인을 다시 기다리면 안 된다 (모달 창은 BeginInvoke 로 나중에 뜨는 것만)
+    /// action 은 동기여야 하고 안에서 이 잠금·승인을 다시 기다리면 안 된다. 동기 모달 창은 닫힐 때까지 잠금을 쥔 채 기다리게 되고,
+    /// 나중으로 미룬 모달 창이 이어지는 RDP 입력과 겹치면 RdpActAsync 가 IsThreadModal 로 입력을 거부한다
     /// </summary>
     private async Task<T> UnderRdpInputSectionAsync<T>(Func<T> action)
     {
@@ -305,8 +313,16 @@ public partial class MainWindow
 
         // 한 탭의 입력은 한 번에 하나씩 — 승인 대기까지 포함해 잠근다 (첫 허용 승인 창이 두 번 뜨지 않고, 승인한 글자 사이에 다른 키가 끼지 않게)
         var gate = _rdpInputLocks.GetValue(tab, _ => new SemaphoreSlim(1, 1));
+        var stopBox = RdpStopEpoch(tab);
+        var epoch = Volatile.Read(ref stopBox.Value);   // 이 요청이 들어온 시점의 멈춤 번호 — 이후 사용자가 멈췄으면 입력하지 않는다
         try { await gate.WaitAsync(ct); }
         catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 실행하지 않았습니다."); }
+        if (Volatile.Read(ref stopBox.Value) != epoch)
+        {
+            gate.Release();
+            AuditLog.Write(tool, new[] { target }, action, "실행 안 함(사용자가 앞선 입력을 멈춤)");
+            throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 이어서 보낸 이 요청은 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤 다시 요청하세요.");
+        }
         // 사용자가 탭 메뉴 "Claude 입력 멈추기"·허용 끝내기로 멈출 수 있게 이 입력의 토큰을 탭에 등록한다 (허용 여부와 무관)
         using var userStop = new CancellationTokenSource();
         var entered = false;            // 창 전체 입력 구간 잠금(_rdpInputSection)을 잡았는가
@@ -342,6 +358,15 @@ public partial class MainWindow
                 if (!_tabs.Contains(tab)) throw new McpToolException("승인을 기다리는 동안 탭이 닫혀 입력하지 않았습니다.");
                 CheckRdpTab(tab);
                 if (view.SessionGeneration != gen) throw new McpToolException("승인을 기다리는 동안 RDP 가 다시 연결되어 입력하지 않았습니다. 화면을 다시 캡처한 뒤 요청하세요.");
+                // 다른 승인 창 등을 기다리는 사이 허용 10분이 지났거나(만료는 토큰으로 오지 않음) 사용자가 멈췄을 수 있다
+                if (grant && !ReferenceEquals(ActiveGrant(tab), grantObj))
+                    throw new McpToolException("기다리는 동안 화면 조작 허용이 끝나 입력하지 않았습니다. 다시 요청하면 사용자에게 허용을 다시 묻습니다.");
+                if (Volatile.Read(ref stopBox.Value) != epoch)
+                    throw new McpToolException("사용자가 이 탭의 Claude 입력을 멈춰 입력하지 않았습니다. 사용자에게 계속할지 확인한 뒤 다시 요청하세요.");
+                // 앱에 대화상자(계정 입력·호스트키·안내 창 등)가 떠 있으면 입력하지 않는다 — 다른 도구가 나중으로 미룬 창이 이 입력과 겹치면
+                // 사용자가 그 창에 치는 비밀번호가 키 차단에 막히고, 포커스도 서로 빼앗는다
+                if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
+                    throw new McpToolException("앱에 대화상자가 떠 있어 입력하지 않았습니다. 사용자가 그 창을 닫은 뒤 다시 요청하세요.");
                 // 조작하는 모습이 보이게 그 탭을 띄운다 (숨은 탭은 크기가 0 이라 좌표를 맞출 수 없음)
                 if (!tab.IsSelected)
                 {
@@ -354,7 +379,8 @@ public partial class MainWindow
                 // 메시지마다 확인: 같은 탭이 열려 있고 · 선택돼 있고 · 같은 연결이고 · 입력 창이 그대로인가
                 // (닫힌 탭의 컨트롤이 다른 탭에 재사용돼도 거기로 가지 않게, 사용자가 다른 탭을 고르면 "완료" 로 보고하지 않고 멈추게)
                 ih = new RdpTarget(hwnd,
-                    () => _tabs.Contains(tab) && tab.IsSelected && view.SessionGeneration == gen && view.FindInputWindow() == hwnd,
+                    () => _tabs.Contains(tab) && tab.IsSelected && view.SessionGeneration == gen && view.FindInputWindow() == hwnd &&
+                          !System.Windows.Interop.ComponentDispatcher.IsThreadModal,   // 입력 도중 대화상자가 뜨면 멈춘다
                     // 떼기는 같은 탭·같은 연결이면 보낸다 (자동 재연결 중에는 FindInputWindow 가 비어도 눌린 키가 남지 않게)
                     () => _tabs.Contains(tab) && view.SessionGeneration == gen)
                 { Method = method, Keys = method == RdpInputMethod.SendKeys ? view.NonScriptable : null };
@@ -379,7 +405,7 @@ public partial class MainWindow
                 var focused = false;
                 try
                 {
-                    guard = new RdpKeyboardGuard(() => { try { userStop.Cancel(); } catch (ObjectDisposedException) { } });
+                    guard = new RdpKeyboardGuard(() => { BumpRdpStopEpoch(tab); try { userStop.Cancel(); } catch (ObjectDisposedException) { } });
                     if (!guard.Active)
                         throw new McpToolException("입력 중 사용자 키 입력을 막는 장치(키보드 훅)를 걸지 못해 입력하지 않았습니다 — 사용자 키가 원격으로 섞일 수 있어서입니다.");
                     // Ctrl·Shift·Alt·Win 이 실제로 눌린 채면 SendKeys 가 그 상태를 따라 Claude 의 글자가 조합키가 된다 — 뗄 때까지 잠깐 기다린다
@@ -390,6 +416,8 @@ public partial class MainWindow
                     if (tool == "rdp_type" && RdpKeyboardGuard.CapsLockOn())
                         throw new McpToolException("이 PC 의 CapsLock 이 켜져 있어 입력하지 않았습니다 (켜진 채 입력하면 대소문자가 뒤집힘). 사용자에게 CapsLock 을 꺼 달라고 요청한 뒤 다시 보내세요.");
                     if (!tab.IsSelected) throw new McpToolException("그 사이 다른 탭이 선택되어 입력하지 않았습니다.");
+                    if (System.Windows.Interop.ComponentDispatcher.IsThreadModal)
+                        throw new McpToolException("앱에 대화상자가 떠 있어 입력하지 않았습니다. 사용자가 그 창을 닫은 뒤 다시 요청하세요.");
                     view.FocusRdpControl();
                     focused = true;
                     await Task.Delay(120, linked.Token);   // 포커스가 컨트롤 안 입력 창(별도 스레드)까지 닿을 시간

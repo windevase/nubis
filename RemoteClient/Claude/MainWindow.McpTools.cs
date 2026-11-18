@@ -164,7 +164,13 @@ public partial class MainWindow
                 {
                     if (!_hosts.Contains(found[0])) throw new McpToolException($"'{found[0].DisplayName}' 이 기다리는 사이 목록에서 지워졌습니다.");
                     if (mode == "public" && !found[0].HasPublicIp) throw new McpToolException($"'{found[0].DisplayName}' 의 공인 IP 가 기다리는 사이 없어졌습니다.");
-                    return Connect(found[0], mode switch { "public" => true, "private" => false, _ => null });
+                    try { return Connect(found[0], mode switch { "public" => true, "private" => false, _ => null }); }
+                    catch (Exception ex) when (ex is not McpToolException)
+                    {
+                        AuditLog.Write("open_session", new[] { $"{McpHelpers.VisibleControlChars(found[0].DisplayName)}  ({found[0].ProtocolText} {found[0].Address}:{found[0].Port})" },
+                            "(탭 열기)", "실패: " + ex.GetType().Name);
+                        throw new McpToolException($"탭을 열지 못했습니다: {ex.Message}");
+                    }
                 });
                 // 승인 없이 접속(저장된 계정으로 로그인)하는 동작이라 감사 로그에는 남긴다 — 어떤 서버에 언제 Claude 가 탭을 열었는지 추적용
                 AuditLog.Write("open_session",
