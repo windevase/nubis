@@ -24,42 +24,64 @@ internal static partial class RdpInputSender
     /// <summary>
     /// 공식 SendKeys 로 키 이벤트를 보낸다. 한 글자·한 조합(수정 키를 누른 뒤 모두 뗄 때까지)을 **한 번의 호출**로 묶는다 —
     /// 키를 하나씩 따로 보내면 컨트롤이 호출마다 수정 키 상태를 로컬 키보드에 맞춰 Shift 가 풀린다 ($ → 4, P → p 로 찍힘, tg01 실측).
-    /// 실패해도 다시 보내지 않는다(일부가 이미 들어갔다면 글자가 두 번 찍힘). 실패한 묶음에서 누른 키는 뗌만 따로 보내
+    /// E_UNEXPECTED(묶음 전체 거절) 외의 실패는 다시 보내지 않는다(일부가 이미 들어갔다면 글자가 두 번 찍힘). 실패한 묶음에서 누른 키는 뗌만 따로 보내
     /// 원격에 Shift·Win 이 눌린 채 남지 않게 하고 멈춘다. 묶음 사이 취소는 눌린 키가 없는 상태라 그대로 멈춘다
     /// </summary>
     internal static async Task SendKeysBatchedAsync(RdpTarget ih, IReadOnlyList<RdpKeyEvent> events, CancellationToken ct)
     {
         var keys = ih.Keys ?? throw new InvalidOperationException("이 RDP 컨트롤은 키 전송(SendKeys)을 지원하지 않습니다.");
-        foreach (var group in RdpKeys.Chords(events))
+        var sent = 0;   // 이미 보낸 묶음 수 — 실패 메시지에 넣어 Claude 가 남은 부분만 다시 보내게 (글자 입력은 한 글자 = 한 묶음)
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            Check(ih, false);
-            // SendKeys 는 호출마다 로컬 수정 키 상태를 따라간다 — 입력 도중 사용자가 다른 앱에서 Ctrl 등을 누르고 있으면(그 앱이 앞이라 차단되지 않음)
-            // 남은 글자가 원격에 단축키(Ctrl+W 등)로 들어가므로 멈춘다. SendKeys 는 로컬 키 상태를 바꾸지 않아 Claude 의 조합 키와 헷갈리지 않는다
-            if (RdpKeyboardGuard.ModifierHeld())
-                throw new InvalidOperationException("입력 도중 Ctrl·Shift·Alt·Win 키가 눌려 남은 입력을 멈췄습니다 (보낸 글자가 단축키로 바뀌지 않게).");
-            var ups = group.Select(e => (short)(e.Up ? -1 : 0)).ToArray();
-            var data = group.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray();
-            try { await SendChordAsync(ih, keys, group.Count, ups, data, ct); }
-            catch
+            foreach (var group in RdpKeys.Chords(events))
             {
-                // 이 묶음에서 누른 키를 역순으로 뗀다 (토큰·재시도 없이 한 번)
-                var downs = group.Where(e => !e.Up).Reverse().ToArray();
-                if (downs.Length > 0)
+                ct.ThrowIfCancellationRequested();
+                Check(ih, false);
+                // SendKeys 는 호출마다 로컬 수정 키 상태를 따라간다 — 입력 도중 사용자가 다른 앱에서 Ctrl 등을 누르고 있으면(그 앱이 앞이라 차단되지 않음)
+                // 남은 글자가 원격에 단축키(Ctrl+W 등)로 들어가므로 멈춘다. SendKeys 는 로컬 키 상태를 바꾸지 않아 Claude 의 조합 키와 헷갈리지 않는다
+                if (RdpKeyboardGuard.ModifierHeld())
+                    throw new InvalidOperationException("입력 도중 Ctrl·Shift·Alt·Win 키가 눌려 남은 입력을 멈췄습니다 (보낸 글자가 단축키로 바뀌지 않게).");
+                var ups = group.Select(e => (short)(e.Up ? -1 : 0)).ToArray();
+                var data = group.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray();
+                try { await SendChordAsync(ih, keys, group.Count, ups, data, ct); }
+                catch
                 {
-                    try
+                    // 이 묶음에서 누른 키를 역순으로 뗀다 (토큰·재시도 없이 한 번)
+                    var downs = group.Where(e => !e.Up).Reverse().ToArray();
+                    if (downs.Length > 0)
                     {
-                        Check(ih, true);
-                        keys.SendKeys(downs.Length, downs.Select(_ => (short)-1).ToArray(), downs.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray());
+                        try
+                        {
+                            Check(ih, true);
+                            keys.SendKeys(downs.Length, downs.Select(_ => (short)-1).ToArray(), downs.Select(e => e.Scan | (e.Extended ? 0x100 : 0)).ToArray());
+                        }
+                        catch { }
                     }
-                    catch { }
+                    throw;
                 }
-                throw;
+                sent++;
+                // 원격이 따라오게 묶음 사이에 잠깐 쉰다 (실행 창·UAC 전환 직후 키를 놓치지 않게)
+                await Task.Delay(15 + 4 * group.Count, ct);
             }
-            // 원격이 따라오게 묶음 사이에 잠깐 쉰다 (실행 창·UAC 전환 직후 키를 놓치지 않게)
-            await Task.Delay(15 + 4 * group.Count, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && sent > 0)
+        {
+            throw new InvalidOperationException($"{Describe(ex)} — 앞 {sent}개 키 묶음(글자 입력이면 앞 {sent}글자)까지 입력됐고, {Tail(ex)} 화면으로 확인한 뒤 남은 부분만 보낼 것.", ex);
+        }
+        catch (Exception ex) when (ex is COMException)
+        {
+            throw new InvalidOperationException($"{Describe(ex)} — {Tail(ex)}", ex);
         }
     }
+
+    private static string Describe(Exception ex) => ex is COMException c && c.HResult == EUnexpected
+        ? "RDP 컨트롤이 키 전송을 계속 거절했습니다 (E_UNEXPECTED, 3번 시도)"
+        : ex is COMException c2 ? $"RDP 키 전송 오류 (0x{c2.HResult:X8})" : ex.Message;
+
+    // 실패한 묶음이 들어갔는가: 보내기 전 확인에서 멈췄거나 E_UNEXPECTED(묶음 전체 거절)면 안 들어갔고, 그 밖의 전송 오류는 일부 들어갔을 수 있다
+    private static string Tail(Exception ex) => ex is COMException c && c.HResult != EUnexpected
+        ? "실패한 묶음(한 글자·한 조합)은 일부 들어갔을 수 있고 그 뒤는 입력되지 않았습니다."
+        : "그 뒤는 입력되지 않았습니다.";
 
     private const int EUnexpected = unchecked((int)0x8000FFFF);
 
