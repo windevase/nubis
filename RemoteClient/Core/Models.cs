@@ -466,6 +466,9 @@ public sealed class SessionTab : INotifyPropertyChanged
         set { if (_isSelected == value) return; _isSelected = value; OnChanged(); }
     }
 
+    /// <summary>고른 탭과 나란히 보이는 탭 (나란히 보기의 다른 쪽 — 탭 줄에서 옅게 표시)</summary>
+    public bool IsBeside { get; set { if (field == value) return; field = value; OnChanged(); } }
+
     public SessionStatus Status
     {
         get => _status;

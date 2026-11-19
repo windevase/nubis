@@ -80,6 +80,7 @@ Not sure where to start? If you use a cloud provider, begin with [importing clou
 - **Toasts** — short results, such as bulk host changes, a copied public key, or SFTP warnings and errors, appear briefly at the bottom right. Click one to close it; hover to keep it open.
 - **Command palette** — `Ctrl+K` searches hosts, open tabs and actions in one box ([14](#14-keyboard-shortcuts)).
 - **Closed-tab history** — `Ctrl+Shift+R` (or right-click a tab → **Reopen closed tab**) reopens the last closed tab. Up to 10 tabs are remembered, newest first. Only saved hosts and local PowerShell tabs are remembered (quick-connect tabs are not), and the history is not kept after Nubis closes.
+- **Side by side** — right-click a tab → **View side by side on the right** and pick another open tab: the two show next to each other (that tab on the left, the picked one on the right) — two servers' logs, two shells on one server, SSH next to RDP or a Kubernetes tab. Both stay ordinary tabs in the tab strip; choosing either one shows the pair again, and choosing any other tab shows that tab alone. Drag the divider to resize. The side you click gets the keyboard, its header is underlined, and its tab is the current tab for shortcuts (`Ctrl+Shift+W` closes that side) and for the Claude panel, which is also told which tab is visible on the other side. The right pane's header has **Swap sides** (⇄) and **Stop side-by-side view** (✕), also in the tab right-click menu. Closing one of the two tabs lets the other fill the window. Only one pair at a time — pairing a new tab replaces it.
 
 ---
 
@@ -892,7 +893,7 @@ Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · 
 
 **Approval prompt** — `Esc` rejects.
 
-**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Stop Claude's input (RDP, while Claude is typing) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
+**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Stop Claude's input (RDP, while Claude is typing) · Rename tab... · Edit Host · View side by side on the right (or Swap sides · Stop side-by-side view on a paired tab) · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
 
 ---
 

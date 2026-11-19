@@ -87,6 +87,8 @@ public partial class MainWindow
         });
         if (tab.Host != null && _hosts.Contains(tab.Host)) Add(L.T("호스트 편집"), () => { SelectHome(); OpenEditor(tab.Host); });
         menu.Items.Add(new Separator());
+        AddSplitMenuItems(menu, tab);   // 오른쪽에 나란히 보기 · 좌우 바꾸기 · 해제 (MainWindow.SplitView.cs)
+        menu.Items.Add(new Separator());
         Add(L.T("닫기"), () => CloseTabs(new[] { tab }), gesture: "Ctrl+Shift+W");
         Add(L.T("다른 탭 모두 닫기"), () => CloseTabs(_tabs.Where(t => t != tab).ToList()), _tabs.Count > 1);
         // 위치는 누를 때 다시 본다 — 메뉴가 떠 있는 동안 다른 탭이 닫혔을 수 있다

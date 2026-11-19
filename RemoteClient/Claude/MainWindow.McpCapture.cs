@@ -92,18 +92,7 @@ public partial class MainWindow
     /// SelectTab 은 고른 탭에 포커스를 주므로, 사용자가 Claude 패널이나 다른 탭에 입력하던 중이면
     /// 그 0.7초 사이의 키 입력(명령·비밀번호)이 캡처 대상 서버의 터미널·RDP 로 들어갔다
     /// </summary>
-    private void ShowTabWithoutFocus(SessionTab tab)
-    {
-        foreach (var t in _tabs)
-        {
-            t.IsSelected = t == tab;
-            t.View.Visibility = t == tab ? Visibility.Visible : Visibility.Collapsed;
-        }
-        HomeView.Visibility = Visibility.Collapsed;
-        SessionsHost.Visibility = Visibility.Visible;
-        HomeTab.Background = Brushes.Transparent;
-        UpdateActiveContext();
-    }
+    private void ShowTabWithoutFocus(SessionTab tab) => ShowSessionLayout(tab);   // 나란히 보는 짝이면 둘 다 (MainWindow.SplitView.cs)
 
     private async Task<McpImage> CaptureCoreAsync(SessionTab tab, int maxWidth, bool switched)
     {
