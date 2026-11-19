@@ -49,6 +49,12 @@ internal sealed class PortForwardWindow : Window
         if (_current is { _closed: false } w && ReferenceEquals(w._view, view)) w.Refresh();
     }
 
+    /// <summary>이 탭의 창이 열려 있으면 닫는다 (탭을 닫음 — 닫힌 탭에 임시 포워딩을 추가하지 못하게)</summary>
+    public static void CloseFor(SshSessionView view)
+    {
+        if (_current is { _closed: false } w && ReferenceEquals(w._view, view)) w.CloseOnce();
+    }
+
     private PortForwardWindow(Window owner, SshSessionView view)
     {
         _view = view;

@@ -197,7 +197,7 @@ public sealed class PortForwardForm : StackPanel
     }
 
     /// <summary>칸에 적다 만 값이 있는지 (편집 패널이 저장 전에 알려 주려고)</summary>
-    public bool HasInput => _local.Text.Trim().Length > 0 || _port.Text.Trim().Length > 0;
+    public bool HasInput => _local.Text.Trim().Length > 0 || _host.Text.Trim().Length > 0 || _port.Text.Trim().Length > 0 || _name.Text.Trim().Length > 0;
 
     public void FocusFirst() => _local.Focus();
 

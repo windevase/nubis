@@ -65,6 +65,11 @@ public sealed class SshPortForwardSet
     private readonly List<ActiveForward> _items = new();
     private SshClient? _client;
     private int _nextId = 1;
+    /// <summary>
+    /// 백그라운드에서 닫는 중인 포트들. SshClient 의 포워딩 목록(List)은 스레드 안전하지 않아, RemoveForwardedPort 와
+    /// Disconnect(목록을 훑으며 Stop)가 겹치면 Disconnect 가 예외로 끝나 세션이 정리되지 않는다 — 연결을 닫는 쪽이 이걸 기다린다
+    /// </summary>
+    private Task _stopping = Task.CompletedTask;
 
     /// <summary>목록·상태가 바뀜 (아무 스레드에서나 온다)</summary>
     public event Action? Changed;
@@ -112,13 +117,18 @@ public sealed class SshPortForwardSet
         Changed?.Invoke();
     }
 
-    /// <summary>SSH 연결이 준비됨 — 켜진 규칙을 모두 연다 (하나가 실패해도 나머지는 연다)</summary>
-    public void Attach(SshClient client)
+    /// <summary>
+    /// SSH 연결이 준비됨 — 켜진 규칙을 모두 연다 (하나가 실패해도 나머지는 연다).
+    /// stillValid 는 잠금 안에서 확인한다 — 확인한 뒤 Attach 전에 탭이 닫히거나 끊겨 Detach 가 먼저 지나가면 포트가 열린 채 남으므로
+    /// (닫는 쪽은 닫힘 표시를 먼저 하고 Detach 를 부른다). false 면 아무것도 열지 않고 false
+    /// </summary>
+    public bool Attach(SshClient client, Func<bool>? stillValid = null)
     {
         List<ForwardedPortLocal> stop;
         SshClient? oldClient;
         lock (_lock)
         {
+            if (stillValid != null && !stillValid()) return false;
             oldClient = _client;
             stop = TakePortsLocked();
             _client = client;
@@ -131,6 +141,7 @@ public sealed class SshPortForwardSet
         }
         StopInBackground(stop, oldClient);
         Changed?.Invoke();
+        return true;
     }
 
     /// <summary>연결이 끊김·탭 닫힘 — 모두 닫는다. 켜진 규칙은 "연결되면 열림" 으로 남는다</summary>
@@ -144,7 +155,11 @@ public sealed class SshPortForwardSet
             client = _client;
             _client = null;
             stop = TakePortsLocked();
-            foreach (var f in _items) f.State = f.Enabled ? ForwardState.Waiting : ForwardState.Off;
+            foreach (var f in _items)
+            {
+                f.Error = null;   // 끊길 때의 세션 오류도 포트 Exception 으로 온다 — 다시 연결하면 지난 연결의 오류는 의미가 없다
+                f.State = f.Enabled ? ForwardState.Waiting : ForwardState.Off;
+            }
         }
         StopInBackground(stop, client);
         Changed?.Invoke();
@@ -229,6 +244,13 @@ public sealed class SshPortForwardSet
     {
         if (f.Port != null) return;
         var r = f.Rule;
+        // 저장된 규칙도 다시 검사 (hosts.json 을 손으로 고친 값 등) — 잘못된 대상·포트로는 열지 않는다
+        if (PortForwards.Check(r) is { } bad)
+        {
+            f.State = ForwardState.Failed;
+            f.Error = bad;
+            return;
+        }
         ForwardedPortLocal? port = null;
         try
         {
@@ -286,17 +308,25 @@ public sealed class SshPortForwardSet
     /// 리스너 소켓은 바로 닫고(곧바로 다시 연결해 같은 포트를 열어도 겹치지 않게, 새 연결도 받지 않게),
     /// 열린 채널까지 정리하는 Stop 은 기다릴 수 있어 백그라운드에서
     /// </summary>
-    private static void StopInBackground(List<ForwardedPortLocal> ports, SshClient? client)
+    private void StopInBackground(List<ForwardedPortLocal> ports, SshClient? client)
     {
         if (ports.Count == 0) return;
         foreach (var p in ports) JumpTunnel.CloseListener(p);
-        _ = Task.Run(() =>
+        var task = Task.Run(() =>
         {
             foreach (var p in ports)
             {
-                try { if (client != null) client.RemoveForwardedPort(p); else p.Stop(); } catch { }
+                // Stop 은 열린 채널을 기다릴 수 있어 잠금 밖에서. 목록에서 빼는 것(이미 멈춰 바로 끝남)은 잠금 안에서 —
+                // OpenLocked 의 AddForwardedPort 와 같은 List 를 동시에 고치지 않게
+                try { p.Stop(); } catch { }
+                if (client != null)
+                    lock (_lock) { try { client.RemoveForwardedPort(p); } catch { } }
                 try { p.Dispose(); } catch { }
             }
         });
+        lock (_lock) _stopping = _stopping.IsCompleted ? task : Task.WhenAll(_stopping, task);
     }
+
+    /// <summary>닫는 중인 포트 정리가 끝나는 작업 — SshClient 를 Disconnect/Dispose 하기 전에 기다린다</summary>
+    public Task Stopping { get { lock (_lock) return _stopping; } }
 }

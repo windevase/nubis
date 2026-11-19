@@ -17,6 +17,7 @@ public sealed partial class SshSessionView
     private Button? _fwdButton;
     private Border? _fwdBadge;
     private TextBlock? _fwdBadgeText;
+    private int _fwdRefreshQueued;
 
     /// <summary>이 탭의 포워딩 (MCP list_port_forwards · 탭 창)</summary>
     public SshPortForwardSet Forwards => _forwards;
@@ -30,7 +31,12 @@ public sealed partial class SshSessionView
     private void InitForwards()
     {
         _forwards = new SshPortForwardSet(_host.PortForwards);
-        _forwards.Changed += () => Dispatcher.BeginInvoke(OnForwardsChanged);
+        // 연결마다(브라우저는 한 번에 여러 개) 오므로 화면 갱신은 한 번에 모은다
+        _forwards.Changed += () =>
+        {
+            if (System.Threading.Interlocked.Exchange(ref _fwdRefreshQueued, 1) == 0)
+                Dispatcher.BeginInvoke(() => { _fwdRefreshQueued = 0; OnForwardsChanged(); });
+        };
     }
 
     /// <summary>로그인 성공 뒤 켜진 규칙 열기. 열지 못한 규칙은 터미널에 알린다 (나머지는 연다)</summary>
@@ -41,8 +47,8 @@ public sealed partial class SshSessionView
         if (client == null) return;
         _ = Task.Run(() =>
         {
-            if (_closed || gen != _gen || _status != SessionStatus.Connected || !client.IsConnected) return;
-            _forwards.Attach(client);
+            // 확인은 Attach 의 잠금 안에서 — 확인 뒤 탭 닫기·끊김의 Detach 가 먼저 지나가 포트가 열린 채 남지 않게
+            if (!_forwards.Attach(client, () => !_closed && gen == _gen && _status == SessionStatus.Connected && client.IsConnected)) return;
             foreach (var f in _forwards.Items.Where(f => f.State == ForwardState.Failed))
                 _term.Info(L.F("포트 포워딩 {0} 을(를) 열지 못했습니다: {1}", f.Describe, f.Error ?? ""), "33");
         });

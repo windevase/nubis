@@ -268,4 +268,57 @@ public class PortForwardTests
         Assert.Equal(0, changed);
         Assert.Equal(ForwardState.Waiting, set.Items[0].State);
     }
+
+    // ---------- 검수 회귀 ----------
+
+    [Fact]
+    public void Attach_는_잠금_안에서_유효성을_확인하고_무효면_열지_않는다()
+    {
+        // 탭이 닫히거나 끊긴 뒤 늦게 온 Attach 가 포트를 열어 두지 않게
+        var set = new SshPortForwardSet(new[] { R(15432, "db", 5432) });
+        using var client = new Renci.SshNet.SshClient("127.0.0.1", "u", "p");
+        var changed = 0;
+        set.Changed += () => changed++;
+        Assert.False(set.Attach(client, () => false));
+        Assert.False(set.IsAttached);
+        Assert.Equal(ForwardState.Waiting, set.Items[0].State);
+        Assert.Equal(0, changed);
+    }
+
+    [Fact]
+    public void 저장된_잘못된_규칙은_열지_않고_실패로_표시()
+    {
+        // hosts.json 을 손으로 고친 값 — 보이지 않는 문자·범위 밖 포트는 SSH.NET 에 넘기지 않는다
+        var set = new SshPortForwardSet(new[] { R(15432, "db‮", 5432), R(70000, "db", 5432) });
+        using var client = new Renci.SshNet.SshClient("127.0.0.1", "u", "p");
+        Assert.True(set.Attach(client));
+        Assert.All(set.Items, f => Assert.Equal(ForwardState.Failed, f.State));
+        Assert.Equal(PortForwards.CheckTargetHost("db‮"), set.Items[0].Error);
+        Assert.Equal(PortForwards.CheckPort(70000, true), set.Items[1].Error);
+        // 연결 안 된 클라이언트에 붙인 올바른 규칙은 SSH.NET 이 거부 → 실패 (예외가 밖으로 나오지 않음)
+        var (f, err) = set.AddTemporary(R(15433, "db", 5432));
+        Assert.Null(err);
+        Assert.Equal(ForwardState.Failed, f!.State);
+        Assert.True(set.Stopping.IsCompleted);
+    }
+
+    [Fact]
+    public void 끊기면_지난_연결의_오류는_지우고_대기()
+    {
+        var set = new SshPortForwardSet(new[] { R(15432, "db", 5432) });
+        using var client = new Renci.SshNet.SshClient("127.0.0.1", "u", "p");
+        set.Attach(client);
+        Assert.NotNull(set.Items[0].Error);
+        set.Detach();
+        Assert.False(set.IsAttached);
+        Assert.Equal(ForwardState.Waiting, set.Items[0].State);
+        Assert.Null(set.Items[0].Error);
+    }
+
+    [Fact]
+    public void 바인드는_루프백_고정()
+    {
+        Assert.Equal("127.0.0.1", PortForwards.BindAddress);
+        Assert.True(System.Net.IPAddress.IsLoopback(System.Net.IPAddress.Parse(PortForwards.BindAddress)));
+    }
 }

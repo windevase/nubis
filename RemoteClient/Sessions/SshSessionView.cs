@@ -254,9 +254,12 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _shell = null; _client = null; _tunnel = null;
         }
         _forwards.Detach();   // 리스너는 바로 닫는다 (연결을 닫기 전에)
+        var fwdStopping = _forwards.Stopping;
         Task.Run(() =>
         {
             try { shell?.Dispose(); } catch { }
+            // 포워딩 포트를 목록에서 빼는 중에 Disconnect 가 같은 목록을 훑으면 예외로 끝나 세션이 남는다 — 끝나길 기다린다 (보통 바로 끝남)
+            try { fwdStopping.Wait(TimeSpan.FromSeconds(10)); } catch { }
             try { if (client?.IsConnected == true) client.Disconnect(); } catch { }
             try { client?.Dispose(); } catch { }
             tunnel?.Dispose();   // 점프 서버 연결은 대상 서버 연결을 닫은 뒤에
@@ -285,6 +288,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         _closed = true;
         // 포워딩은 바로 닫는다 — 아래 SFTP 정리(최대 2분)를 기다리는 동안 이 PC 의 포트가 열려 있지 않게
         _forwards.Detach();
+        if (Dispatcher.CheckAccess()) PortForwardWindow.CloseFor(this);
+        else Dispatcher.BeginInvoke(() => PortForwardWindow.CloseFor(this));
         // 셸(터미널 채널)은 바로 닫는다 — 실행 중이던 명령(tail -f 등)이 아래 SFTP 정리(최대 2분)를 기다리며 서버에 남지 않게.
         // SFTP 는 같은 연결의 다른 채널이라 영향이 없다
         ShellStream? shell;
