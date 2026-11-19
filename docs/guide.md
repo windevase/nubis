@@ -614,8 +614,6 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 | Account | The same host or cloud-profile account as RDP (`DOMAIN\user`, `user@domain`, local accounts) |
 | Server setup (Windows) | A WinRM listener (`winrm quickconfig`, plus a certificate binding for HTTPS) and firewall rules for 5986/5985 |
 
-> **Note** WinRM has not yet been fully verified against real servers. If you run into problems, please open an issue.
-
 **What read-only auto-approve covers** — when auto-approve is on in [Settings → Claude](#1212-claude), only read-only commands like the ones below run without an approval prompt. It is an allow list: anything not on it, or anything ambiguous, brings the prompt back.
 
 | Kind | Runs without approval (examples) | Asks for approval (examples) |

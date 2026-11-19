@@ -118,7 +118,6 @@ The source folder is named `RemoteClient\`, but the project / assembly / namespa
 - The MCP server starts only when the Claude panel is opened. Address · token are in `<data folder>\claude\mcp-config.json`. Never print the token.
 - Check the screen by capturing the window with PrintWindow (`PW_RENDERFULLCONTENT`) — this includes WebView2 · RDP content. Synthetic mouse clicks miss when the window is covered, so verify results via capture.
 - To check cloud queries, reference `Nubis.csproj` from a separate console project and call `CloudProviders.Get(...).FetchAsync` (query APIs only, never modify resources).
-- WinRM has not yet been verified against a real server (a Windows server with 5985/5986 open). Until then, report WinRM changes as "unverified".
 
 ## Documentation
 
