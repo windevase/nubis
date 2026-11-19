@@ -113,9 +113,9 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 ## 개인정보
 
-이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다.
+이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다 (아래의 익명 새 버전 확인은 예외이며 끌 수 있다).
 
-Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 쿠버네티스 클러스터 (이 PC 의 `kubectl` 로), 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
+Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 쿠버네티스 클러스터 (이 PC 의 `kubectl` 로), 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 또 새 버전을 알려 주려고 하루 한 번 GitHub API (`api.github.com`) 에서 최신 릴리스 번호를 조회한다 — 사용자 정보를 보내지 않는 익명 요청이며 (여느 웹 요청처럼 GitHub 에는 IP 주소만 보인다) Settings → **새 버전 알림** 에서 끌 수 있다. 사용 통계·분석은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
 
 ## 라이선스
 

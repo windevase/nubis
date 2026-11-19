@@ -50,6 +50,7 @@ public partial class MainWindow
         SetUnlessEditing(SftpEditorBox, s.SftpEditor);
         if (reloadLogin) LoadLoginSettings();
         (SettingsStore.Global.Language == L.English ? LangEnglish : LangKorean).IsChecked = true;
+        UpdateCheckBox.IsChecked = SettingsStore.Global.CheckForUpdates;   // PC 단위 공통 설정
         SetUnlessEditing(DefSshPortBox, HostEntry.PreferredPort(Protocol.Ssh).ToString());
         SetUnlessEditing(DefRdpPortBox, HostEntry.PreferredPort(Protocol.Rdp).ToString());
         FontSizeText.Text = $"{s.FontSize}px";

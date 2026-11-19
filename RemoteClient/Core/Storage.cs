@@ -444,6 +444,17 @@ public sealed class AppSettings
     public LoginConfig Login { get; set; } = new();
     /// <summary>화면 언어: "ko"(기본) · "en". null 이면 처음 실행 — 언어 선택 화면을 띄운다</summary>
     public string? Language { get; set; }
+
+    // ----- 새 버전 알림 (PC 단위 공통 설정: 항상 Global 에서 읽고 UpdateGlobal / UpdateGlobalState 로 쓴다) -----
+    /// <summary>하루 한 번 GitHub 에서 새 버전 확인 (기본 켬). Claude 의 update_settings 대상이 아니다 (공통 설정)</summary>
+    public bool CheckForUpdates { get; set; } = true;
+    /// <summary>마지막으로 확인한 시각 (UTC, 실패해도 기록 — 하루에 한 번만 접속)</summary>
+    public DateTime? UpdateLastCheckUtc { get; set; }
+    /// <summary>마지막 확인에서 받은 최신 정식 릴리스 태그 · 릴리스 노트 주소 (다음 실행 때 접속 없이 사이드바 표시)</summary>
+    public string? UpdateLatestTag { get; set; }
+    public string? UpdateLatestUrl { get; set; }
+    /// <summary>"이 버전 건너뛰기" 한 버전 (더 새 버전이 나오면 다시 알림)</summary>
+    public string? UpdateSkipVersion { get; set; }
     /// <summary>클라우드 인증 파일 경로 (비우면 기본 위치). 키: Aws, Tencent, Gcp, Azure, Oci</summary>
     public Dictionary<string, string> CloudPaths { get; set; } = new();
 
@@ -589,6 +600,17 @@ public static class SettingsStore
             catch { }
         }
         Changed?.Invoke();
+    }
+
+    /// <summary>공통 설정의 상태 값 저장 (새 버전 확인 시각 등) — 열린 터미널에 설정을 다시 보내지 않는다</summary>
+    public static void UpdateGlobalState(Action<AppSettings> change)
+    {
+        lock (WriteGate)
+        {
+            change(Global);
+            try { SafeFile.WriteAtomic(GlobalPath, JsonSerializer.Serialize(Global, WriteOptions)); }
+            catch { }
+        }
     }
 }
 

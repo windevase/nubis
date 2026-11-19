@@ -79,6 +79,7 @@ public static class SettingsCatalog
             false, s => s.SftpFollowTerminal, Bool, (s, v) => s.SftpFollowTerminal = (bool)v),
         // SftpEditor(편집기 프로그램 경로)는 넣지 않는다 — 바꿀 수 있으면 파일을 열 때 임의 프로그램을 실행시키는 통로가 된다
         // KubectlPath(kubectl.exe 경로)도 같은 이유로 넣지 않는다 — run_kubectl 이 실행할 프로그램을 Claude 가 바꾸면 임의 exe 실행 통로가 된다 (사용자가 Kubernetes 페이지에서 직접 고름)
+        // CheckForUpdates(새 버전 알림)는 넣지 않는다 — 언어처럼 PC 단위 공통 설정(SettingsStore.Global)이라, 계정별 설정(Current)을 다루는 이 목록으로 바꾸면 저장 위치가 어긋난다
         new("RdpCertWarning", "RDP 서버 인증서 경고", "bool", "끄면 인증서를 확인할 수 없는 서버에도 경고 없이 접속 (보안 설정 — 사용자 승인 필요)",
             true, s => s.RdpCertWarning, Bool, (s, v) => s.RdpCertWarning = (bool)v),
         new("SshHostKeyPrompt", "SSH 새 서버 호스트키 확인 창", "bool", "켜면 처음 보는 서버의 호스트키를 확인 후 저장 (보안 설정 — 사용자 승인 필요)",
