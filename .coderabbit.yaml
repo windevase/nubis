@@ -1,6 +1,6 @@
 # CodeRabbit 리뷰 설정 — https://docs.coderabbit.ai/reference/configuration
 # 공개 저장소 무료(오픈소스) 등급에서 동작하는 설정만 쓴다. 유료 전용 키(보안 위험 평가 등)는 넣지 않는다.
-# 별이 10개 미만이면 자동 리뷰가 돌지 않으므로 PR 댓글에 `@coderabbitai review` 로 요청한다.
+# 별이 10개 미만이면 첫 리뷰는 PR 댓글 `@coderabbitai review` 로 요청한다. 그 뒤 push 는 자동으로 증분 리뷰된다.
 
 language: ko-KR
 tone_instructions: "간결하게. 확실한 버그·보안 문제를 먼저, 취향 차이 제안은 뒤에. 근거가 되는 파일:줄을 함께."
