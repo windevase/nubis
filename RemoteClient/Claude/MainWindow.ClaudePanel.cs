@@ -229,7 +229,10 @@ public partial class MainWindow
         // (패널을 처음 열 때 EnsureClaude 가 _mcp 를 만든 뒤 바로 다시 불러 그때의 탭을 쓴다)
         if (_mcp == null) return;
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(UpdateActiveContext); return; }
-        var text = ActiveContextText(_tabs.FirstOrDefault(t => t.IsSelected), _tabs.Count);
+        var selected = _tabs.FirstOrDefault(t => t.IsSelected);
+        // 나란히 보기 중이면 함께 보이는 다른 쪽 탭도 알려 준다 (MainWindow.SplitView.cs)
+        var beside = selected != null && _split?.Partner(selected) is { } p && _tabs.Contains(p) ? p : null;
+        var text = ActiveContextText(selected, _tabs.Count, beside, beside != null && ReferenceEquals(_split!.Right, beside));
         if (text == _lastActiveContext) return;
         try
         {
@@ -247,8 +250,15 @@ public partial class MainWindow
     };
 
     /// <summary>hook 이 질문에 붙일 문구. 비밀 값(계정·비밀번호)은 넣지 않는다.</summary>
-    public static string ActiveContextText(SessionTab? tab, int openTabs) =>
-        ActiveContextCore(tab, openTabs) + (L.IsEnglish ? " (The user's app language is English — reply in English.)" : "");
+    public static string ActiveContextText(SessionTab? tab, int openTabs, SessionTab? beside = null, bool besideOnRight = true) =>
+        ActiveContextCore(tab, openTabs)
+        + (tab != null && beside != null ? BesideContextText(beside.Id, beside.Title, besideOnRight) : "")
+        + (L.IsEnglish ? " (The user's app language is English — reply in English.)" : "");
+
+    /// <summary>나란히 보기 중 함께 보이는 다른 쪽 탭 (현재 화면 문구 뒤에 붙인다). 포커스는 위의 탭에 있다</summary>
+    internal static string BesideContextText(int id, string title, bool onRight) =>
+        $" 화면을 나눠 {(onRight ? "오른쪽" : "왼쪽")}에 함께 보이는 탭: session_id={id} · \"{SafeContextTitle(title)}\" " +
+        "(사용자가 '오른쪽/왼쪽 화면' 이라고 하면 위치로 구분하세요. 따로 말하지 않으면 위의 포커스가 있는 탭이 기준입니다).";
 
     private static string ActiveContextCore(SessionTab? tab, int openTabs) =>
         tab == null
@@ -352,8 +362,9 @@ public partial class MainWindow
         "- 사용자는 대화 중에 탭을 자주 바꿉니다. 메시지마다 붙는 '[Nubis 현재 화면]' 줄이 그 메시지를 보낸 순간 사용자가 보고 있던 탭입니다. 이전에 쓰던 session_id 대신 그 줄의 session_id 를 쓰세요.\n" +
         "- 호스트 등록·수정·삭제는 add_host / update_host / delete_host 로 합니다(앱이 승인을 받음). 계정은 비밀번호 대신 list_vault 의 Vault 계정을 vault 로 연결하세요.\n" +
         "- 접속이 안 된다고 하면 먼저 test_connection 으로 DNS·포트·SSH 배너를 확인하세요.\n" +
-        "- 쿠버네티스는 list_k8s_clusters 로 등록된 클러스터를 보고, run_kubectl 로 클러스터를 지정해 실행합니다(인증은 앱이 고정, 승인 필요). 파드 셸·로그 탭은 open_k8s_session. " +
+        "- 쿠버네티스는 list_k8s_clusters 로 등록된 클러스터를 보고, run_kubectl 로 클러스터를 지정해 실행합니다(인증은 앱이 고정, 승인 필요). 파드 셸·로그 탭은 open_k8s_session, 포트 포워딩은 k8s_port_forward(승인 필요). " +
         "클러스터 관리(이름·네임스페이스·그룹)는 update_k8s_cluster, 삭제 delete_k8s_cluster, 연결 확인 test_k8s_cluster, 클라우드에서 찾기 find_k8s_clusters, kubeconfig 가져오기 import_k8s_clusters.\n" +
+        "- 포트 포워딩: SSH 탭은 list_port_forwards 로 보고 add_port_forward(승인 필요, 이 탭에서만 임시)로 열고 close_port_forward 로 닫습니다. 클러스터 탭(쿠버네티스)은 k8s_port_forward(list · start · stop)입니다.\n" +
         "- 터미널의 현재 폴더·로그인 사용자·sudo 전환 여부는 get_terminal_info 로 바로 확인하세요(명령을 보내지 않아 빠르고 승인도 없음). pwd·whoami 를 send_to_terminal 로 보내지 마세요.\n" +
         "- send_to_terminal 은 명령이 끝나 셸 프롬프트가 돌아올 때까지(기본 10초) 기다려 출력을 함께 돌려줍니다. 그 결과로 바로 답하고, '아직 실행 중' 일 때만 wait_for_output 으로 이어서 기다리세요.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +

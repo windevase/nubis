@@ -8,7 +8,7 @@ using System.Text.Json;
 namespace Nubis;
 
 /// <summary>import_hosts 의 출처</summary>
-internal enum McpImportSource { Table, SshConfig, MRemoteNg, Ansible, Ad }
+internal enum McpImportSource { Table, SshConfig, MRemoteNg, Ansible, Ad, Rdp }
 
 /// <summary>import_hosts 인자 (McpImport.ParseArgs 가 검사해서 만든다)</summary>
 internal sealed record McpImportArgs
@@ -74,6 +74,7 @@ internal static class McpImport
         McpImportSource.SshConfig => "ssh_config",
         McpImportSource.MRemoteNg => "mremoteng",
         McpImportSource.Ansible => "ansible",
+        McpImportSource.Rdp => "rdp",
         _ => "ad",
     };
 
@@ -97,8 +98,9 @@ internal static class McpImport
             "mremoteng" => McpImportSource.MRemoteNg,
             "ansible" => McpImportSource.Ansible,
             "ad" => McpImportSource.Ad,
-            "" => throw new McpToolException("source 가 필요합니다 (table / ssh_config / mremoteng / ansible / ad)."),
-            var s => throw new McpToolException($"source '{s}' 는 지원하지 않습니다 (table / ssh_config / mremoteng / ansible / ad)."),
+            "rdp" => McpImportSource.Rdp,
+            "" => throw new McpToolException("source 가 필요합니다 (table / ssh_config / mremoteng / ansible / ad / rdp)."),
+            var s => throw new McpToolException($"source '{s}' 는 지원하지 않습니다 (table / ssh_config / mremoteng / ansible / ad / rdp)."),
         };
 
         var text = Str(a, "text");
@@ -116,10 +118,16 @@ internal static class McpImport
             var adGiven = AdKeys.Where(k => Has(a, k)).ToList();
             if (adGiven.Count > 0) throw new McpToolException($"{string.Join(", ", adGiven)} 는 source=ad 에서만 씁니다.");
             if (text != null && path != null) throw new McpToolException("text 와 path 중 하나만 지정하세요.");
-            if (text == null && path == null && source is McpImportSource.Table or McpImportSource.Ansible)
-                throw new McpToolException(source == McpImportSource.Table
-                    ? "source=table 에는 text(붙여 넣은 표) 또는 path(CSV/TSV 파일)가 필요합니다."
-                    : "source=ansible 에는 text(인벤토리 내용) 또는 path(인벤토리 파일)가 필요합니다.");
+            if (text == null && path == null && source is McpImportSource.Table or McpImportSource.Ansible or McpImportSource.Rdp)
+                throw new McpToolException(source switch
+                {
+                    McpImportSource.Table => "source=table 에는 text(붙여 넣은 표) 또는 path(CSV/TSV 파일)가 필요합니다.",
+                    McpImportSource.Rdp => "source=rdp 에는 path(.rdp 파일) 또는 text(.rdp 내용)가 필요합니다.",
+                    _ => "source=ansible 에는 text(인벤토리 내용) 또는 path(인벤토리 파일)가 필요합니다.",
+                });
+            // .rdp 출처로 다른 종류의 파일을 읽지 않게 확장자를 본다
+            if (path != null && source == McpImportSource.Rdp && !path.EndsWith(".rdp", StringComparison.OrdinalIgnoreCase))
+                throw new McpToolException("source=rdp 의 path 는 .rdp 파일이어야 합니다.");
             if (path != null && source == McpImportSource.Table &&
                 System.IO.Path.GetExtension(path).ToLowerInvariant() is ".xlsx" or ".xls" or ".xlsm" or ".xlsb" or ".ods")
                 throw new McpToolException("엑셀 파일(.xlsx 등)은 직접 읽지 않습니다. CSV/TSV 로 저장한 파일을 path 로 주거나, 표 내용을 text 로 넘기세요.");
@@ -326,10 +334,29 @@ internal static class McpImport
     {
         var lines = selected.Take(max).Select(r =>
             $"{(r.Status == ImportStatus.Existing ? "~" : "+")} {r.NameText}  ({r.ProtocolText} {r.AddressText}:{r.PortText})" +
-            (r.GroupText.Length > 0 ? $"  [{r.GroupText}]" : "")).ToList();
+            (r.GroupText.Length > 0 ? $"  [{r.GroupText}]" : "") +
+            RdpExtras(r, translate: true)).ToList();
         if (selected.Count > max) lines.Add(L.F("… 외 {0}개", selected.Count - max));
         return lines;
     }
+
+    /// <summary>
+    /// 새로 등록할 RDP 호스트의 RD 게이트웨이 · NLA 끄기 ("  · RD 게이트웨이 gw · NLA 끔", 없으면 ""). 로그인이 게이트웨이를 지나가므로
+    /// 승인 창 · 감사 로그에 보인다 (add_host 의 rdp_gateway 와 같은 취급). translate=false 면 감사 로그용 한국어 원문.
+    /// 기존 호스트 갱신(~)은 이름·그룹·사용자명만 바꾸므로 붙이지 않는다
+    /// </summary>
+    public static string RdpExtras(ImportRow r, bool translate)
+    {
+        if (r.Status != ImportStatus.New || r.Host is not { Protocol: Protocol.Rdp } h) return "";
+        var parts = new List<string>();
+        if (h.RdpGateway is { Length: > 0 } gw) parts.Add(translate ? L.F("RD 게이트웨이 {0}", gw) : $"RD 게이트웨이 {gw}");
+        if (h.RdpDisableNla) parts.Add(translate ? L.T("NLA 끔") : "NLA 끔");
+        return parts.Count > 0 ? "  · " + string.Join(" · ", parts) : "";
+    }
+
+    /// <summary>등록할 줄 중 RD 게이트웨이를 거치는 새 호스트가 있는지 (승인 창 경고용)</summary>
+    public static bool AnyGateway(IEnumerable<ImportRow> selected) =>
+        selected.Any(r => r.Status == ImportStatus.New && r.Host is { Protocol: Protocol.Rdp, RdpGateway.Length: > 0 });
 
     // ───────────── 경로 검사 ─────────────
 

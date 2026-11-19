@@ -25,7 +25,7 @@ Linux 와 Windows 서버가 섞여 있고 여러 클라우드에 흩어져 있�
 ## 이런 걸 합니다
 
 **🖥️ 모든 접속을 한 창에서**
-SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속되고, `Ctrl+K` 를 누르고 이름·IP·열린 탭·동작 이름 일부를 입력해 방향키로 고른 뒤 Enter 로 실행합니다. 즐겨찾기와 최근 접속 호스트가 맨 위에 있습니다. 탭은 순서 바꾸기·이름 바꾸기·다시 연결·한꺼번에 닫기가 되고, 방금 닫은 탭은 `Ctrl+Shift+R` 로 다시 엽니다. 복사·붙여넣기는 Windows Terminal 방식(`Ctrl+C`/`Ctrl+V`)이나 PuTTY · mRemoteNG 방식(선택하면 복사, 우클릭으로 붙여넣기) 중 익숙한 쪽으로 고를 수 있습니다. ssh-agent 와 `~/.ssh` 기본 키, `known_hosts`, OTP·Push 2단계 인증(답 기억하기), 점프 서버(ProxyJump)까지 OpenSSH 처럼 동작하고, RDP 는 RD 게이트웨이를 포함해 mstsc 기본 설정을 따릅니다. Entra ID(Azure AD) 가입 PC 도 `AzureAD\사용자@도메인` 으로 로그인하고 그 호스트만 NLA 를 끄면 접속됩니다.
+SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽니다. 검색창에 `user@host` 만 입력하면 바로 접속되고, `Ctrl+K` 를 누르고 이름·IP·열린 탭·동작 이름 일부를 입력해 방향키로 고른 뒤 Enter 로 실행합니다. 즐겨찾기와 최근 접속 호스트가 맨 위에 있습니다. 탭은 순서 바꾸기·이름 바꾸기·다시 연결·한꺼번에 닫기가 되고, 방금 닫은 탭은 `Ctrl+Shift+R` 로 다시 엽니다. 서버 두 대의 로그를 같이 보거나 같은 서버에 셸 두 개를 띄우려면 탭 우클릭 → **오른쪽에 나란히 보기** 로 다른 탭을 고르면 한 화면에 나란히 보이고, 가운데 경계선을 끌어 크기를 바꾸며, 클릭한 쪽에 입력됩니다. 복사·붙여넣기는 Windows Terminal 방식(`Ctrl+C`/`Ctrl+V`)이나 PuTTY · mRemoteNG 방식(선택하면 복사, 우클릭으로 붙여넣기) 중 익숙한 쪽으로 고를 수 있습니다. ssh-agent 와 `~/.ssh` 기본 키, `known_hosts`, OTP·Push 2단계 인증(답 기억하기), 점프 서버(ProxyJump)까지 OpenSSH 처럼 동작하고, RDP 는 RD 게이트웨이를 포함해 mstsc 기본 설정을 따릅니다. Entra ID(Azure AD) 가입 PC 도 `AzureAD\사용자@도메인` 으로 로그인하고 그 호스트만 NLA 를 끄면 접속됩니다. SSH 호스트에 포트 포워딩(`ssh -L`)을 저장해 두면 탭이 연결될 때마다 서버 뒤의 DB·관리 페이지가 이 PC 의 `127.0.0.1` 포트로 열리고(탭의 SSH 연결을 그대로 써서 다시 로그인·OTP 없음) 탭을 닫으면 닫힙니다. 탭의 ⇄ 버튼에서 열린 포워딩을 보고, 주소를 복사하고, 웹 포트는 브라우저로 열고, 그 탭에만 임시 포워딩을 추가합니다.
 
 <img src="docs/media/palette-connect.gif" alt="Ctrl+K 로 호스트를 찾아 SSH 접속, 같은 연결로 SFTP 패널이 열림" width="100%">
 
@@ -35,10 +35,10 @@ SSH 터미널, RDP 데스크톱, 로컬 PowerShell 을 탭으로 나란히 엽�
 <img src="docs/media/cloud.gif" alt="프로필 그룹으로 정리된 클라우드 서버와 AWS · Tencent · GCP · Azure · OCI Cloud 페이지" width="100%">
 
 **⎈ 쿠버네티스 클러스터, 인증은 클러스터마다 따로**
-Kubernetes 페이지는 클러스터마다 kubeconfig 를 그 클러스터 하나만 담도록 잘라 DPAPI 로 암호화해 따로 저장하므로, 다른 클러스터의 토큰이 섞이지 않습니다. `~/.kube/config`(또는 `KUBECONFIG` 의 여러 파일을 kubectl 규칙대로 합친 것)·파일·붙여 넣은 YAML 에서 context 를 골라 가져오거나(원본 파일은 바꾸지 않음), 이미 추가한 클라우드 프로필 중 원하는 것만 골라 EKS · GKE · AKS · OKE · TKE 클러스터를 찾으면(리전은 지정하지 않아도 전 리전을 자동으로 확인) 고른 프로필은 이후 동기화 때 함께 갱신됩니다. 클러스터를 열면 왼쪽에 파드·디플로이먼트·서비스·노드 목록(네임스페이스 선택, 이름 검색, 5초 자동 새로고침), 오른쪽에 `kubectl`·`k9s`·`helm` 이 그 클러스터를 가리키는 PowerShell 이 열립니다. 파드는 더블클릭하면 셸, 우클릭하면 로그·이전 컨테이너 로그·describe·YAML·삭제이고, 디플로이먼트는 `rollout restart` 로 다시 시작합니다. 복호화한 kubeconfig 는 탭이나 `kubectl` 이 실행되는 동안에만 현재 Windows 계정만 읽을 수 있는 임시 파일로 둡니다. PC 에 `kubectl` 이 있어야 하고, 클라우드 클러스터는 해당 클라우드의 CLI 나 인증 플러그인도 필요합니다.
+Kubernetes 페이지는 클러스터마다 kubeconfig 를 그 클러스터 하나만 담도록 잘라 DPAPI 로 암호화해 따로 저장하므로, 다른 클러스터의 토큰이 섞이지 않습니다. `~/.kube/config`(또는 `KUBECONFIG` 의 여러 파일을 kubectl 규칙대로 합친 것)·파일·붙여 넣은 YAML 에서 context 를 골라 가져오거나(원본 파일은 바꾸지 않음), 이미 추가한 클라우드 프로필 중 원하는 것만 골라 EKS · GKE · AKS · OKE · TKE 클러스터를 찾으면(리전은 지정하지 않아도 전 리전을 자동으로 확인) 고른 프로필은 이후 동기화 때 함께 갱신됩니다. 클러스터를 열면 왼쪽에 파드·디플로이먼트·서비스·노드 목록(네임스페이스 선택, 이름 검색, 5초 자동 새로고침), 오른쪽에 `kubectl`·`k9s`·`helm` 이 그 클러스터를 가리키는 PowerShell 이 열립니다. 파드는 더블클릭하면 셸, 우클릭하면 로그·이전 컨테이너 로그·describe·YAML·삭제이고, 디플로이먼트는 `rollout restart` 로 다시 시작합니다. 파드·디플로이먼트·서비스를 우클릭해 **포트 포워딩** 할 수 있습니다: 알려진 포트를 고르면 로컬 포트를 제안하고(같은 번호, 쓰이면 빈 포트), 127.0.0.1 에만 열리며, 터미널 위 목록(`127.0.0.1:8080 → svc/web:80`)에서 주소 복사·브라우저로 열기·중지·다시 시작을 하고, 탭을 닫으면 멈춥니다. 복호화한 kubeconfig 는 탭이나 `kubectl` 이 실행되는 동안에만 현재 Windows 계정만 읽을 수 있는 임시 파일로 둡니다. PC 에 `kubectl` 이 있어야 하고, 클라우드 클러스터는 해당 클라우드의 CLI 나 인증 플러그인도 필요합니다.
 
 **🏢 온프레미스 서버도 한 번에**
-`IMPORT` 로 이미 가진 서버 목록을 그대로 가져옵니다 — 엑셀·CSV 붙여넣기(한글·영문 머리글 자동 인식), `~/.ssh/config`(`Include`·`ProxyJump` 포함), mRemoteNG `confCons.xml`(폴더가 그룹으로), Ansible 인벤토리(INI·YAML), 그리고 Microsoft Entra Domain Services 를 포함한 Active Directory(LDAPS 우선, 현재 Windows 로그인 또는 입력한 계정). 미리보기에서 등록할 서버를 고르고 SSH · RDP 용 Vault 계정을 정하면 되고, 이미 있는 호스트는 알아서 걸러져 두 번 등록되지 않습니다. 비밀번호는 어떤 출처에서도 가져오지 않습니다.
+`IMPORT` 로 이미 가진 서버 목록을 그대로 가져옵니다 — 엑셀·CSV 붙여넣기(한글·영문 머리글 자동 인식), `~/.ssh/config`(`Include`·`ProxyJump` 포함), mRemoteNG `confCons.xml`(폴더가 그룹으로), Ansible 인벤토리(INI·YAML), Microsoft Entra Domain Services 를 포함한 Active Directory(LDAPS 우선, 현재 Windows 로그인 또는 입력한 계정), 그리고 원격 데스크톱 `.rdp` 파일(여러 개 고르거나 호스트 목록에 끌어다 놓기 — 주소·포트·사용자명(`AzureAD\user@domain` 포함)·RD 게이트웨이·NLA 설정을 옮김). 미리보기에서 등록할 서버를 고르고 SSH · RDP 용 Vault 계정을 정하면 되고, 이미 있는 호스트는 알아서 걸러져 두 번 등록되지 않습니다. 비밀번호는 어떤 출처에서도 가져오지 않습니다.
 
 <img src="docs/media/import.gif" alt="엑셀 표를 붙여 넣고 미리 본 뒤 서버 추가" width="100%">
 
@@ -113,9 +113,9 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 ## 개인정보
 
-이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다.
+이 프로그램은 사용자(또는 설치·운영하는 사람)가 요청하지 않는 한 어떤 정보도 다른 네트워크 시스템으로 보내지 않는다 (아래의 익명 새 버전 확인은 예외이며 끌 수 있다).
 
-Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 쿠버네티스 클러스터 (이 PC 의 `kubectl` 로), 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 사용 통계·분석·업데이트 확인은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
+Nubis 가 연결하는 곳은 사용자가 설정한 곳뿐이다: 접속하는 서버, 추가한 쿠버네티스 클러스터 (이 PC 의 `kubectl` 로), 추가한 클라우드 프로필의 API (이 PC 에 저장된 인증 프로필 사용), 시작 화면 로그인에 설정한 OAuth 제공자, 그리고 Claude 패널을 열면 이 PC 에 설치된 Claude Code CLI (사용자 본인 계정으로 Anthropic 과 통신). 또 새 버전을 알려 주려고 하루 한 번 GitHub API (`api.github.com`) 에서 최신 릴리스 번호를 조회한다 — 사용자 정보를 보내지 않는 익명 요청이며 (여느 웹 요청처럼 GitHub 에는 IP 주소만 보인다) Settings → **새 버전 알림** 에서 끌 수 있다. 사용 통계·분석은 없다. 모든 데이터는 `%APPDATA%\Nubis` 에 Windows DPAPI 로 암호화되어 남는다.
 
 ## 라이선스
 

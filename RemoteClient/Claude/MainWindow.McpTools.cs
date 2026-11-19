@@ -249,6 +249,8 @@ public partial class MainWindow
         foreach (var t in CloudProfileTools()) yield return t;
         foreach (var t in VaultTools()) yield return t;
         foreach (var t in K8sTools()) yield return t;
+        // SSH 탭의 로컬 포트 포워딩 (MainWindow.McpPortForward.cs)
+        foreach (var t in PortForwardTools()) yield return t;
 
         yield return new McpTool("get_settings",
             "Nubis 앱 설정(터미널 테마·글꼴·구문 강조·기본 포트·보안 옵션)의 현재 값과 바꿀 수 있는 값 범위를 보여준다.",

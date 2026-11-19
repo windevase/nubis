@@ -62,7 +62,7 @@ Only one Nubis runs at a time. Starting it again while it is open (including wit
 
    You can open the guide again at any time with **Show the getting-started guide** in Settings.
 
-Not sure where to start? If you use a cloud provider, begin with [importing cloud servers](#8-importing-cloud-servers). If your servers are listed in Excel, `~/.ssh/config`, mRemoteNG, Ansible or Active Directory, [import them](#9-importing-on-premises-servers). Otherwise, [add a host yourself](#31-adding-a-host).
+Not sure where to start? If you use a cloud provider, begin with [importing cloud servers](#8-importing-cloud-servers). If your servers are listed in Excel, `~/.ssh/config`, mRemoteNG, Ansible, Active Directory or `.rdp` files, [import them](#9-importing-on-premises-servers). Otherwise, [add a host yourself](#31-adding-a-host).
 
 ---
 
@@ -80,6 +80,7 @@ Not sure where to start? If you use a cloud provider, begin with [importing clou
 - **Toasts** — short results, such as bulk host changes, a copied public key, or SFTP warnings and errors, appear briefly at the bottom right. Click one to close it; hover to keep it open.
 - **Command palette** — `Ctrl+K` searches hosts, open tabs and actions in one box ([14](#14-keyboard-shortcuts)).
 - **Closed-tab history** — `Ctrl+Shift+R` (or right-click a tab → **Reopen closed tab**) reopens the last closed tab. Up to 10 tabs are remembered, newest first. Only saved hosts and local PowerShell tabs are remembered (quick-connect tabs are not), and the history is not kept after Nubis closes.
+- **Side by side** — right-click a tab → **View side by side on the right** and pick another open tab: the two show next to each other (that tab on the left, the picked one on the right) — two servers' logs, two shells on one server, SSH next to RDP or a Kubernetes tab. Both stay ordinary tabs in the tab strip; choosing either one shows the pair again, and choosing any other tab shows that tab alone. Drag the divider to resize. The side you click gets the keyboard, its header is underlined, and its tab is the current tab for shortcuts (`Ctrl+Shift+W` closes that side) and for the Claude panel, which is also told which tab is visible on the other side. The right pane's header has **Swap sides** (⇄) and **Stop side-by-side view** (✕), also in the tab right-click menu. Closing one of the two tabs lets the other fill the window. Only one pair at a time — pairing a new tab replaces it.
 
 ---
 
@@ -183,6 +184,18 @@ Multi-line text asks first with a preview (not when the server has bracketed pas
 - **Which account is used** — the terminal's first line shows which account is being tried (`Vault account 'x'`, saved on this host, or entered), and a rejection says whose password it was. Card tooltips show it too. If you change the Vault or host account after opening a tab, reconnecting uses the new values.
 - **Authentication failure hints** — Nubis looks at which methods the server allows (for example, keys only) and tells you the likely cause.
 - **Claude on OTP servers** — Claude's `run_command` runs over an SSH tab you have already opened and signed in to, so it does not need the OTP again ([10.6](#106-running-commands-on-several-servers-ssh--winrm)). Without an open tab, and for Claude's SFTP tools, it cannot enter an OTP, so it stops and reports the reason.
+
+### 4.1 Port forwarding (tunnels)
+
+Open a database (3306, 5432) or an admin web page that sits behind a server on a port of this PC — the same as `ssh -L localport:targethost:targetport`.
+
+- **Saved rules** — in the host editor (SSH), fill in local port · target host · target port · name (optional) under **Port forwarding**, click **Add**, then **Save**. The target host is the address **as seen from the SSH server**; left empty it is `localhost` (the server itself). Each rule has its own on/off switch. Two enabled rules can't share a local port.
+- **Opened and closed for you** — when the SSH tab connects, the enabled rules open; they close when the tab closes or the connection drops, and reopen when it reconnects. They use the tab's SSH connection, so there is no second sign-in (OTP servers included).
+- **This PC only** — always opened on `127.0.0.1`. Other PCs can't use the tunnel; other programs on this PC can.
+- **If a local port is already in use**, only that rule is marked as failed (also noted in the terminal) and the rest still open.
+- **The tab's forwarding window** — the ⇄ button in the toolbar left of the terminal (with a count badge; the tab title shows ⇄ and the count too). It shows each forward's state (open · waiting · off · failed with the reason), copies the local address, opens it in the browser when it looks like a web port, and turns forwards on or off for this tab. The fields below add a forward **for this tab only** (not saved; gone when the tab closes).
+- If the server blocks forwarding (`AllowTcpForwarding no`), the listener still opens but connections fail, and the reason appears in the forwarding window.
+- Claude can see open forwards with `list_port_forwards` and open a temporary one in a tab with `add_port_forward` (it opens a port on this PC, so it **always asks for approval**).
 
 ---
 
@@ -348,6 +361,7 @@ You can also ask Claude to find and add them for you ([10.2](#102-what-you-can-a
 | **mRemoteNG** | `confCons.xml` (default `%APPDATA%\mRemoteNG\confCons.xml`). **Browse** · **Load** | SSH and RDP connections. Folders become groups (`A / B`), and inherited user, port and protocol are resolved. A fully encrypted file must be re-exported without full-file encryption |
 | **Ansible inventory** | An INI or YAML file, or paste the inventory text (pasted text takes priority) | Groups, `children`, ranges such as `web[01:10]`, `ansible_host` · `ansible_port` · `ansible_user`, and the jump host in `ansible_ssh_common_args` (`-J` / ProxyJump). When loaded from a file, `group_vars/` and `host_vars/` next to it are read too. `ansible_connection: winrm` hosts come in as RDP. Password variables, `!vault` and Jinja values are skipped with a warning |
 | **Active Directory** | Domain and options, then **Import** ([9.2](#92-active-directory)) | Computer accounts: name, DNS name, OS, OU path as the group |
+| **.rdp files** | **Choose files** (several at once), or drag `.rdp` files onto this window — or straight onto the host list, which opens this preview | One RDP host per file, named after the file. `full address` (including `host:3390`) and `server port`, `username` as written (`AzureAD\user@example.com`, `DOMAIN\user`; a separate `domain` is prefixed), `enablecredsspsupport:i:0` → **Don't use NLA** on the host, `gatewayhostname` → the host's RD Gateway (skipped when `gatewayusagemethod` is 0 or 4, i.e. not used). Saved passwords (`password 51:b:`) are ignored with a warning. UTF-16 and UTF-8 files are read; files over 1 MB or that aren't text are skipped |
 
 Sources that can't be read completely (unknown protocols, `Match` blocks, password columns and so on) are listed in the warnings panel of the preview.
 
@@ -442,8 +456,12 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 | Showing a Vault account's public key (`vault_get_public_key`) or the stored host keys (`list_known_hosts`) | None (written to the audit log) |
 | Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), moving a tab (`move_session`), a terminal tab's font size (`set_terminal_zoom`), the main window state (`set_window_state`), Claude giving back RDP screen control (`rdp_release_control`), starring a host, cancelling a cloud sync | None (written to the audit log) |
 | Display and convenience settings (theme, font, copy-on-select, auto reconnect and so on) | None (written to the audit log) |
+| Listing an SSH tab's port forwards (`list_port_forwards`) | None |
+| Closing an SSH tab's port forward (`close_port_forward`) | None (written to the audit log) |
+| Opening a temporary port forward in an SSH tab (`add_port_forward`, opens a 127.0.0.1 port on this PC) | **Always an approval prompt** |
 | Kubernetes: listing clusters (`list_k8s_clusters`, no credentials included) | None |
 | Kubernetes: opening a cluster tab, a pod shell tab or a log tab (`open_k8s_session`) | None (written to the audit log) |
+| Kubernetes: opening a port forward on this PC (`k8s_port_forward start`) | Every time (stopping is only logged) |
 | Kubernetes: finding clusters in the cloud (`find_k8s_clusters`) | None (written to the audit log); removing the clusters of unselected profiles asks first |
 | Kubernetes: testing a cluster connection (`test_k8s_cluster`) | Approval prompt (skipped when read-only auto-approve is on) |
 | Kubernetes: changing or deleting a cluster, importing from a kubeconfig (`update_k8s_cluster`, `delete_k8s_cluster`, `import_k8s_clusters`) | **Always an approval prompt** (imports are previewed first) |
@@ -477,7 +495,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 79 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 83 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -507,6 +525,7 @@ Claude has 79 tools. Anything you can do by hand in the app, Claude can do too. 
 | `list_closed_tabs` · `reopen_closed_tab` | Closed-tab history (Kubernetes cluster tabs included) and reopening (`Ctrl+Shift+R`) |
 | `open_local_terminal` | Open a local PowerShell tab |
 | `toggle_sftp_panel` | Show or hide an SSH tab's SFTP panel |
+| `list_port_forwards` · `add_port_forward` · `close_port_forward` | An SSH tab's port forwards: list · open a temporary one in that tab (approval) · close (a temporary one is removed, a saved rule is turned off in that tab only). See [4.1](#41-port-forwarding-tunnels) |
 
 **Terminal**
 
@@ -586,15 +605,16 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 
 | Tool | Purpose |
 |---|---|
-| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible or AD — preview first, then add with one approval |
+| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD or an `.rdp` file — preview first, then add with one approval |
 
 **Kubernetes**
 
 | Tool | Purpose |
 |---|---|
 | `list_k8s_clusters` | Registered clusters (never credentials), and the path of the `kubectl` found on this PC |
-| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead. Also refused: `kubectl config view` in any form, options that read or write local files (`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` and so on) and kubectl plugins |
+| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead (`k8s_port_forward` for port forwarding). Also refused: `kubectl config view` in any form, options that read or write local files (`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` and so on) and kubectl plugins |
 | `open_k8s_session` | Open a cluster tab, a pod shell tab or a pod log tab ([16.6](#166-cluster-tab)) |
+| `k8s_port_forward` | List, start or stop port forwards on cluster tabs (`kubectl port-forward` to 127.0.0.1 only; `start` needs approval) ([16.6](#166-cluster-tab)) |
 | `update_k8s_cluster` · `delete_k8s_cluster` | Change a cluster's name, default namespace or group; delete it from Nubis (the cluster itself is untouched) |
 | `test_k8s_cluster` | Connection test, like **Test connection** on the page |
 | `find_k8s_clusters` | **Find in cloud** with the profiles you name ([16.3](#163-finding-clusters-in-the-cloud)) |
@@ -688,6 +708,7 @@ Settings are saved as soon as you change them. The buttons at the top of the pag
 |---|---|---|---|
 | Language | Chosen on first run | 한국어 / English. Takes effect after a restart (Nubis asks whether to restart). The Claude panel answers in the same language | No |
 | Getting started → **Show the getting-started guide** | — | Opens the getting-started window again | — |
+| New version notice | On | Once a day, after the window opens, asks GitHub for the latest release (anonymous, no user information sent). If it is newer, a toast appears and **New version x.y.z** shows under the version number at the bottom of the sidebar — click it to open the release notes or skip that version. Pre-releases are ignored, failures are silent. Applies to every account on this PC | No |
 
 ### 12.2 Default Vault account
 
@@ -892,7 +913,7 @@ Actions: New host · Import hosts · New PowerShell tab · Reopen closed tab · 
 
 **Approval prompt** — `Esc` rejects.
 
-**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Stop Claude's input (RDP, while Claude is typing) · Rename tab... · Edit Host · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
+**Tab right-click menu** — Reconnect · New tab to same host · New PowerShell tab (local tabs) · Full screen (RDP) · End Claude screen control (RDP, while allowed) · Stop Claude's input (RDP, while Claude is typing) · Rename tab... · Edit Host · View side by side on the right (or Swap sides · Stop side-by-side view on a paired tab) · Close · Close other tabs · Close tabs to the right · Reconnect all disconnected tabs · Close all disconnected tabs · Reopen closed tab. Drag tabs to reorder them; when they overflow, scroll with the wheel or use ▾ (**Show all tabs**) for the full list.
 
 ---
 
@@ -999,11 +1020,14 @@ Opening a cluster opens a tab with two parts.
 
 | Resource | Actions |
 |---|---|
-| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** (also a submenu when there are several containers) · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
-| Deployment | describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
-| Service · Node | describe · **View YAML** |
+| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** (also a submenu when there are several containers) · **Port forward...** · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
+| Deployment | **Port forward...** · describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
+| Service | **Port forward...** · describe · **View YAML** |
+| Node | describe · **View YAML** |
 
 describe and YAML run in the terminal on the right, but only while it shows a prompt; otherwise the command is copied to the clipboard instead. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
+
+**Port forwarding** — right-click a pod, deployment or service and choose **Port forward...**. The window lists the ports the resource declares (container ports, or the service's ports with their target port); pick one or type a remote port. The local port starts as the same number, or the next free one if it is taken (ports of enabled SSH forwards in open SSH tabs are skipped too), and you can change it. SSH port forwarding will not open a port that a running Kubernetes forward holds. Nubis runs `kubectl port-forward --address 127.0.0.1` without a shell, so the port opens on **127.0.0.1 only** — other PCs on your network cannot use it. Open forwards appear above the terminal as `127.0.0.1:8080 → svc/web:80` with a status dot (connecting · connected · ended), and buttons to **copy the local address**, **open in browser** (shown for web-looking ports such as 80, 8080 or a port named `http`), **stop**, and — once a forward has ended, for example because the pod restarted — **restart** or **remove from list**. Closing the cluster tab stops every forward and deletes their temporary kubeconfigs, and `kubectl` cannot outlive Nubis even if it crashes. Claude can open one with `k8s_port_forward` (`list` · `start` · `stop`); `start` opens a port on your PC, so it needs your approval and is audit-logged.
 
 ### 16.7 Security
 
@@ -1012,5 +1036,6 @@ describe and YAML run in the terminal on the right, but only while it shows a pr
 | Storage | Each cluster's kubeconfig is encrypted separately with DPAPI, inside `k8s_clusters.json`, which is encrypted as a whole |
 | While in use | The decrypted kubeconfig is a temporary file under `k8s-run\` in the data folder, readable only by your Windows account, and exists only while a cluster tab is open or `kubectl` is running. It is deleted when they close; files left behind by a crash are cleaned up at the next start |
 | Running kubectl | Nubis starts `kubectl` directly, without a shell. Claude's `run_kubectl` refuses `--kubeconfig`, `--context`, `--cluster`, `--user`, `-s`/`--server`, `--token`, `--as` and similar options, so saved credentials cannot be sent to another server or swapped for another kubeconfig |
-| Claude panel | Reading `k8s_clusters.json` and `k8s-run` is blocked by the deny rules (a second safety net). `run_kubectl` needs approval and is audit-logged ([10.3](#103-approval-and-logging)) |
+| Port forwarding | Binds only to 127.0.0.1. Each forward has its own temporary kubeconfig that is deleted when it stops, and its `kubectl` is in a kill-on-close job object, so it ends with Nubis even after a crash |
+| Claude panel | Reading `k8s_clusters.json` and `k8s-run` is blocked by the deny rules (a second safety net). `run_kubectl` and `k8s_port_forward start` need approval and are audit-logged ([10.3](#103-approval-and-logging)) |
 | Export | An exported kubeconfig is a plain, unencrypted file — keep it somewhere safe |

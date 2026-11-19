@@ -64,6 +64,16 @@ public class Review2RdpTabsTests
         Assert.Equal(0, MainWindow.LiveRemoteSessionCount(new[] { (Protocol.Local, SessionStatus.Connected) }));
     }
 
+    [Fact]
+    public void CloseAppPrompt_CountsK8sForwardsToo()
+    {
+        Assert.Null(MainWindow.CloseAppPrompt(0, 0));
+        Assert.Equal(L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", 2), MainWindow.CloseAppPrompt(2, 0));
+        // 클러스터 탭은 로컬 터미널이라 세션 수에 들지 않지만 실행 중인 포워딩이 있으면 묻는다
+        Assert.Equal(L.F("실행 중인 쿠버네티스 포트 포워딩 {0}개가 멈춥니다. 닫을까요?", 1), MainWindow.CloseAppPrompt(0, 1));
+        Assert.Equal(L.F("연결 중인 세션 {0}개가 종료되고 쿠버네티스 포트 포워딩 {1}개가 멈춥니다. 닫을까요?", 2, 3), MainWindow.CloseAppPrompt(2, 3));
+    }
+
     [Theory]
     [InlineData(2055, true)]
     [InlineData(3335, true)]

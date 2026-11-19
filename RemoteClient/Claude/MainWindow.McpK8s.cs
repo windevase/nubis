@@ -26,7 +26,7 @@ public partial class MainWindow
             "등록된 클러스터 하나에 kubectl 을 실행하고 출력을 돌려준다 (이 PC 의 kubectl, 셸을 거치지 않음). 클러스터·인증은 앱이 고정하므로 " +
             "--kubeconfig · --context · --cluster · --user · -s/--server · --token · --as 는 쓸 수 없고, config view(--raw · --flatten 포함)도 저장된 인증이 나오므로 쓸 수 없다(주소·네임스페이스는 list_k8s_clusters). " +
             "이 PC 의 파일·프로그램을 쓰는 cp · kustomize · diff · edit · -k/--kustomize · --from-file · --from-env-file · --cert/--key 도 안 되고, -f 는 Nubis 데이터 폴더·~/.ssh 밖의 파일만. " +
-            "대화형·끝나지 않는 명령(exec -it, attach, port-forward, proxy, debug, logs -f, --watch)은 안 된다 — " +
+            "대화형·끝나지 않는 명령(exec -it, attach, port-forward, proxy, debug, logs -f, --watch)은 안 된다 — 포트 포워딩은 k8s_port_forward, " +
             "파드 셸·로그는 open_k8s_session 으로 탭을 연다. 실행 전에 앱이 사용자 승인을 받는다 (사용자가 읽기 전용 자동 승인을 켰고 get·describe·logs·top 등 읽기 전용이면 승인 생략, 감사 로그는 항상). " +
             "Secret 값 조회(get secret -o yaml 등)는 꼭 필요할 때만.",
             Schema(new
@@ -52,6 +52,8 @@ public partial class MainWindow
                 previous = new { type = "boolean", description = "logs: 재시작 전 컨테이너의 로그" },
             }, "cluster"),
             a => OnUiAsync(() => UnderRdpInputSectionAsync(() => OpenK8sFromClaude(a))));   // 새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게
+
+        yield return K8sPortForwardTool();   // MainWindow.McpK8sForward.cs
 
         // ----- 관리 (Kubernetes 페이지의 손 동작과 같음 — MainWindow.McpK8sManage.cs · McpK8sImport.cs) -----
 
@@ -169,7 +171,9 @@ public partial class MainWindow
     internal static string? KubectlInteractiveReason(IReadOnlyList<string> args)
     {
         if (KubectlArgs.CommandIs(args, "attach", "port-forward", "proxy", "edit", "debug") is { } verb)
-            return $"'{verb}' 는 대화형·장시간 명령이라 run_kubectl 로 실행할 수 없습니다.";
+            return verb == "port-forward"
+                ? "port-forward 는 장시간 명령이라 run_kubectl 로 실행할 수 없습니다. 포트 포워딩은 k8s_port_forward action=start (사용자 승인) 를 쓰세요."
+                : $"'{verb}' 는 대화형·장시간 명령이라 run_kubectl 로 실행할 수 없습니다.";
         var before = args.Take(KubectlArgs.TerminatorIndex(args)).Select(x => x.Trim()).ToList();
         var at = KubectlArgs.SubcommandIndex(args);
         // 하위 명령을 확신할 수 없으면(모르는 옵션이 앞에 있음) 어디에든 있으면 그 명령으로 본다
@@ -221,7 +225,7 @@ public partial class MainWindow
 
         var timeout = Math.Clamp(IntArg(a, "timeout_sec") ?? 60, 5, 600);
         var line = "kubectl " + string.Join(" ", args.Select(x => K8sTerminal.Quote(x)));
-        var label = $"{McpHelpers.VisibleControlChars(cluster.Name)}  ({cluster.Endpoint})";
+        var label = K8sLabel(cluster);   // 엔드포인트도 kubeconfig 에서 온 값 — 보이지 않는 문자를 드러낸다
         var secret = args.Any(ReadOnlyCommands.KubectlSecretRef);
         var autoApproved = SettingsStore.Current.AutoApproveReadOnly && KubectlArgs.IsReadOnly(args);
         if (!autoApproved)

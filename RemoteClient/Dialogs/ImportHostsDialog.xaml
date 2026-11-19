@@ -4,7 +4,8 @@
         xmlns:l="clr-namespace:Nubis"
         Title="{l:Tr '호스트 가져오기'}" Width="960" Height="700" MinWidth="780" MinHeight="560"
         WindowStyle="None" ResizeMode="CanResize" AllowsTransparency="True" Background="#01000000" ShowInTaskbar="False"
-        WindowStartupLocation="CenterOwner" PreviewKeyDown="OnWindowPreviewKeyDown" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+        WindowStartupLocation="CenterOwner" PreviewKeyDown="OnWindowPreviewKeyDown"
+        AllowDrop="True" PreviewDragOver="OnRdpPreviewDragOver" PreviewDrop="OnRdpPreviewDrop" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="0" ResizeBorderThickness="10" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
@@ -85,7 +86,7 @@
 
             <!-- 출처 선택 -->
             <Border DockPanel.Dock="Top" Margin="0,18,0,0" Style="{StaticResource SegmentTrack}">
-                <UniformGrid Columns="5">
+                <UniformGrid Columns="6">
                     <RadioButton x:Name="SrcTable" Style="{StaticResource Segment}" GroupName="src" IsChecked="True" Checked="OnSourceChanged"
                                  Content="{l:Tr '엑셀·CSV 붙여넣기'}"/>
                     <RadioButton x:Name="SrcSsh" Style="{StaticResource Segment}" GroupName="src" Checked="OnSourceChanged" Content="~/.ssh/config"/>
@@ -93,6 +94,7 @@
                     <RadioButton x:Name="SrcAnsible" Style="{StaticResource Segment}" GroupName="src" Checked="OnSourceChanged"
                                  Content="{l:Tr 'Ansible 인벤토리'}"/>
                     <RadioButton x:Name="SrcAd" Style="{StaticResource Segment}" GroupName="src" Checked="OnSourceChanged" Content="Active Directory"/>
+                    <RadioButton x:Name="SrcRdp" Style="{StaticResource Segment}" GroupName="src" Checked="OnSourceChanged" Content="{l:Tr '.rdp 파일'}"/>
                 </UniformGrid>
             </Border>
 
@@ -146,6 +148,26 @@
                     <TextBox x:Name="AnsibleTextBox" Grid.Row="1" Grid.ColumnSpan="3" Style="{StaticResource MultiLineBox}" Height="72" Margin="0,8,0,0"
                              AutomationProperties.Name="{l:Tr 'Ansible 인벤토리'}"
                              Tag="{l:Tr '또는 인벤토리 내용을 여기에 붙여 넣으세요 (붙여 넣은 내용이 있으면 파일보다 우선)'}"/>
+                </Grid>
+
+                <!-- .rdp 파일 : 여러 파일 선택 · 끌어다 놓기 -->
+                <Grid x:Name="RdpPanel" Style="{StaticResource SourcePanel}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Border Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusMd}" Padding="10,0" MinHeight="34">
+                        <TextBlock x:Name="RdpFilesText" Style="{StaticResource Hint}" VerticalAlignment="Center" TextWrapping="NoWrap"
+                                   TextTrimming="CharacterEllipsis" Text="{l:Tr '고른 파일 없음'}"/>
+                    </Border>
+                    <Button Grid.Column="1" Content="{l:Tr '파일 고르기'}" Style="{StaticResource PrimaryButton}" Margin="8,0,0,0" MinWidth="96" Click="OnBrowseRdp"/>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Hint}" Margin="2,8,0,0"
+                               Text="{l:Tr '원격 데스크톱 연결(mstsc)의 .rdp 파일을 여러 개 고르거나 이 창에 끌어다 놓으세요. 파일 이름이 호스트 이름이 되고 주소 · 포트 · 사용자명 · RD 게이트웨이 · NLA 설정을 읽습니다. 저장된 비밀번호는 가져오지 않습니다.'}"/>
                 </Grid>
 
                 <!-- Active Directory -->

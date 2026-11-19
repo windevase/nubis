@@ -75,6 +75,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         _originalAddress = host.Address;
         _saveCredentials = saveCredentials;
         _source = source;
+        InitForwards();
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -96,6 +97,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         grid.Children.Add(_splitter);
         grid.Children.Add(_term);
         Content = grid;
+        // 나란히 보기 등으로 탭이 좁아지면 SFTP 패널이 터미널을 다 가리지 않게 절반까지만 (MainWindow.SplitView.cs)
+        SizeChanged += (_, e) => _sftpColumn.MaxWidth = SplitLayout.SidePanelMaxWidth(e.NewSize.Width, 260);
         // 터미널 화면 준비(탭이 처음 보일 때)를 기다리지 않고 바로 연결. 출력은 XtermView 가 모아 둔다
         Loaded += (_, _) => { if (!_started) { _started = true; _ = ConnectAsync(); } };
         _term.Ready += () => SendResize(_term.Cols, _term.Rows);
@@ -236,6 +239,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             _status = SessionStatus.Disconnected;
         }
         Dispatcher.BeginInvoke(() => StatusChanged?.Invoke(SessionStatus.Disconnected));
+        _forwards.Detach();   // 셸만 닫혀(exit) 연결이 남아 있어도 포워딩은 닫는다 — 다시 연결되면 다시 연다
         _term.Write("\r\n");
         if (reason != null) _term.Info(L.F("오류: {0}", reason), "31");
         _term.Info(L.T("연결이 종료되었습니다. Enter 키를 누르면 다시 연결합니다. (탭 우클릭 → 다시 연결)"), "33");
@@ -251,9 +255,13 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             shell = _shell; client = _client; tunnel = _tunnel;
             _shell = null; _client = null; _tunnel = null;
         }
+        _forwards.Detach();   // 리스너는 바로 닫는다 (연결을 닫기 전에)
+        var fwdStopping = _forwards.Stopping;
         Task.Run(() =>
         {
             try { shell?.Dispose(); } catch { }
+            // 포워딩 포트를 목록에서 빼는 중에 Disconnect 가 같은 목록을 훑으면 예외로 끝나 세션이 남는다 — 끝나길 기다린다 (보통 바로 끝남)
+            try { fwdStopping.Wait(TimeSpan.FromSeconds(10)); } catch { }
             try { if (client?.IsConnected == true) client.Disconnect(); } catch { }
             try { client?.Dispose(); } catch { }
             tunnel?.Dispose();   // 점프 서버 연결은 대상 서버 연결을 닫은 뒤에
@@ -280,6 +288,11 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     public void CloseSession()
     {
         _closed = true;
+        // 포워딩은 바로 닫는다 — 아래 SFTP 정리(최대 2분)를 기다리는 동안 이 PC 의 포트가 열려 있지 않게.
+        // 이 탭이 쓰려던 포트도 앱 안 포트 현황(LocalPortRegistry)에서 뺀다
+        _forwards.Close();
+        if (Dispatcher.CheckAccess()) PortForwardWindow.CloseFor(this);
+        else Dispatcher.BeginInvoke(() => PortForwardWindow.CloseFor(this));
         // 셸(터미널 채널)은 바로 닫는다 — 실행 중이던 명령(tail -f 등)이 아래 SFTP 정리(최대 2분)를 기다리며 서버에 남지 않게.
         // SFTP 는 같은 연결의 다른 채널이라 영향이 없다
         ShellStream? shell;

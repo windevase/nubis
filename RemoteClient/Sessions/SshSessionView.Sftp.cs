@@ -142,6 +142,7 @@ public sealed partial class SshSessionView
         sftpButton.Click += (_, _) => ToggleSftp();
         var panel = new StackPanel();
         panel.Children.Add(sftpButton);
+        panel.Children.Add(BuildForwardButton());
         return new Border
         {
             Width = 36,
@@ -152,7 +153,8 @@ public sealed partial class SshSessionView
         };
     }
 
-    public void ToggleSftp(bool? open = null)
+    /// <param name="focusTerminal">닫을 때 터미널에 포커스를 줄지 (Claude 가 고르지 않은 탭의 패널을 닫을 때는 false)</param>
+    public void ToggleSftp(bool? open = null, bool focusTerminal = true)
     {
         var isOpen = _sftpColumn.Width.Value > 0;
         var want = open ?? !isOpen;
@@ -179,7 +181,7 @@ public sealed partial class SshSessionView
             _sftpColumn.Width = new GridLength(0);
             _splitter.Visibility = Visibility.Collapsed;
             if (_sftp != null) _sftp.Visibility = Visibility.Collapsed;
-            _term.FocusTerminal();
+            if (focusTerminal) _term.FocusTerminal();
         }
     }
 }

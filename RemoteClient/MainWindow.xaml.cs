@@ -88,6 +88,7 @@ public partial class MainWindow : Window
             ConnectFromArgs(Environment.GetCommandLineArgs());
             ShowOnboardingIfFirstRun();
             StartCloudAutoSync(startup: true);
+            StartUpdateCheck();
         };
         XtermView.Hotkey += OnTerminalHotkey;
     }
@@ -201,15 +202,17 @@ public partial class MainWindow : Window
         {
             if (!ok) { e.Cancel = true; return; }
         }
-        // 로컬 PowerShell 은 세지 않고, 탭 닫기 확인을 끈 설정(ConfirmCloseTab)도 따른다
-        else if (LiveRemoteSessionCount(_tabs.Select(t => (t.Protocol, t.Status))) is var live &&
-            live > 0 && SettingsStore.Current.ConfirmCloseTab && Dialog.Show(this, L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", live), "Nubis",
-                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        // 로컬 PowerShell 은 세지 않고, 탭 닫기 확인을 끈 설정(ConfirmCloseTab)도 따른다. 클러스터 탭의 실행 중인 포트 포워딩도 알린다
+        else if (SettingsStore.Current.ConfirmCloseTab &&
+            CloseAppPrompt(LiveRemoteSessionCount(_tabs.Select(t => (t.Protocol, t.Status))),
+                _tabs.Select(t => t.View).OfType<K8sSessionView>().Sum(v => v.Forwards.Count(f => f.IsRunning))) is { } prompt &&
+            Dialog.Show(this, prompt, "Nubis", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
         {
             e.Cancel = true;
             return;
         }
         SaveWindowState();
+        ShutdownSplitView();   // 나란히 보기 포커스 훅 해제 (MainWindow.SplitView.cs)
         foreach (var t in _tabs.ToList())
         {
             try { t.Session.CloseSession(); } catch { }

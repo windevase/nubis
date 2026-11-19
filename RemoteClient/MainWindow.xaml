@@ -33,6 +33,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <!-- 프로토콜 글리프 + 오른쪽 아래 상태 점 (연결됨 Success · 연결 중 Warning · 끊김 TextTertiary).
                          점 테두리는 탭 바탕색을 따라가 글리프와 떨어져 보이게 한다 -->
@@ -45,8 +46,14 @@
                     </Grid>
                     <TextBlock x:Name="title" Grid.Column="1" Text="{Binding Title}" Margin="10,0,6,0" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                    <!-- 포트 포워딩이 열린 SSH 탭: ⇄ + 열린 수 (평소 Collapsed) -->
+                    <TextBlock x:Name="fwd" Grid.Column="2" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"
+                               Foreground="{StaticResource AccentText}" Visibility="Collapsed"
+                               ToolTip="{l:Tr '열린 포트 포워딩 (탭 왼쪽 도구 막대의 ⇄ 버튼)'}">
+                        <Run Text="&#xE8AB;" FontFamily="{StaticResource IconFont}" FontSize="10"/><Run Text="{Binding ForwardCount, Mode=OneWay}"/>
+                    </TextBlock>
                     <!-- 닫기: 마우스를 올린 탭 · 선택된 탭에만 보인다 (Hidden — 자리는 유지해 탭 폭이 흔들리지 않게) -->
-                    <Button x:Name="closeBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
+                    <Button x:Name="closeBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
                             Content="&#xE8BB;" Click="OnTabClose" Visibility="Hidden"
                             ToolTip="{l:Tr '탭 닫기 (Ctrl+Shift+W)'}" AutomationProperties.Name="{l:Tr '탭 닫기'}"/>
                 </Grid>
@@ -58,11 +65,19 @@
                 <DataTrigger Binding="{Binding Status}" Value="Connecting">
                     <Setter TargetName="dot" Property="Fill" Value="{StaticResource Warning}"/>
                 </DataTrigger>
+                <DataTrigger Binding="{Binding HasForwards}" Value="True">
+                    <Setter TargetName="fwd" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
                 <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
                     <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
                     <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
                     <Setter TargetName="closeBtn" Property="Visibility" Value="Visible"/>
                 </Trigger>
+                <!-- 나란히 보기의 다른 쪽(보이지만 포커스는 없는 탭): 옅은 선택 바탕 -->
+                <DataTrigger Binding="{Binding IsBeside}" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                    <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                </DataTrigger>
                 <!-- 선택: 본문과 같은 Layer2 바탕 + 밝은 글자 (선택이 hover 보다 뒤에 있어 이긴다) -->
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter TargetName="bd" Property="Background" Value="{StaticResource Layer2Bg}"/>
@@ -364,12 +379,16 @@
                                          GroupName="nav" Checked="OnNavChanged"/>
                             <TextBlock x:Name="FooterText" FontSize="11" Foreground="{StaticResource TextTertiary}"
                                        Margin="22,10,20,0" TextWrapping="Wrap"/>
+                            <!-- 새 버전 알림 (MainWindow.UpdateCheck.cs): 새 버전이 있을 때만 보인다. 누르면 릴리스 노트 열기 · 이 버전 건너뛰기 -->
+                            <Button x:Name="UpdateLink" Style="{StaticResource LinkButton}" FontSize="11" Margin="22,4,20,0"
+                                    HorizontalAlignment="Left" Visibility="Collapsed" Click="OnUpdateLinkClick"/>
                         </StackPanel>
                     </DockPanel>
                 </Border>
 
                 <!-- 호스트 페이지 -->
-                <Grid x:Name="HostsPage" Grid.Column="1">
+                <Grid x:Name="HostsPage" Grid.Column="1" Background="Transparent"
+                      AllowDrop="True" PreviewDragOver="OnHostsRdpDragOver" PreviewDrop="OnHostsRdpDrop">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -424,10 +443,10 @@
                                         <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-                                <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory 에서 한꺼번에 등록 -->
+                                <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory · .rdp 에서 한꺼번에 등록 -->
                                 <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="12,7" Margin="8,0,0,0"
                                         AutomationProperties.Name="{l:Tr '가져오기...'}"
-                                        ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 서버를 한꺼번에 가져옵니다'}">
+                                        ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory · .rdp 파일에서 서버를 한꺼번에 가져옵니다. .rdp 파일은 호스트 목록에 끌어다 놓아도 됩니다'}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
                                                    Foreground="{StaticResource TextSecondary}"/>
@@ -1409,6 +1428,20 @@
                                                 Content="{l:Tr '시작하기 안내 다시 보기'}" Click="OnShowOnboarding"/>
                                     </Grid>
                                 </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '새 버전 알림'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '하루 한 번 GitHub 에서 최신 릴리스 번호만 확인합니다 (사용자 정보는 보내지 않음). 이 PC 의 모든 계정에 적용'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="UpdateCheckBox" Style="{StaticResource SetSwitch}" Click="OnUpdateCheckClick"
+                                                  AutomationProperties.Name="{l:Tr '새 버전 알림'}"/>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
                         </Border>
 
@@ -2107,6 +2140,15 @@
                                                    Text="{l:Tr '이 서버에 바로 닿지 않으면 거쳐 갈 SSH 호스트를 고르세요 (ssh 의 ProxyJump). 점프 서버의 계정·Vault·OTP 설정을 그대로 씁니다.'}"/>
                                     </StackPanel>
 
+                                    <!-- SSH 전용: 로컬 포트 포워딩 (ssh -L) — 목록 행·입력 칸은 코드(MainWindow.HostForwards.cs) -->
+                                    <StackPanel x:Name="ForwardPanel">
+                                        <TextBlock Text="{l:Tr '포트 포워딩 (선택)'}" Style="{StaticResource FieldLabel}"/>
+                                        <StackPanel x:Name="EdForwardList" Margin="0,0,0,6" Visibility="Collapsed"/>
+                                        <ContentControl x:Name="EdForwardFormHost" Focusable="False"/>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
+                                                   Text="{l:Tr '서버 뒤의 DB·관리 페이지를 이 PC 의 포트로 엽니다 (ssh -L). 탭이 연결되면 켜 둔 규칙이 이 PC 의 127.0.0.1 에만 열리고, 탭을 닫으면 닫힙니다. 대상 호스트는 SSH 서버에서 본 주소입니다 (비우면 localhost = 서버 자신).'}"/>
+                                    </StackPanel>
+
                                     <!-- RDP 전용: RD 게이트웨이 -->
                                     <StackPanel x:Name="GatewayPanel" Visibility="Collapsed">
                                         <TextBlock Text="{l:Tr 'RD 게이트웨이 (선택)'}" Style="{StaticResource FieldLabel}"/>
@@ -2225,7 +2267,48 @@
             </Grid>
 
             <!-- 세션 뷰들 (탭 전환 시 Visibility 만 바꿔서 연결을 유지) -->
-            <Grid x:Name="SessionsHost" Visibility="Collapsed" Background="{StaticResource Bg}"/>
+            <!-- 나란히 보기(MainWindow.SplitView.cs): 짝인 두 탭을 0열 · 2열에 둔다. 세션 뷰는 열만 바꿔 옮긴다 (HwndHost 를 다시 붙이지 않음).
+                 0행 = 두 영역의 머리줄(나란히 볼 때만), 1행 = 세션 뷰. 탭 하나만 볼 때는 1·2열 너비 0 -->
+            <Grid x:Name="SessionsHost" Visibility="Collapsed" Background="{StaticResource Bg}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="SplitLeftColumn" Width="*" MinWidth="120"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition x:Name="SplitRightColumn" Width="0"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="SplitLeftHeader" Grid.Column="0" Height="28" Visibility="Collapsed" Cursor="Hand"
+                        Background="{StaticResource Layer1Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,2"
+                        MouseLeftButtonUp="OnSplitHeaderClick" AutomationProperties.Name="{l:Tr '왼쪽 영역'}">
+                    <TextBlock x:Name="SplitLeftTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
+                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                </Border>
+                <GridSplitter x:Name="SplitSplitter" Grid.Column="1" Grid.RowSpan="2" Width="5" Visibility="Collapsed"
+                              Background="{StaticResource Line}" HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                              ResizeBehavior="PreviousAndNext" Cursor="SizeWE" AutomationProperties.Name="{l:Tr '나란히 보기 크기 조절'}"/>
+                <Border x:Name="SplitRightHeader" Grid.Column="2" Height="28" Visibility="Collapsed" Cursor="Hand"
+                        Background="{StaticResource Layer1Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,2"
+                        MouseLeftButtonUp="OnSplitHeaderClick" AutomationProperties.Name="{l:Tr '오른쪽 영역'}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="SplitRightTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
+                                   TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                        <!-- 좌우 바꾸기: E13C (⇄). E895(Sync)는 클라우드 동기화·SFTP 전송 상태, E8AB 는 포트 포워딩 버튼·탭 배지가 쓴다 -->
+                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="11"
+                                Content="&#xE13C;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"
+                                AutomationProperties.Name="{l:Tr '좌우 바꾸기'}"/>
+                        <Button Grid.Column="2" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="9" Margin="0,0,4,0"
+                                Content="&#xE8BB;" Click="OnSplitClose" ToolTip="{l:Tr '나란히 보기 해제'}"
+                                AutomationProperties.Name="{l:Tr '나란히 보기 해제'}"/>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

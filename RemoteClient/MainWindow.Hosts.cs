@@ -402,10 +402,30 @@ public partial class MainWindow
 
     private void OnNewHost(object sender, RoutedEventArgs e) => OpenEditor(null);
 
-    /// <summary>호스트 가져오기 (엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory) — 미리보기에서 고른 것만 등록</summary>
-    private void OnImportHosts(object sender, RoutedEventArgs e)
+    /// <summary>호스트 가져오기 (엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory · .rdp) — 미리보기에서 고른 것만 등록</summary>
+    private void OnImportHosts(object sender, RoutedEventArgs e) => ImportHosts(null);
+
+    /// <summary>호스트 목록에 .rdp 파일을 끌어 오면 복사 표시 (다른 파일은 받지 않음)</summary>
+    private void OnHostsRdpDragOver(object sender, DragEventArgs e)
     {
-        if (ImportHostsDialog.Ask(this, _hosts) is not { } r) return;
+        if (ImportHostsDialog.RdpFilesIn(e.Data).Count == 0) return;
+        e.Effects = DragDropEffects.Copy;
+        e.Handled = true;
+    }
+
+    /// <summary>호스트 목록에 .rdp 파일을 놓으면 가져오기 미리보기로 연다</summary>
+    private void OnHostsRdpDrop(object sender, DragEventArgs e)
+    {
+        var files = ImportHostsDialog.RdpFilesIn(e.Data);
+        if (files.Count == 0) return;
+        e.Handled = true;
+        // 끌어다 놓기 처리 중에 모달 창을 띄우면 탐색기가 놓기가 끝날 때까지 멈춰 있으므로 놓기를 끝낸 뒤에 연다
+        Dispatcher.BeginInvoke(new Action(() => ImportHosts(files)));
+    }
+
+    private void ImportHosts(IReadOnlyList<string>? rdpFiles)
+    {
+        if (ImportHostsDialog.Ask(this, _hosts, rdpFiles) is not { } r) return;
         var applied = r.ApplyTo(_hosts);
         SaveHosts();
         RefreshHosts();

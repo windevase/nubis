@@ -33,7 +33,10 @@ public sealed partial class SshSessionView
 
         // 저장된 호스트·Vault 의 계정이 바뀌었으면(이 탭을 연 뒤 Vault 비밀번호를 고친 경우 등) 그 값으로.
         // 직전에 인증이 거부돼 계정을 물을 차례여도 바뀐 값을 먼저 시도한다
-        if (_source?.Reload() is { } fresh && _host.RefreshCredentialsFrom(fresh))
+        var fresh = _source?.Reload();
+        // 포워딩 규칙도 저장된 호스트의 최신 값으로 (이 탭에서 바꾼 켜기/끄기·임시 규칙은 유지)
+        if (fresh != null) _forwards.SetSavedRules(fresh.PortForwards);
+        if (fresh != null && _host.RefreshCredentialsFrom(fresh))
         {
             _authUser = null;
             _authPassword = null;
@@ -178,6 +181,7 @@ public sealed partial class SshSessionView
 
             // 연결 직후 서버가 셸을 바로 닫은 경우(nologin, 세션 수 제한 등) 이미 Disconnected 로 바뀌어 있음
             if (!TrySetConnected()) return;
+            AttachForwards(gen);
             _askCredentials = false;
             _autoAttempts = 0;
             _triedPublic = false;

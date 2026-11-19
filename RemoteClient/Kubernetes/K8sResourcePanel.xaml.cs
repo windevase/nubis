@@ -42,6 +42,8 @@ public partial class K8sResourcePanel : UserControl
     public event Action<K8sItem, string?>? ShellRequested;
     /// <summary>파드 로그 (파드, 컨테이너, 이전 컨테이너)</summary>
     public event Action<K8sItem, string?, bool>? LogsRequested;
+    /// <summary>포트 포워딩 열기 (파드 · 디플로이먼트 · 서비스)</summary>
+    public event Action<K8sItem>? PortForwardRequested;
     /// <summary>kubectl 터미널에 입력할 명령 (Enter 포함하지 않음)</summary>
     public event Action<string>? TerminalCommand;
     public event Action? CloseRequested;
