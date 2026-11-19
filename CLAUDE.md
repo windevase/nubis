@@ -128,3 +128,4 @@ The source folder is named `RemoteClient\`, but the project / assembly / namespa
 
 - When features change, update **both** `README.md` (English, GitHub default) and `README.ko.md` (Korean) with the same content. Keep the language-switch links at the top of both files. Add new open-source dependencies to `THIRD-PARTY-NOTICES.md`.
 - Code comments and UI text are in Korean.
+- `.coderabbit.yaml` restates the Must Follow rules as CodeRabbit path instructions and pre-merge checks (free open-source tier only — no paid-plan keys). When a rule here changes, update it there too. The repo has fewer than 10 stars, so reviews are triggered by commenting `@coderabbitai review` on the PR.
