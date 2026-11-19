@@ -129,7 +129,10 @@ public partial class MainWindow
                 if (args.Source == McpImportSource.Rdp)
                 {
                     var rdp = ReadRdpImportFile(args.Path!);
-                    return (RdpFileImport.ParseFile(rdp), $"{label} ({rdp})", $"{name} ({rdp})");
+                    var rdpText = RdpFileImport.ReadText(rdp);
+                    // 확장자만 .rdp 로 바꾼 개인키 파일 (다른 출처와 같은 내용 검사)
+                    if (McpImport.LooksLikePrivateKey(rdpText)) throw new McpToolException("개인키가 들어 있는 파일은 읽을 수 없습니다.");
+                    return (RdpFileImport.Parse(rdpText, RdpFileImport.NameFromPath(rdp)), $"{label} ({rdp})", $"{name} ({rdp})");
                 }
 
                 var path = args.Path ?? (args.Source == McpImportSource.SshConfig ? SshConfigImport.DefaultPath : MRemoteNgImport.DefaultPath);
@@ -183,7 +186,8 @@ public partial class MainWindow
         if (McpImport.BlockedPathReason(path, AppPaths.DataDir, AppPaths.RootDir, sshDir, false) is { } why)
             throw new McpToolException(why);
         var full = Path.GetFullPath(path.Trim());
-        if (!File.Exists(full)) throw new McpToolException($"파일을 찾을 수 없습니다: {full}");
+        if (!File.Exists(full))
+            throw new McpToolException(Directory.Exists(full) ? $"폴더가 아니라 파일 경로를 지정하세요: {full}" : $"파일을 찾을 수 없습니다: {full}");
         var size = new FileInfo(full).Length;
         if (size > RdpFileImport.MaxFileBytes) throw new McpToolException($"파일이 너무 큽니다 ({size:N0} 바이트, .rdp 최대 {RdpFileImport.MaxFileBytes:N0}).");
         return full;
@@ -329,11 +333,13 @@ public partial class MainWindow
                       $"add={adds} update={updates}" +
                       (args.Group != null ? $" group=\"{args.Group}\"" : args.GroupPrefix != null ? $" group_prefix=\"{args.GroupPrefix}\"" : "") +
                       $" ssh_vault={sshVault?.Name ?? "-"} rdp_vault={rdpVault?.Name ?? "-"}";
-        var auditTargets = selected.Select(r => $"{r.NameText} ({r.ProtocolText} {r.AddressText}:{r.PortText})").ToList();
+        var auditTargets = selected.Select(r => $"{r.NameText} ({r.ProtocolText} {r.AddressText}:{r.PortText})" + McpImport.RdpExtras(r, translate: false)).ToList();
 
         var description = L.T("가져온 서버를 Nubis 호스트 목록에 등록합니다. 비밀번호는 가져오지 않으며, 계정은 지정한 Vault 계정으로만 연결됩니다. 주소와 Vault 계정이 맞는지 확인하세요.") +
                           "\n" + L.F("출처: {0}", label) +
-                          "\n" + L.F("새 호스트 {0}개 추가 · 기존 호스트 {1}개 갱신 (이름·그룹·사용자명)", adds, updates);
+                          "\n" + L.F("새 호스트 {0}개 추가 · 기존 호스트 {1}개 갱신 (이름·그룹·사용자명)", adds, updates) +
+                          // .rdp 의 RD 게이트웨이 — 로그인이 그 서버를 지나간다 (add_host rdp_gateway 승인과 같은 안내)
+                          (McpImport.AnyGateway(selected) ? L.T("\n점프 서버·RD 게이트웨이를 거쳐 접속하면 로그인이 그 서버를 지나갑니다. 믿을 수 있는 서버인지 확인하세요.") : "");
         if (!await AskApprovalAsync("import_hosts", L.F("Claude 가 호스트 {0}개 가져오기를 요청합니다", selected.Count),
                 description, McpImport.ApprovalTargets(selected), command))
         {

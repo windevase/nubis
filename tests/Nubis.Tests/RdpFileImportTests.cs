@@ -178,6 +178,137 @@ public class RdpFileImportTests
         Assert.Equal(@"C:\tmp\pc.RDP", a.Path);
     }
 
+    // ───────── 검수 회귀 테스트 ─────────
+
+    [Fact]
+    public void 게이트웨이_사용_방식_4_는_쓰지_않음으로_본다()
+    {
+        // Microsoft 문서: 0 과 4 는 모두 게이트웨이를 쓰지 않음 (4 = 로컬 주소 우회)
+        var h = Assert.Single(RdpFileImport.Parse("full address:s:pc\ngatewayhostname:s:gw.example.com\ngatewayusagemethod:i:4\n", "pc").Hosts);
+        Assert.Null(h.RdpGateway);
+        // 3(기본 설정 사용) · 값 없음은 쓴다
+        Assert.Equal("gw.example.com", Assert.Single(RdpFileImport.Parse("full address:s:pc\ngatewayhostname:s:gw.example.com\ngatewayusagemethod:i:3\n", "pc").Hosts).RdpGateway);
+        Assert.Equal("gw.example.com", Assert.Single(RdpFileImport.Parse("full address:s:pc\ngatewayhostname:s:gw.example.com\n", "pc").Hosts).RdpGateway);
+    }
+
+    [Theory]
+    [InlineData("gw.ex\u0430mple.com")]      // 키릴 'а' — 다른 게이트웨이처럼 보이게
+    [InlineData("gw.example.com\u202E")]      // 양방향 재정의
+    [InlineData("gw%25.example.com")]
+    [InlineData("[fd00::1")]
+    [InlineData("gw.example.com:0")]
+    public void 위장한_게이트웨이는_비우고_경고에는_숨은_문자를_보이게_한다(string gw)
+    {
+        var r = RdpFileImport.Parse($"full address:s:pc\ngatewayhostname:s:{gw}\ngatewayusagemethod:i:1\n", "pc");
+        Assert.Null(Assert.Single(r.Hosts).RdpGateway);
+        var w = Assert.Single(r.Warnings);
+        Assert.DoesNotContain('\u202E', w);
+    }
+
+    [Fact]
+    public void IPv6_게이트웨이와_포트는_받는다()
+    {
+        var h = Assert.Single(RdpFileImport.Parse("full address:s:pc\ngatewayhostname:s:[fd00::1]:8443\ngatewayusagemethod:i:1\n", "pc").Hosts);
+        Assert.Equal("[fd00::1]:8443", h.RdpGateway);
+    }
+
+    [Theory]
+    [InlineData("admin\u202Enimda")]
+    [InlineData("\u200Badmin")]
+    [InlineData("ad\u0085min")]
+    public void 양방향_서식_문자가_있는_사용자명은_비운다(string user)
+    {
+        var r = RdpFileImport.Parse($"full address:s:pc\nusername:s:{user}\n", "pc");
+        Assert.Null(Assert.Single(r.Hosts).Username);
+        Assert.Single(r.Warnings);
+    }
+
+    [Fact]
+    public void 따로_적힌_domain_은_사용자명_앞에_붙인다()
+    {
+        Assert.Equal(@"EXAMPLE\admin", Assert.Single(RdpFileImport.Parse("full address:s:pc\nusername:s:admin\ndomain:s:EXAMPLE\n", "pc").Hosts).Username);
+        // 이미 DOMAIN\ · UPN 이면 그대로
+        Assert.Equal(@"OTHER\admin", Assert.Single(RdpFileImport.Parse("full address:s:pc\nusername:s:OTHER\\admin\ndomain:s:EXAMPLE\n", "pc").Hosts).Username);
+        Assert.Equal("admin@example.com", Assert.Single(RdpFileImport.Parse("full address:s:pc\nusername:s:admin@example.com\ndomain:s:EXAMPLE\n", "pc").Hosts).Username);
+    }
+
+    [Fact]
+    public void 파일_이름의_양방향_문자는_호스트_이름에서_뺀다()
+    {
+        Assert.Equal("prodexe", RdpFileImport.NameFromPath(@"C:\tmp\prod" + "\u202E" + "exe.rdp"));
+        Assert.Equal("pc", Assert.Single(RdpFileImport.Parse("full address:s:pc.example.com\n", "\u2066pc\u2069").Hosts).Name);
+    }
+
+    [Theory]
+    [InlineData("full address:s:[fd00::5]:0\n")]
+    [InlineData("full address:s:[fd00::5]:99999\n")]
+    [InlineData("full address:s:[fd00::5]x\n")]
+    [InlineData("full address:s:[fd00::5]:0\nserver port:i:4000\n")]
+    [InlineData("full address:s:host.example.com:99999\nserver port:i:4000\n")]
+    public void 괄호_주소의_잘못된_포트는_오류로_보인다(string text)
+    {
+        var src = RdpFileImport.Parse(text, "pc").Hosts;
+        Assert.Equal(ImportStatus.Invalid, Assert.Single(ImportMerge.Plan(src, Array.Empty<HostEntry>(), new ImportDefaults()).Rows).Status);
+    }
+
+    [Fact]
+    public void 같은_키가_여러_번이면_마지막_값과_대소문자_무시()
+    {
+        var h = Assert.Single(RdpFileImport.Parse("Full Address:s:first.example.com\r\nFULL ADDRESS:s:  second.example.com  \r\n", "pc").Hosts);
+        Assert.Equal("second.example.com", h.Address);
+    }
+
+    [Fact]
+    public void UTF16BE_파일과_rdp_이름의_폴더()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nubis-rdp-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var be = Path.Combine(dir, "be.rdp");
+            File.WriteAllText(be, "full address:s:be.example.com\r\n", new UnicodeEncoding(true, true));
+            var folder = Path.Combine(dir, "folder.rdp");
+            Directory.CreateDirectory(folder);
+            var r = RdpFileImport.ParseFiles(new[] { be, folder });
+            Assert.Empty(r.Warnings);
+            Assert.Equal("be.example.com", Assert.Single(r.Hosts).Address);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void MCP_승인_목록과_감사에_게이트웨이와_NLA_끄기가_보인다()
+    {
+        var src = RdpFileImport.Parse("full address:s:pc.example.com\ngatewayhostname:s:gw.example.com\ngatewayusagemethod:i:1\nenablecredsspsupport:i:0\n", "pc").Hosts;
+        var plan = ImportMerge.Plan(src, Array.Empty<HostEntry>(), new ImportDefaults());
+        var line = Assert.Single(McpImport.ApprovalTargets(plan.Rows));
+        Assert.Contains("gw.example.com", line);
+        Assert.Contains("NLA", line);
+        Assert.Contains("RD 게이트웨이 gw.example.com · NLA 끔", McpImport.RdpExtras(plan.Rows[0], translate: false));
+        Assert.True(McpImport.AnyGateway(plan.Rows));
+
+        // 게이트웨이 없는 호스트 · 기존 호스트 갱신 줄에는 붙이지 않는다
+        var plain = ImportMerge.Plan(RdpFileImport.Parse("full address:s:pc.example.com\n", "pc").Hosts, Array.Empty<HostEntry>(), new ImportDefaults());
+        Assert.False(McpImport.AnyGateway(plain.Rows));
+        Assert.Equal("", McpImport.RdpExtras(plain.Rows[0], translate: false));
+        var existing = new[] { new HostEntry { Label = "old", Address = "pc.example.com", Port = 3389, Protocol = Protocol.Rdp } };
+        var upd = ImportMerge.Plan(src, existing, new ImportDefaults());
+        Assert.Equal(ImportStatus.Existing, upd.Rows[0].Status);
+        Assert.Equal("", McpImport.RdpExtras(upd.Rows[0], translate: false));
+    }
+
+    [Fact]
+    public void 끌어다_놓기는_rdp_이름만_파일_시스템을_보지_않고_고른다()
+    {
+        var data = new System.Windows.DataObject(System.Windows.DataFormats.FileDrop,
+            new[] { @"Z:\nope\a.rdp", @"Z:\nope\b.txt", @"Z:\nope\C.RDP", "" });
+        Assert.Equal(new[] { @"Z:\nope\a.rdp", @"Z:\nope\C.RDP" }, ImportHostsDialog.RdpFilesIn(data));
+        Assert.Empty(ImportHostsDialog.RdpFilesIn(new System.Windows.DataObject(System.Windows.DataFormats.UnicodeText, "x.rdp")));
+
+        var many = Enumerable.Range(0, RdpFileImport.MaxFiles + 50).Select(i => $@"Z:\nope\{i}.rdp").ToArray();
+        Assert.Equal(RdpFileImport.MaxFiles + 1, ImportHostsDialog.RdpFilesIn(new System.Windows.DataObject(System.Windows.DataFormats.FileDrop, many)).Count);
+    }
+
     [Fact]
     public void SSH_로_추정된_가져오기에는_RDP_전용_값을_넣지_않는다()
     {

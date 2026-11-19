@@ -334,10 +334,29 @@ internal static class McpImport
     {
         var lines = selected.Take(max).Select(r =>
             $"{(r.Status == ImportStatus.Existing ? "~" : "+")} {r.NameText}  ({r.ProtocolText} {r.AddressText}:{r.PortText})" +
-            (r.GroupText.Length > 0 ? $"  [{r.GroupText}]" : "")).ToList();
+            (r.GroupText.Length > 0 ? $"  [{r.GroupText}]" : "") +
+            RdpExtras(r, translate: true)).ToList();
         if (selected.Count > max) lines.Add(L.F("… 외 {0}개", selected.Count - max));
         return lines;
     }
+
+    /// <summary>
+    /// 새로 등록할 RDP 호스트의 RD 게이트웨이 · NLA 끄기 ("  · RD 게이트웨이 gw · NLA 끔", 없으면 ""). 로그인이 게이트웨이를 지나가므로
+    /// 승인 창 · 감사 로그에 보인다 (add_host 의 rdp_gateway 와 같은 취급). translate=false 면 감사 로그용 한국어 원문.
+    /// 기존 호스트 갱신(~)은 이름·그룹·사용자명만 바꾸므로 붙이지 않는다
+    /// </summary>
+    public static string RdpExtras(ImportRow r, bool translate)
+    {
+        if (r.Status != ImportStatus.New || r.Host is not { Protocol: Protocol.Rdp } h) return "";
+        var parts = new List<string>();
+        if (h.RdpGateway is { Length: > 0 } gw) parts.Add(translate ? L.F("RD 게이트웨이 {0}", gw) : $"RD 게이트웨이 {gw}");
+        if (h.RdpDisableNla) parts.Add(translate ? L.T("NLA 끔") : "NLA 끔");
+        return parts.Count > 0 ? "  · " + string.Join(" · ", parts) : "";
+    }
+
+    /// <summary>등록할 줄 중 RD 게이트웨이를 거치는 새 호스트가 있는지 (승인 창 경고용)</summary>
+    public static bool AnyGateway(IEnumerable<ImportRow> selected) =>
+        selected.Any(r => r.Status == ImportStatus.New && r.Host is { Protocol: Protocol.Rdp, RdpGateway.Length: > 0 });
 
     // ───────────── 경로 검사 ─────────────
 
