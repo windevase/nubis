@@ -33,6 +33,7 @@
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <!-- 프로토콜 글리프 + 오른쪽 아래 상태 점 (연결됨 Success · 연결 중 Warning · 끊김 TextTertiary).
                          점 테두리는 탭 바탕색을 따라가 글리프와 떨어져 보이게 한다 -->
@@ -46,7 +47,13 @@
                     <TextBlock x:Name="title" Grid.Column="1" Text="{Binding Title}" Margin="10,0,6,0" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
                     <!-- 닫기: 마우스를 올린 탭 · 선택된 탭에만 보인다 (Hidden — 자리는 유지해 탭 폭이 흔들리지 않게) -->
-                    <Button x:Name="closeBtn" Grid.Column="2" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
+                    <!-- 포트 포워딩이 열린 SSH 탭: ⇄ + 열린 수 (평소 Collapsed) -->
+                    <TextBlock x:Name="fwd" Grid.Column="2" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"
+                               Foreground="{StaticResource AccentText}" Visibility="Collapsed"
+                               ToolTip="{l:Tr '열린 포트 포워딩 (탭 왼쪽 도구 막대의 ⇄ 버튼)'}">
+                        <Run Text="&#xE8AB;" FontFamily="{StaticResource IconFont}" FontSize="10"/><Run Text="{Binding ForwardCount, Mode=OneWay}"/>
+                    </TextBlock>
+                    <Button x:Name="closeBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
                             Content="&#xE8BB;" Click="OnTabClose" Visibility="Hidden"
                             ToolTip="{l:Tr '탭 닫기 (Ctrl+Shift+W)'}" AutomationProperties.Name="{l:Tr '탭 닫기'}"/>
                 </Grid>
@@ -57,6 +64,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Status}" Value="Connecting">
                     <Setter TargetName="dot" Property="Fill" Value="{StaticResource Warning}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasForwards}" Value="True">
+                    <Setter TargetName="fwd" Property="Visibility" Value="Visible"/>
                 </DataTrigger>
                 <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
                     <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
@@ -2128,6 +2138,15 @@
                                                    Visibility="Collapsed"/>
                                         <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
                                                    Text="{l:Tr '이 서버에 바로 닿지 않으면 거쳐 갈 SSH 호스트를 고르세요 (ssh 의 ProxyJump). 점프 서버의 계정·Vault·OTP 설정을 그대로 씁니다.'}"/>
+                                    </StackPanel>
+
+                                    <!-- SSH 전용: 로컬 포트 포워딩 (ssh -L) — 목록 행·입력 칸은 코드(MainWindow.HostForwards.cs) -->
+                                    <StackPanel x:Name="ForwardPanel">
+                                        <TextBlock Text="{l:Tr '포트 포워딩 (선택)'}" Style="{StaticResource FieldLabel}"/>
+                                        <StackPanel x:Name="EdForwardList" Margin="0,0,0,6" Visibility="Collapsed"/>
+                                        <ContentControl x:Name="EdForwardFormHost" Focusable="False"/>
+                                        <TextBlock FontSize="11" Foreground="{StaticResource SubText}" Margin="2,6,0,0" TextWrapping="Wrap"
+                                                   Text="{l:Tr '서버 뒤의 DB·관리 페이지를 이 PC 의 포트로 엽니다 (ssh -L). 탭이 연결되면 켜 둔 규칙이 이 PC 의 127.0.0.1 에만 열리고, 탭을 닫으면 닫힙니다. 대상 호스트는 SSH 서버에서 본 주소입니다 (비우면 localhost = 서버 자신).'}"/>
                                     </StackPanel>
 
                                     <!-- RDP 전용: RD 게이트웨이 -->

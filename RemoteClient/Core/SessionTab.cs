@@ -67,6 +67,15 @@ public sealed class SessionTab : INotifyPropertyChanged
     /// <summary>고른 탭과 나란히 보이는 탭 (나란히 보기의 다른 쪽 — 탭 줄에서 옅게 표시)</summary>
     public bool IsBeside { get; set { if (field == value) return; field = value; OnChanged(); } }
 
+    private int _forwardCount;
+    /// <summary>SSH 탭에 열린 포트 포워딩 수 (탭 줄 배지)</summary>
+    public int ForwardCount
+    {
+        get => _forwardCount;
+        set { if (_forwardCount == value) return; _forwardCount = value; OnChanged(); OnChanged(nameof(HasForwards)); }
+    }
+    public bool HasForwards => _forwardCount > 0;
+
     public SessionStatus Status
     {
         get => _status;

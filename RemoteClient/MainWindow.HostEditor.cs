@@ -64,6 +64,7 @@ public partial class MainWindow
         UpdateRememberedUi(h);
         _edJumpId = h?.JumpHostId;
         UpdateJumpUi();
+        LoadForwardEditor(h);
         UpdateAuthUi();
         _editorValues = EditorValues();
         _editorSnapshot = EditorSnapshot();
@@ -93,7 +94,7 @@ public partial class MainWindow
 
     // EditorValues 의 칸 순서
     private const int FProto = 0, FAddress = 1, FPort = 2, FPublicIp = 3, FUsePublic = 4, FLabel = 5, FGroup = 6, FUser = 7,
-                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14, FNoNla = 15;
+                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14, FNoNla = 15, FForwards = 16;
 
     /// <summary>편집 칸 값 (칸별)</summary>
     private string[] EditorValues() => new[]
@@ -101,6 +102,7 @@ public partial class MainWindow
         (ProtoRdp.IsChecked == true).ToString(), EdAddress.Text, EdPort.Text, EdPublicIp.Text, (EdUsePublic.IsChecked == true).ToString(),
         EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text,
         _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "", EdTags.Text, (EdNoNla.IsChecked == true).ToString(),
+        PortForwards.Snapshot(_edForwards),
     };
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
@@ -179,6 +181,7 @@ public partial class MainWindow
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         JumpPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (ForwardPanel != null) ForwardPanel.Visibility = JumpPanel.Visibility;   // InitializeComponent 중이면 아직 없음
         GatewayPanel.Visibility = ProtoRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         if (ProtoRdp.IsChecked == true)
         {
@@ -273,63 +276,6 @@ public partial class MainWindow
         if (_edVaultId == null) UpdateAuthUi();
     }
 
-    // 편집 중인 점프 서버 (ProxyJump)
-    private Guid? _edJumpId;
-
-    private void UpdateJumpUi()
-    {
-        var j = _edJumpId is { } id ? _hosts.FirstOrDefault(x => x.Id == id) : null;
-        EdJumpButton.Content = _edJumpId == null ? L.T("없음 (바로 연결)")
-            : j == null ? L.T("삭제된 호스트 — 다른 호스트를 고르거나 없음으로")
-            : $"{j.DisplayName}  ({j.Address})";
-        // 이 호스트를 점프 서버로 쓰는 호스트가 있으면 — 점프는 한 단계만이라 그 호스트들은 여기서 고른 점프 서버를 거치지 않는다
-        var users = _edJumpId == null ? 0 : JumpUsers(_hosts, _editing);
-        JumpWarning.Text = users > 0
-            ? L.F("이 호스트를 점프 서버로 쓰는 호스트가 {0}개 있습니다. 점프 서버는 한 단계만 지원해, 그 호스트들은 여기서 고른 점프 서버를 거치지 않고 이 호스트에 바로 연결합니다.", users)
-            : "";
-        JumpWarning.Visibility = users > 0 ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    /// <summary>editing 을 점프 서버로 쓰는 (자기 자신이 아닌) 호스트 수. 새 호스트·복제는 0</summary>
-    internal static int JumpUsers(IEnumerable<HostEntry> all, HostEntry? editing) =>
-        editing == null ? 0 : all.Count(x => x.JumpHostId == editing.Id && !ReferenceEquals(x, editing));
-
-    /// <summary>점프 서버로 쓸 SSH 호스트 고르기 (자기 자신 제외)</summary>
-    private void OnPickJump(object sender, RoutedEventArgs e)
-    {
-        var menu = new ContextMenu { PlacementTarget = EdJumpButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
-        var none = new MenuItem { Header = L.T("없음 (바로 연결)") };
-        none.Click += (_, _) => { _edJumpId = null; UpdateJumpUi(); };
-        menu.Items.Add(none);
-        menu.Items.Add(new Separator());
-        foreach (var h in _hosts.Where(x => x.Protocol == Protocol.Ssh && !ReferenceEquals(x, _editing))
-                                .OrderBy(x => x.Group, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
-        {
-            // 점프 서버는 한 단계만 지원 (AttachJump) — 자기도 점프 서버를 거치는 호스트는 점프 서버로 쓰면 그 점프 없이 직접 붙어
-            // 연결되지 않으므로 고르지 못하게 한다 (이미 지정돼 있으면 그대로 보여 준다)
-            var nested = h.JumpHostId != null && h.Id != _edJumpId;
-            var item = new MenuItem
-            {
-                Header = MenuText($"{h.DisplayName}  ({h.Address})" + (h.Group.Length > 0 ? $"  · {h.Group}" : "")),
-                IsChecked = h.Id == _edJumpId,
-                IsEnabled = !nested,
-            };
-            if (nested)
-            {
-                item.ToolTip = L.T("이 호스트도 점프 서버를 거쳐 접속합니다. 점프 서버는 한 단계만 지원합니다.");
-                ToolTipService.SetShowOnDisabled(item, true);
-            }
-            var id = h.Id;
-            item.Click += (_, _) => { _edJumpId = id; UpdateJumpUi(); };
-            menu.Items.Add(item);
-        }
-        if (menu.Items.Count == 2) menu.Items.Add(new MenuItem { Header = L.T("점프 서버로 쓸 SSH 호스트가 없습니다"), IsEnabled = false });
-        menu.IsOpen = true;
-    }
-
-    /// <summary>메뉴 항목 글자 그대로 (MenuItem 은 '_' 를 단축키 표시로 먹어 web_01 이 web01 로 보였다)</summary>
-    internal static string MenuText(string s) => s.Replace("_", "__");
-
     // 저장할 때 기억한 인증 답을 지울지 (지우기 버튼)
     private bool _edClearAnswers;
 
@@ -410,6 +356,7 @@ public partial class MainWindow
             EdTags.Focus();
             return null;
         }
+        if (CheckEditorForwards(ProtoSsh.IsChecked == true) is { } fwdErr) { EditorError.Text = fwdErr; return null; }
         EditorError.Text = "";
         // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다 — 원본 호스트를 바꾸기 전에 (취소하면 아무것도 바뀌지 않게)
         if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
@@ -455,6 +402,7 @@ public partial class MainWindow
         if (changed[FGateway] || changed[FProto]) h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
         if (_edClearAnswers) h.PromptAnswers = null;
         if (changed[FJump] || changed[FProto]) h.JumpHostId = ssh ? _edJumpId : null;
+        if (changed[FForwards] || changed[FProto]) h.PortForwards = ssh ? PortForwards.CloneList(_edForwards) : null;
 
         if (readd)
         {

@@ -203,6 +203,8 @@ public partial class MainWindow
             tab.Status = s;
             if (tab.IsSelected) UpdateActiveContext();
         };
+        // SSH 탭의 열린 포트 포워딩 수 → 탭 줄 배지
+        if (tab.View is SshSessionView ssh) ssh.ForwardsChanged += n => tab.ForwardCount = n;
         _tabs.Add(tab);
         Grid.SetRow(tab.View, 1);   // 0행은 나란히 보기 머리줄
         // 나란히 보는 쪽을 클릭하면 그 탭이 고른 탭이 된다 (MainWindow.SplitView.cs)
