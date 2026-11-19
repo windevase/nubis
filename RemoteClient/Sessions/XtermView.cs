@@ -160,7 +160,10 @@ public sealed class XtermView : UserControl
         _env ??= CoreWebView2Environment.CreateAsync(null, AppPaths.WebViewDir, new CoreWebView2EnvironmentOptions(
             // 터미널 화면은 같은 로컬 페이지라 렌더러 하나를 공유하고, 브라우저 부가 기능(동기화·번역·SmartScreen 등)은 끈다
             "--renderer-process-limit=1 --disable-background-networking --disable-component-update --disable-sync " +
-            "--disable-features=msSmartScreenProtection,Translate,SpareRendererForSitePerProcess,AutofillServerCommunication,msEdgeTranslate" +
+            "--disable-features=msSmartScreenProtection,Translate,SpareRendererForSitePerProcess,AutofillServerCommunication,msEdgeTranslate," +
+            // Windows 11 스타일 오버레이 스크롤바는 마우스가 없으면 막대를 완전히 숨긴다 — terminal.html 의 "평소엔 옅게" 스크롤바가
+            // 보이지 않아 SSH 탭에 스크롤바가 없는 것처럼 보였다
+            "msOverlayScrollbarWinStyle,msOverlayScrollbarWinStyleAnimation" +
             // 글자 위주 화면이라 GPU 없이도 충분 — 기본은 꺼서 GPU 프로세스 메모리 절약 (Settings 에서 켤 수 있음)
             (SettingsStore.Current.TerminalGpu ? "" : " --disable-gpu --disable-gpu-compositing")));
         try
