@@ -113,9 +113,9 @@ Free code signing provided by [SignPath.io](https://about.signpath.io), certific
 
 ## Privacy
 
-This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
+This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it, apart from the anonymous new-version check described below, which can be turned off.
 
-Nubis connects only to the places you configure: the servers you connect to, the Kubernetes clusters you add (through the `kubectl` on your PC), the cloud APIs of the profiles you add (using the credential profiles saved on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. There is no telemetry, analytics or update check. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
+Nubis connects only to the places you configure: the servers you connect to, the Kubernetes clusters you add (through the `kubectl` on your PC), the cloud APIs of the profiles you add (using the credential profiles saved on your PC), the OAuth provider you set for the sign-in screen, and — if you open the Claude panel — the Claude Code CLI installed on your PC, which talks to Anthropic under your own account. Once a day Nubis also asks the GitHub API (`api.github.com`) for the latest release number to tell you about a new version — an anonymous request that sends no user information; turn it off in Settings → **New version notice**. There is no telemetry or analytics. All data stays in `%APPDATA%\Nubis`, encrypted with Windows DPAPI.
 
 ## License
 

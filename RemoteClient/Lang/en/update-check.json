@@ -1,0 +1,9 @@
+{
+  "Nubis {0} 가 나왔습니다. 눌러서 릴리스 노트 열기": "Nubis {0} is out. Click to open the release notes",
+  "새 버전 {0}": "New version {0}",
+  "새 버전 {0} 이 나왔습니다": "New version {0} is available",
+  "릴리스 노트 열기": "Open release notes",
+  "이 버전 건너뛰기": "Skip this version",
+  "새 버전 알림": "New version notice",
+  "하루 한 번 GitHub 에서 최신 릴리스 번호만 확인합니다 (사용자 정보는 보내지 않음). 이 PC 의 모든 계정에 적용": "Checks GitHub once a day for the latest release number only (no user information is sent). Applies to every account on this PC"
+}

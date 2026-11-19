@@ -88,6 +88,7 @@ public partial class MainWindow : Window
             ConnectFromArgs(Environment.GetCommandLineArgs());
             ShowOnboardingIfFirstRun();
             StartCloudAutoSync(startup: true);
+            StartUpdateCheck();
         };
         XtermView.Hotkey += OnTerminalHotkey;
     }

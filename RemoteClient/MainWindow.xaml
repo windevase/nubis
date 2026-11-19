@@ -364,6 +364,9 @@
                                          GroupName="nav" Checked="OnNavChanged"/>
                             <TextBlock x:Name="FooterText" FontSize="11" Foreground="{StaticResource TextTertiary}"
                                        Margin="22,10,20,0" TextWrapping="Wrap"/>
+                            <!-- 새 버전 알림 (MainWindow.UpdateCheck.cs): 새 버전이 있을 때만 보인다. 누르면 릴리스 노트 열기 · 이 버전 건너뛰기 -->
+                            <Button x:Name="UpdateLink" Style="{StaticResource LinkButton}" FontSize="11" Margin="22,4,20,0"
+                                    HorizontalAlignment="Left" Visibility="Collapsed" Click="OnUpdateLinkClick"/>
                         </StackPanel>
                     </DockPanel>
                 </Border>
@@ -1407,6 +1410,20 @@
                                         </StackPanel>
                                         <Button Grid.Column="1" Margin="24,0,0,0" VerticalAlignment="Center" Style="{StaticResource GhostButton}"
                                                 Content="{l:Tr '시작하기 안내 다시 보기'}" Click="OnShowOnboarding"/>
+                                    </Grid>
+                                </Border>
+                                <Border Style="{StaticResource SetRow}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource SetLabel}" Text="{l:Tr '새 버전 알림'}"/>
+                                            <TextBlock Style="{StaticResource SetDesc}" Text="{l:Tr '하루 한 번 GitHub 에서 최신 릴리스 번호만 확인합니다 (사용자 정보는 보내지 않음). 이 PC 의 모든 계정에 적용'}"/>
+                                        </StackPanel>
+                                        <CheckBox x:Name="UpdateCheckBox" Style="{StaticResource SetSwitch}" Click="OnUpdateCheckClick"
+                                                  AutomationProperties.Name="{l:Tr '새 버전 알림'}"/>
                                     </Grid>
                                 </Border>
                             </StackPanel>

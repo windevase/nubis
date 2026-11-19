@@ -68,14 +68,17 @@ public static class Toast
         }
     }
 
-    /// <summary>토스트 띄우기 (ms = 보여 줄 시간, 최소 1초)</summary>
-    public static void Show(string text, ToastKind kind = ToastKind.Info, int ms = 4000)
+    /// <summary>
+    /// 토스트 띄우기 (ms = 보여 줄 시간, 최소 1초). onClick 을 주면 토스트를 누를 때 실행한 뒤 닫는다
+    /// (예: 릴리스 노트 열기 — 문구에 "눌러서 …" 처럼 동작을 적어 둔다)
+    /// </summary>
+    public static void Show(string text, ToastKind kind = ToastKind.Info, int ms = 4000, Action? onClick = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         var dispatcher = Application.Current?.Dispatcher;
         if (dispatcher == null || dispatcher.HasShutdownStarted) return;
-        if (!dispatcher.CheckAccess()) { dispatcher.BeginInvoke(() => ShowCore(text, kind, ms)); return; }
-        ShowCore(text, kind, ms);
+        if (!dispatcher.CheckAccess()) { dispatcher.BeginInvoke(() => ShowCore(text, kind, ms, onClick)); return; }
+        ShowCore(text, kind, ms, onClick);
     }
 
     /// <summary>떠 있는 토스트를 모두 닫는다</summary>
@@ -84,7 +87,7 @@ public static class Toast
         foreach (var it in Items.ToArray()) Remove(it);
     }
 
-    private static void ShowCore(string text, ToastKind kind, int ms)
+    private static void ShowCore(string text, ToastKind kind, int ms, Action? onClick)
     {
         if (_owner == null || _anchor == null || !_owner.IsLoaded) return;
         while (Items.Count >= MaxVisible) Remove(Items[0]);
@@ -105,7 +108,12 @@ public static class Toast
         var timer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(Math.Max(1000, ms)) };
         var item = new Item { Popup = popup, Body = body, Timer = timer };
         timer.Tick += (_, _) => Dismiss(item);
-        body.MouseLeftButtonUp += (_, _) => Dismiss(item);
+        body.MouseLeftButtonUp += (_, _) =>
+        {
+            var run = !item.Closing ? onClick : null;
+            Dismiss(item);
+            run?.Invoke();
+        };
         body.MouseEnter += (_, _) => item.Timer.Stop();
         body.MouseLeave += (_, _) => { if (!item.Closing && !_hidden) item.Timer.Start(); };
         body.SizeChanged += (_, _) => Reposition();

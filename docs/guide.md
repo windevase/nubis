@@ -688,6 +688,7 @@ Settings are saved as soon as you change them. The buttons at the top of the pag
 |---|---|---|---|
 | Language | Chosen on first run | 한국어 / English. Takes effect after a restart (Nubis asks whether to restart). The Claude panel answers in the same language | No |
 | Getting started → **Show the getting-started guide** | — | Opens the getting-started window again | — |
+| New version notice | On | Once a day, after the window opens, asks GitHub for the latest release (anonymous, no user information sent). If it is newer, a toast appears and **New version x.y.z** shows under the version number at the bottom of the sidebar — click it to open the release notes or skip that version. Pre-releases are ignored, failures are silent. Applies to every account on this PC | No |
 
 ### 12.2 Default Vault account
 
