@@ -225,7 +225,7 @@ public partial class MainWindow
 
         var timeout = Math.Clamp(IntArg(a, "timeout_sec") ?? 60, 5, 600);
         var line = "kubectl " + string.Join(" ", args.Select(x => K8sTerminal.Quote(x)));
-        var label = $"{McpHelpers.VisibleControlChars(cluster.Name)}  ({cluster.Endpoint})";
+        var label = K8sLabel(cluster);   // 엔드포인트도 kubeconfig 에서 온 값 — 보이지 않는 문자를 드러낸다
         var secret = args.Any(ReadOnlyCommands.KubectlSecretRef);
         var autoApproved = SettingsStore.Current.AutoApproveReadOnly && KubectlArgs.IsReadOnly(args);
         if (!autoApproved)

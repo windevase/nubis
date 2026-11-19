@@ -100,6 +100,34 @@ public class LocalPortRegistryTests
     }
 
     [Fact]
+    public void 닫은_묶음은_다시_붙여도_포트를_열지_않고_희망_목록에도_없다()
+    {
+        // 탭을 닫은 뒤 늦게 도착한 Attach(재연결 경합 등)가 포트를 열면 탭 없이 포트가 남고 희망 목록에도 없다
+        var port = FreePort();
+        var set = new SshPortForwardSet(new[] { R(port) });
+        set.Close();
+        using var client = new Renci.SshNet.SshClient("127.0.0.1", "u", "p");
+        Assert.False(set.Attach(client));
+        Assert.False(set.IsAttached);
+        Assert.NotEqual(ForwardState.Open, set.Items[0].State);
+        Assert.False(LocalPortRegistry.IsClaimed(port));
+        // 닫은 뒤 켜기·임시 추가도 희망 목록을 되살리지 않는다
+        set.SetEnabled(set.Items[0], false);
+        set.SetEnabled(set.Items[0], true);
+        set.AddTemporary(R(FreePort()));
+        Assert.False(LocalPortRegistry.IsClaimed(port));
+    }
+
+    [Fact]
+    public void 쿠버네티스_승인_감사_대상은_엔드포인트의_보이지_않는_문자도_드러낸다()
+    {
+        var c = new K8sCluster { Name = "prod", Endpoint = "https://api.example\u202Emoc.lab:6443" };
+        var label = MainWindow.K8sLabel(c);
+        Assert.Equal("prod  (https://api.example\\u{202E}moc.lab:6443)", label);
+        Assert.Equal("prod", MainWindow.K8sLabel(new K8sCluster { Name = "prod" }));
+    }
+
+    [Fact]
     public void 예약은_주인만_놓는다()
     {
         var port = FreePort();

@@ -2299,10 +2299,13 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock x:Name="SplitRightTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
                                    TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                        <!-- 좌우 바꾸기: E13C (⇄). E895(Sync)는 클라우드 동기화·SFTP 전송 상태, E8AB 는 포트 포워딩 버튼·탭 배지가 쓴다 -->
                         <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="11"
-                                Content="&#xE895;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"/>
+                                Content="&#xE13C;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"
+                                AutomationProperties.Name="{l:Tr '좌우 바꾸기'}"/>
                         <Button Grid.Column="2" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="9" Margin="0,0,4,0"
-                                Content="&#xE8BB;" Click="OnSplitClose" ToolTip="{l:Tr '나란히 보기 해제'}"/>
+                                Content="&#xE8BB;" Click="OnSplitClose" ToolTip="{l:Tr '나란히 보기 해제'}"
+                                AutomationProperties.Name="{l:Tr '나란히 보기 해제'}"/>
                     </Grid>
                 </Border>
             </Grid>

@@ -131,7 +131,8 @@ public sealed class SshPortForwardSet
         SshClient? oldClient;
         lock (_lock)
         {
-            if (stillValid != null && !stillValid()) return false;
+            // 닫힌 탭의 묶음은 다시 열지 않는다 — 열면 LocalPortRegistry 희망 목록에도 없는 포트가 탭 없이 남는다
+            if (_closed || stillValid != null && !stillValid()) return false;
             oldClient = _client;
             stop = TakePortsLocked();
             _client = client;

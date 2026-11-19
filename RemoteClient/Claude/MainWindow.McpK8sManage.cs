@@ -11,7 +11,11 @@ namespace Nubis;
 // Claude 도 할 수 있게 (K8sTools 에서 등록). 반영 로직은 UI 와 공용 (ChangeK8s · RemoveK8sCluster · RunK8sTestAsync · FindClustersAsync)
 public partial class MainWindow
 {
-    private static string K8sLabel(K8sCluster c) =>
+    /// <summary>
+    /// 승인 창·감사 로그 대상 "클러스터 이름  (엔드포인트)" — 관리 도구 · run_kubectl · k8s_port_forward(start·stop) 공용.
+    /// 둘 다 kubeconfig·사용자 입력에서 온 값이라 보이지 않는 문자를 드러낸다
+    /// </summary>
+    internal static string K8sLabel(K8sCluster c) =>
         $"{McpHelpers.VisibleControlChars(c.Name)}" + (c.Endpoint.Length > 0 ? $"  ({McpHelpers.VisibleControlChars(c.Endpoint)})" : "");
 
     // =================== update_k8s_cluster ===================

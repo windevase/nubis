@@ -91,7 +91,7 @@ public partial class MainWindow
             return (c, n, target.Kind, target.Name, r, l, "kubectl " + string.Join(" ", args.Select(K8sTerminal.Quote)));
         });
 
-        var label = K8sForwardAuditTarget(cluster);
+        var label = K8sLabel(cluster);
         var what = K8sPortForward.Label(local, K8sPortForward.TargetRef(kind, name), remote);
         var approved = await OnUiAsync(() => AskApprovalAsync("k8s_port_forward",
             L.F("Claude 가 클러스터 '{0}' 의 포트 포워딩을 요청합니다", McpHelpers.VisibleControlChars(cluster.Name)),
@@ -173,11 +173,8 @@ public partial class MainWindow
         foreach (var (tab, f) in hits)
         {
             f.Stop();
-            AuditLog.Write("k8s_port_forward", new[] { K8sForwardAuditTarget(f.Cluster) }, f.CommandLine, "중지");
+            AuditLog.Write("k8s_port_forward", new[] { K8sLabel(f.Cluster) }, f.CommandLine, "중지");
         }
         return string.Join("\n", hits.Select(h => $"중지했습니다: {h.f.Label} (session_id={h.Tab.Id})"));
     }
-
-    /// <summary>감사 로그·승인 창 대상: "클러스터 이름  (엔드포인트)" — start · stop 이 같은 모양</summary>
-    private static string K8sForwardAuditTarget(K8sCluster c) => $"{McpHelpers.VisibleControlChars(c.Name)}  ({c.Endpoint})";
 }
