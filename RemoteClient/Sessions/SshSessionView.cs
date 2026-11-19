@@ -96,6 +96,8 @@ public sealed partial class SshSessionView : UserControl, ISessionView
         grid.Children.Add(_splitter);
         grid.Children.Add(_term);
         Content = grid;
+        // 나란히 보기 등으로 탭이 좁아지면 SFTP 패널이 터미널을 다 가리지 않게 절반까지만 (MainWindow.SplitView.cs)
+        SizeChanged += (_, e) => _sftpColumn.MaxWidth = SplitLayout.SidePanelMaxWidth(e.NewSize.Width, 260);
         // 터미널 화면 준비(탭이 처음 보일 때)를 기다리지 않고 바로 연결. 출력은 XtermView 가 모아 둔다
         Loaded += (_, _) => { if (!_started) { _started = true; _ = ConnectAsync(); } };
         _term.Ready += () => SendResize(_term.Cols, _term.Rows);

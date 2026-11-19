@@ -204,6 +204,9 @@ public partial class MainWindow
             if (tab.IsSelected) UpdateActiveContext();
         };
         _tabs.Add(tab);
+        Grid.SetRow(tab.View, 1);   // 0행은 나란히 보기 머리줄
+        // 나란히 보는 쪽을 클릭하면 그 탭이 고른 탭이 된다 (MainWindow.SplitView.cs)
+        tab.View.IsKeyboardFocusWithinChanged += OnSessionViewFocusWithin;
         SessionsHost.Children.Add(tab.View);
         SelectTab(tab);
         return tab;
@@ -249,24 +252,18 @@ public partial class MainWindow
 
     private void SelectTab(SessionTab tab)
     {
-        foreach (var t in _tabs)
-        {
-            t.IsSelected = t == tab;
-            t.View.Visibility = t == tab ? Visibility.Visible : Visibility.Collapsed;
-        }
-        HomeView.Visibility = Visibility.Collapsed;
-        SessionsHost.Visibility = Visibility.Visible;
-        HomeTab.Background = Brushes.Transparent;
+        // 나란히 보는 짝이면 두 탭을 함께 보인다 (MainWindow.SplitView.cs). 현재 화면 정보도 여기서 쓴다
+        ShowSessionLayout(tab);
         Dispatcher.BeginInvoke(() => tab.Session.FocusSession(), DispatcherPriority.Input);
         // 넘친 탭도 고르면 화면 안으로
         Dispatcher.BeginInvoke(() => (TabsList.ItemContainerGenerator.ContainerFromItem(tab) as FrameworkElement)?.BringIntoView(),
             DispatcherPriority.Loaded);
-        UpdateActiveContext();
     }
 
     private void SelectHome()
     {
         foreach (var t in _tabs) t.IsSelected = false;
+        HideSplitLayout();   // 나란히 보기 훅·머리줄 (MainWindow.SplitView.cs)
         SessionsHost.Visibility = Visibility.Collapsed;
         HomeView.Visibility = Visibility.Visible;
         // 선택된 홈 탭은 본문 바탕(Layer2)과 이어진다. 선택 해제는 Brushes.Transparent — XAML 트리거가 이 인스턴스로 판단한다
@@ -327,9 +324,12 @@ public partial class MainWindow
         // 하나씩 닫으며 곧 닫힐 탭을 차례로 고르면 그 뷰(RDP 등)를 보였다 숨기고 현재 탭 정보도 매번 다시 쓴다
         var set = new HashSet<SessionTab>(closing);
         var selected = _tabs.FirstOrDefault(t => t.IsSelected);
-        var next = selected != null && set.Contains(selected) ? NeighborAfterClose(_tabs, _tabs.IndexOf(selected), set) : null;
+        // 나란히 보던 짝의 한쪽(고른 탭)이 닫히면 남은 쪽이 화면을 채운다 — 고른 탭이 짝 밖이면 평소처럼 이웃으로
+        var next = selected != null && set.Contains(selected)
+            ? SplitLayout.NextAfterClose(_split, selected, set) ?? NeighborAfterClose(_tabs, _tabs.IndexOf(selected), set) : null;
         foreach (var t in closing) CloseTab(t, reselect: false);
-        if (selected == null || !set.Contains(selected)) UpdateActiveContext();
+        if (selected == null) UpdateActiveContext();
+        else if (!set.Contains(selected)) ShowSessionLayout(selected);   // 나란히 보던 다른 쪽이 닫혔을 수 있다 — 배치를 다시
         else if (next != null && _tabs.Contains(next)) SelectTab(next);
         else if (_tabs.Count > 0) SelectTab(_tabs[^1]);
         else SelectHome();
@@ -349,16 +349,29 @@ public partial class MainWindow
         var idx = _tabs.IndexOf(tab);
         var wasSelected = tab.IsSelected;
         if (idx >= 0) RememberClosedTab(tab);   // "닫은 탭 다시 열기" (Ctrl+Shift+R)
+        // 나란히 보던 탭이면 나란히 보기를 푼다 — 남은 쪽이 화면을 채운다
+        var splitBefore = _split;
+        var (pair, survivor) = SplitLayout.AfterClose(_split, new[] { tab });
+        _split = pair;
         try { tab.Session.CloseSession(); } catch { }
+        tab.View.IsKeyboardFocusWithinChanged -= OnSessionViewFocusWithin;
         SessionsHost.Children.Remove(tab.View);
         _tabs.Remove(tab);
         tab.IsSelected = false;
+        tab.IsBeside = false;
         // 끌기 준비 상태가 닫은 탭(과 그 뷰)을 다음 끌기까지 붙잡지 않게
         if (ReferenceEquals(_tabDragging, tab)) _tabDragging = null;
         if (!reselect) return;
 
-        if (!wasSelected) { UpdateActiveContext(); return; }
-        if (_tabs.Count == 0) SelectHome();
+        if (!wasSelected)
+        {
+            // 나란히 보이던 쪽이 닫혔으면 고른 탭 하나로 배치를 다시 잡는다
+            if (!ReferenceEquals(splitBefore, _split) && _tabs.FirstOrDefault(t => t.IsSelected) is { } cur) ShowSessionLayout(cur);
+            else UpdateActiveContext();
+            return;
+        }
+        if (survivor != null && _tabs.Contains(survivor)) SelectTab(survivor);
+        else if (_tabs.Count == 0) SelectHome();
         else SelectTab(_tabs[Math.Min(Math.Max(idx, 0), _tabs.Count - 1)]);
     }
 

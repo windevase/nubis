@@ -62,6 +62,8 @@ public sealed class K8sSessionView : UserControl, ISessionView
         grid.Children.Add(_splitter);
         grid.Children.Add(_term);
         Content = grid;
+        // 나란히 보기 등으로 탭이 좁아지면 리소스 패널이 터미널을 다 가리지 않게 절반까지만 (SshSessionView 와 같음)
+        SizeChanged += (_, e) => _panelColumn.MaxWidth = SplitLayout.SidePanelMaxWidth(e.NewSize.Width, 300);
         TogglePanel(true);
     }
 

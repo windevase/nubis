@@ -229,7 +229,10 @@ public partial class MainWindow
         // (패널을 처음 열 때 EnsureClaude 가 _mcp 를 만든 뒤 바로 다시 불러 그때의 탭을 쓴다)
         if (_mcp == null) return;
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(UpdateActiveContext); return; }
-        var text = ActiveContextText(_tabs.FirstOrDefault(t => t.IsSelected), _tabs.Count);
+        var selected = _tabs.FirstOrDefault(t => t.IsSelected);
+        // 나란히 보기 중이면 함께 보이는 다른 쪽 탭도 알려 준다 (MainWindow.SplitView.cs)
+        var beside = selected != null && _split?.Partner(selected) is { } p && _tabs.Contains(p) ? p : null;
+        var text = ActiveContextText(selected, _tabs.Count, beside, beside != null && ReferenceEquals(_split!.Right, beside));
         if (text == _lastActiveContext) return;
         try
         {
@@ -247,8 +250,15 @@ public partial class MainWindow
     };
 
     /// <summary>hook 이 질문에 붙일 문구. 비밀 값(계정·비밀번호)은 넣지 않는다.</summary>
-    public static string ActiveContextText(SessionTab? tab, int openTabs) =>
-        ActiveContextCore(tab, openTabs) + (L.IsEnglish ? " (The user's app language is English — reply in English.)" : "");
+    public static string ActiveContextText(SessionTab? tab, int openTabs, SessionTab? beside = null, bool besideOnRight = true) =>
+        ActiveContextCore(tab, openTabs)
+        + (tab != null && beside != null ? BesideContextText(beside.Id, beside.Title, besideOnRight) : "")
+        + (L.IsEnglish ? " (The user's app language is English — reply in English.)" : "");
+
+    /// <summary>나란히 보기 중 함께 보이는 다른 쪽 탭 (현재 화면 문구 뒤에 붙인다). 포커스는 위의 탭에 있다</summary>
+    internal static string BesideContextText(int id, string title, bool onRight) =>
+        $" 화면을 나눠 {(onRight ? "오른쪽" : "왼쪽")}에 함께 보이는 탭: session_id={id} · \"{SafeContextTitle(title)}\" " +
+        "(사용자가 '오른쪽/왼쪽 화면' 이라고 하면 위치로 구분하세요. 따로 말하지 않으면 위의 포커스가 있는 탭이 기준입니다).";
 
     private static string ActiveContextCore(SessionTab? tab, int openTabs) =>
         tab == null

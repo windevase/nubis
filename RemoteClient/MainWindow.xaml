@@ -63,6 +63,11 @@
                     <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
                     <Setter TargetName="closeBtn" Property="Visibility" Value="Visible"/>
                 </Trigger>
+                <!-- 나란히 보기의 다른 쪽(보이지만 포커스는 없는 탭): 옅은 선택 바탕 -->
+                <DataTrigger Binding="{Binding IsBeside}" Value="True">
+                    <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
+                    <Setter TargetName="title" Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                </DataTrigger>
                 <!-- 선택: 본문과 같은 Layer2 바탕 + 밝은 글자 (선택이 hover 보다 뒤에 있어 이긴다) -->
                 <DataTrigger Binding="{Binding IsSelected}" Value="True">
                     <Setter TargetName="bd" Property="Background" Value="{StaticResource Layer2Bg}"/>
@@ -2243,7 +2248,45 @@
             </Grid>
 
             <!-- 세션 뷰들 (탭 전환 시 Visibility 만 바꿔서 연결을 유지) -->
-            <Grid x:Name="SessionsHost" Visibility="Collapsed" Background="{StaticResource Bg}"/>
+            <!-- 나란히 보기(MainWindow.SplitView.cs): 짝인 두 탭을 0열 · 2열에 둔다. 세션 뷰는 열만 바꿔 옮긴다 (HwndHost 를 다시 붙이지 않음).
+                 0행 = 두 영역의 머리줄(나란히 볼 때만), 1행 = 세션 뷰. 탭 하나만 볼 때는 1·2열 너비 0 -->
+            <Grid x:Name="SessionsHost" Visibility="Collapsed" Background="{StaticResource Bg}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition x:Name="SplitLeftColumn" Width="*" MinWidth="120"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition x:Name="SplitRightColumn" Width="0"/>
+                </Grid.ColumnDefinitions>
+                <Border x:Name="SplitLeftHeader" Grid.Column="0" Height="28" Visibility="Collapsed" Cursor="Hand"
+                        Background="{StaticResource Layer1Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,2"
+                        MouseLeftButtonUp="OnSplitHeaderClick" AutomationProperties.Name="{l:Tr '왼쪽 영역'}">
+                    <TextBlock x:Name="SplitLeftTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
+                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                </Border>
+                <GridSplitter x:Name="SplitSplitter" Grid.Column="1" Grid.RowSpan="2" Width="5" Visibility="Collapsed"
+                              Background="{StaticResource Line}" HorizontalAlignment="Center" VerticalAlignment="Stretch"
+                              ResizeBehavior="PreviousAndNext" Cursor="SizeWE" AutomationProperties.Name="{l:Tr '나란히 보기 크기 조절'}"/>
+                <Border x:Name="SplitRightHeader" Grid.Column="2" Height="28" Visibility="Collapsed" Cursor="Hand"
+                        Background="{StaticResource Layer1Bg}" BorderBrush="{StaticResource Stroke}" BorderThickness="0,0,0,2"
+                        MouseLeftButtonUp="OnSplitHeaderClick" AutomationProperties.Name="{l:Tr '오른쪽 영역'}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="SplitRightTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
+                                   TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
+                        <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="11"
+                                Content="&#xE8AB;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"/>
+                        <Button Grid.Column="2" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="9" Margin="0,0,4,0"
+                                Content="&#xE8BB;" Click="OnSplitClose" ToolTip="{l:Tr '나란히 보기 해제'}"/>
+                    </Grid>
+                </Border>
+            </Grid>
         </Grid>
     </Grid>
 </Window>

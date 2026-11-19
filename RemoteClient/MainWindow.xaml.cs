@@ -211,6 +211,7 @@ public partial class MainWindow : Window
             return;
         }
         SaveWindowState();
+        ShutdownSplitView();   // 나란히 보기 포커스 훅 해제 (MainWindow.SplitView.cs)
         foreach (var t in _tabs.ToList())
         {
             try { t.Session.CloseSession(); } catch { }
