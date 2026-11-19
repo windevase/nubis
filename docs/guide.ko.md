@@ -62,7 +62,7 @@ Nubis 는 한 번에 하나만 실행됩니다. 이미 떠 있을 때 다시 실
 
    안내는 Settings 의 **시작하기 안내 다시 보기** 로 언제든 다시 열 수 있습니다.
 
-처음에 무엇부터 할지 모르겠다면: 클라우드를 쓰면 [클라우드 가져오기](#8-클라우드-서버-가져오기), 서버 목록이 엑셀·`~/.ssh/config`·mRemoteNG·Ansible·Active Directory 에 있으면 [온프레미스 가져오기](#9-온프레미스-서버-가져오기), 아니면 [호스트 직접 추가](#31-호스트-추가)부터 시작하세요.
+처음에 무엇부터 할지 모르겠다면: 클라우드를 쓰면 [클라우드 가져오기](#8-클라우드-서버-가져오기), 서버 목록이 엑셀·`~/.ssh/config`·mRemoteNG·Ansible·Active Directory·`.rdp` 파일에 있으면 [온프레미스 가져오기](#9-온프레미스-서버-가져오기), 아니면 [호스트 직접 추가](#31-호스트-추가)부터 시작하세요.
 
 ---
 
@@ -348,6 +348,7 @@ Hosts 페이지의 **IMPORT**(호스트 목록이 비어 있으면 **가져오�
 | **mRemoteNG** | `confCons.xml` (기본 `%APPDATA%\mRemoteNG\confCons.xml`). **찾아보기** · **불러오기** | SSH · RDP 연결. 폴더 구조를 그대로 그룹(`A / B`)으로 가져오고, 상속된 사용자·포트·프로토콜도 풉니다. 파일 전체가 암호화돼 있으면 전체 암호화 없이 다시 내보내야 합니다 |
 | **Ansible 인벤토리** | INI · YAML 파일, 또는 인벤토리 내용을 붙여 넣기 (붙여 넣은 내용이 있으면 파일보다 우선) | 그룹, `children`, `web[01:10]` 같은 범위, `ansible_host` · `ansible_port` · `ansible_user`, `ansible_ssh_common_args` 의 점프 서버(`-J` / ProxyJump). 파일로 불러오면 옆의 `group_vars/` · `host_vars/` 도 읽습니다. `ansible_connection: winrm` 호스트는 RDP 로 들어옵니다. 비밀번호 변수, `!vault` · Jinja 값은 경고와 함께 건너뜁니다 |
 | **Active Directory** | 도메인과 옵션을 넣고 **가져오기** ([9.2](#92-active-directory)) | 컴퓨터 계정: 이름, DNS 이름, OS, OU 경로(그룹) |
+| **.rdp 파일** | **파일 고르기**(여러 개 한 번에), 또는 `.rdp` 파일을 이 창에 끌어다 놓기 — 호스트 목록에 바로 놓아도 이 미리보기가 열림 | 파일 하나가 RDP 호스트 하나, 이름은 파일 이름. `full address`(`host:3390` 형식 포함) · `server port`, `username` 은 적힌 그대로(`AzureAD\user@example.com`, `DOMAIN\user` — 따로 적힌 `domain` 은 앞에 붙임), `enablecredsspsupport:i:0` → 호스트의 **NLA 사용 안 함**, `gatewayhostname` → 호스트의 RD 게이트웨이 (`gatewayusagemethod` 가 0 · 4(사용 안 함)면 넣지 않음). 저장된 비밀번호(`password 51:b:`)는 경고와 함께 무시합니다. UTF-16 · UTF-8 파일 모두 읽고, 1 MB 가 넘거나 텍스트가 아닌 파일은 건너뜁니다 |
 
 완전히 읽지 못한 것(모르는 프로토콜, `Match` 블록, 비밀번호 열 등)은 미리보기의 경고 목록에 나옵니다.
 
@@ -586,7 +587,7 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 
 | 도구 | 기능 |
 |---|---|
-| `import_hosts` | 엑셀·CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD 에서 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
+| `import_hosts` | 엑셀·CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD, `.rdp` 파일에서 가져오기 — 먼저 미리 보고, 승인 한 번으로 등록 |
 
 **쿠버네티스**
 

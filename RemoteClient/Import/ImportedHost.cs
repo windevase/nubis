@@ -66,7 +66,7 @@ public static class ImportText
 }
 
 /// <summary>
-/// 가져오기(엑셀/CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory)가 읽어 낸 서버 한 대.
+/// 가져오기(엑셀/CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory · .rdp 파일)가 읽어 낸 서버 한 대.
 /// 파서는 UI·저장소와 무관하게 이 형태만 만든다. 미리보기 화면이 이것을 HostEntry 로 바꿔 등록한다 (ImportMerge).
 /// 비밀번호 등 비밀값은 어떤 출처에서도 가져오지 않는다 — 계정은 등록할 때 Vault 로 지정한다.
 /// </summary>
@@ -90,6 +90,10 @@ public sealed record ImportedHost
     public string? Os { get; init; }
     /// <summary>설명 · 출처 메모 (미리보기에 표시)</summary>
     public string? Note { get; init; }
+    /// <summary>RDP 전용: RD 게이트웨이 주소 (.rdp 의 gatewayhostname). SSH 호스트에는 넣지 않는다</summary>
+    public string? RdpGateway { get; init; }
+    /// <summary>RDP 전용: NLA(CredSSP) 끄기 (.rdp 의 enablecredsspsupport:i:0 — Entra ID 가입 PC)</summary>
+    public bool RdpDisableNla { get; init; }
 }
 
 /// <summary>파서 결과: 가져온 서버 목록 + 사용자에게 보여 줄 경고 (건너뛴 줄, 무시한 비밀번호 등 — L.T/L.F 로 번역된 문구)</summary>

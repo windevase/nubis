@@ -1,0 +1,20 @@
+{
+  "파일이 {0}개를 넘어 나머지는 가져오지 않았습니다.": "More than {0} files; the rest were not imported.",
+  "{0}: 읽지 못했습니다 ({1})": "{0}: couldn't read ({1})",
+  "파일이 너무 큽니다 ({0:N0} 바이트). .rdp 파일이 맞는지 확인하세요.": "The file is too large ({0:N0} bytes). Check that it is an .rdp file.",
+  ".rdp 텍스트 파일이 아닙니다.": "Not an .rdp text file.",
+  "{0}: .rdp 에 저장된 비밀번호는 가져오지 않습니다. 등록한 뒤 Vault 계정을 지정하세요.": "{0}: passwords saved in the .rdp file are not imported. Assign a Vault account after importing.",
+  "{0}: 컴퓨터 주소(full address)가 없어 건너뛰었습니다.": "{0}: skipped because it has no computer address (full address).",
+  "{0}: 사용자명이 올바르지 않아 비워 둡니다.": "{0}: the username is invalid, so it is left blank.",
+  "{0}: RD 게이트웨이 주소가 올바르지 않아 비워 둡니다: {1}": "{0}: the RD Gateway address is invalid, so it is left blank: {1}",
+  "RD 게이트웨이 {0}": "RD Gateway {0}",
+  "NLA 끔": "NLA off",
+  ".rdp 파일": ".rdp files",
+  "고른 파일 없음": "No files selected",
+  "파일 고르기": "Choose files",
+  "원격 데스크톱 연결(mstsc)의 .rdp 파일을 여러 개 고르거나 이 창에 끌어다 놓으세요. 파일 이름이 호스트 이름이 되고 주소 · 포트 · 사용자명 · RD 게이트웨이 · NLA 설정을 읽습니다. 저장된 비밀번호는 가져오지 않습니다.": "Choose one or more Remote Desktop Connection (mstsc) .rdp files, or drag them onto this window. The file name becomes the host name, and the address · port · username · RD Gateway · NLA settings are read. Saved passwords are not imported.",
+  "원격 데스크톱 파일": "Remote Desktop files",
+  ".rdp 파일을 고르세요.": "Choose .rdp files.",
+  "{0} 외 {1}개": "{0} and {1} more",
+  "엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory · .rdp 파일에서 서버를 한꺼번에 가져옵니다. .rdp 파일은 호스트 목록에 끌어다 놓아도 됩니다": "Import servers in bulk from Excel·CSV · ~/.ssh/config · mRemoteNG · Ansible inventory · Active Directory · .rdp files. You can also drag .rdp files onto the host list"
+}
