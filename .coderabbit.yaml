@@ -1,0 +1,121 @@
+# CodeRabbit 리뷰 설정 — https://docs.coderabbit.ai/reference/configuration
+# 공개 저장소 무료(오픈소스) 등급에서 동작하는 설정만 쓴다. 유료 전용 키(보안 위험 평가 등)는 넣지 않는다.
+# 별이 10개 미만이면 첫 리뷰는 PR 댓글 `@coderabbitai review` 로 요청한다. 그 뒤 push 는 자동으로 증분 리뷰된다.
+
+language: ko-KR
+tone_instructions: "간결하게. 확실한 버그·보안 문제를 먼저, 취향 차이 제안은 뒤에. 근거가 되는 파일:줄을 함께."
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+
+  # 리뷰하지 않을 것: 패치한 외부 라이브러리, 바이너리·미디어, 빌드 결과
+  path_filters:
+    - "!third_party/**"
+    - "!docs/media/**"
+    - "!**/*.png"
+    - "!**/*.ico"
+    - "!**/*.gif"
+    - "!publish/**"
+    - "!dist/**"
+    - "!**/bin/**"
+    - "!**/obj/**"
+
+  path_instructions:
+    - path: "RemoteClient/Claude/**"
+      instructions: |
+        앱 안 Claude 가 MCP 로 앱을 조작하는 코드다.
+        - 원격 서버·계정·사용자 데이터에 영향을 주는 도구는 반드시 `AskApprovalAsync`(ApprovalDialog) 승인 + `AuditLog` 기록(승인·거부·완료·실패)을 거쳐야 한다. 예외는 사용자가 켠 `AutoApproveReadOnly` 의 읽기 전용 명령, 그리고 앱이 이 PC 에 연 로컬 포트 포워딩을 닫거나 멈추는 동작뿐이며 둘 다 감사 로그는 남긴다.
+        - 도구 결과·감사 로그·예외 메시지에 비밀번호·키·토큰·kubeconfig 내용이 들어가면 안 된다.
+        - 승인 창에 보이는 값(이름·주소·경로)은 보이지 않는 문자·양방향 문자를 드러내야 한다(`McpHelpers.VisibleControlChars` 등).
+        - `ReadOnlyCommands` 허용 목록을 넓히면 쓰기 하위 명령·옵션을 막는지와 `ReadOnlyCommandTests` 반례 추가 여부를 본다. 확실하지 않으면 false 여야 한다.
+        - 탭을 바꾸거나 여는 동작은 RDP 입력 잠금(`UnderRdpInputSectionAsync`) 안에서, 승인 대기는 잠금 밖에서.
+        - MCP 도구 설명·결과·`McpToolException` 문구는 번역하지 않는다(Claude 만 읽음). 하지만 승인 창·Dialog·화면 문구는 번역 대상이다.
+    - path: "RemoteClient/Remote/**"
+      instructions: |
+        SSH/SFTP/WinRM 실행 코드다.
+        - 저장된 것과 다른 호스트 키는 항상 경고·거부해야 하고, 사용자가 거부한 키(REJECTED)를 자동 신뢰하면 안 된다.
+        - 재시도는 연결 실패에만. 인증 실패나 셸 생성 뒤 오류는 다른 포트·주소로 재시도하면 안 된다(계정 잠금·중복 실행 방지).
+        - 심볼릭 링크 삭제·이름 바꾸기는 `SftpRaw` 로(REALPATH 없이). `DeleteFile`/`RenameFile` 을 링크에 쓰면 안 된다.
+        - 포트 포워딩 리스너는 127.0.0.1 에만 바인드해야 한다.
+        - 스레드·잠금 순서, 연결·채널·포워딩의 수명(탭 닫기·재연결·앱 종료)에서 누수가 없는지 본다.
+    - path: "RemoteClient/Core/Storage.cs"
+      instructions: |
+        DPAPI 엔트로피 문자열 "RemoteClient.v1"(Secret)과 "Nubis.DataFile.v1"(SafeFile)은 바꾸면 기존 데이터를 복호화할 수 없다 — 바뀌면 반드시 지적.
+        계정·비밀을 담는 새 데이터 파일은 `SafeFile.WriteProtected` 로 쓰고 `ClaudeGuard.SecretFiles` 에 추가해야 한다.
+    - path: "RemoteClient/Cloud/**"
+      instructions: |
+        클라우드 동기화: 일부 리전·영역 조회가 실패하면(`IsPartial`) 아무것도 삭제하면 안 된다. 사용자가 바꾼 프로토콜·포트·계정·UsePublicIp 는 유지하고 이름·주소·상태만 갱신한다. 조회 API 만 쓰고 클라우드 리소스를 바꾸는 호출이 있으면 지적.
+    - path: "RemoteClient/Kubernetes/**"
+      instructions: |
+        kubeconfig 는 비밀이다. 복호화된 kubeconfig 는 소유자 전용 ACL 임시 파일(`SecureTempFile`)로만 존재해야 하고, 결과·로그에 나오면 안 된다.
+        kubectl 인자에 `--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등이 사용자·Claude 입력으로 들어가면 안 된다(`KubectlArgs.Validate`).
+        자식 프로세스(kubectl)는 탭을 닫거나 앱이 끝날 때 정리돼야 한다(Job 객체).
+    - path: "RemoteClient/**/*.xaml"
+      instructions: |
+        색·여백·모서리는 `Themes/Tokens.xaml` 디자인 토큰(DynamicResource/StaticResource)을 쓰고 하드코딩하지 않는다.
+        가상화 목록 항목에 DropShadow/Blur, 상시·반복 애니메이션을 넣으면 안 된다.
+        ListBox 등은 `Foreground="{StaticResource Text}"` 를 명시해야 다크 테마에서 글자가 검게 나오지 않는다.
+        사용자에게 보이는 문구는 `{l:Tr '한국어 원문'}` 으로 감싼다.
+    - path: "tests/**"
+      instructions: |
+        테스트는 사용자 데이터(%APPDATA%\Nubis)를 건드리면 안 되고 `NUBIS_DATA_DIR` 임시 폴더를 써야 한다.
+    - path: "**/*.ps1"
+      instructions: |
+        PowerShell 이 실행하는 .ps1 은 한글이 깨지지 않게 UTF-8 BOM 으로 저장해야 한다. PowerShell 5.1 의 Get-Content/Set-Content 로 소스 파일을 쓰면 한글이 깨진다.
+
+  pre_merge_checks:
+    title:
+      mode: "off"
+    description:
+      mode: warning
+    issue_assessment:
+      mode: "off"
+    custom_checks:
+      - name: "승인과 감사 로그"
+        mode: warning
+        instructions: |
+          이 PR 이 원격 서버·계정·사용자 데이터에 영향을 주는 새 실행 경로(명령 실행, 터미널 입력, 파일 쓰기·삭제, 포트 열기, 클라우드·쿠버네티스 호출 등)를 Claude(MCP) 쪽에 추가하거나 바꾸면, 그 경로가 `AskApprovalAsync` 승인과 `AuditLog` 기록을 모두 거치는지 확인한다. 예외 두 가지는 승인 없이 감사 로그만 남겨도 된다: (1) 사용자가 켠 `AutoApproveReadOnly` 설정에서 `ReadOnlyCommands` 가 읽기 전용으로 판정한 명령, (2) 앱이 이 PC 에 연 로컬 포트 포워딩을 닫거나 멈추는 동작(`close_port_forward`, `k8s_port_forward` stop — 노출만 줄이고 서버는 바꾸지 않음). 원격 서버의 무언가를 멈추거나 닫는 동작은 예외가 아니다. 예외에서도 `AuditLog` 기록이 빠지면 실패. 해당 경로가 없으면 통과.
+      - name: "비밀값 노출"
+        mode: warning
+        instructions: |
+          비밀번호·개인키·패스프레이즈·토큰·kubeconfig 같은 비밀값이 MCP 도구 결과, 감사 로그, 로그 파일, 예외 메시지, 토스트·상태 문구에 들어가는 변경이 있으면 실패. 계정·비밀을 저장하는 새 파일을 추가했다면 `SafeFile.WriteProtected` 사용과 `ClaudeGuard.SecretFiles` 등록이 함께 있어야 한다.
+      - name: "UI 문구 번역"
+        mode: warning
+        instructions: |
+          새로 추가한 사용자에게 보이는 한국어 문구가 C# 에서는 `L.T("…")`/`L.F("…", …)`, XAML 에서는 `{l:Tr '…'}` 로 감싸져 있고, 같은 키의 영어 번역이 `RemoteClient/Lang/en/*.json` 에 추가됐는지 확인한다. 보간 문자열 `$"…"` 을 `L.T` 로 감싸거나 `L.T` 인자에 문자열 연결을 쓰면 실패. MCP 도구 설명·결과, 감사 로그, 로그 파일 문구는 번역 대상이 아니다.
+      - name: "README 두 언어 동기화"
+        mode: warning
+        instructions: |
+          `README.md` 와 `README.ko.md` 중 하나만 기능 설명이 바뀌었으면 실패(같은 내용을 두 언어로 유지). `docs/guide.md` 와 `docs/guide.ko.md` 도 같다. 새 오픈소스 의존성(NuGet 패키지 등)을 추가했다면 `THIRD-PARTY-NOTICES.md` 갱신이 있어야 한다.
+      - name: "파일 크기와 UI 규칙"
+        mode: warning
+        instructions: |
+          이 PR 로 500줄을 넘게 된 .cs 파일이 있으면 partial/파일 분리를 권한다(이미 넘던 파일은 경고만). `MessageBox.Show` 대신 `Dialog.Show` 를 써야 한다. HwndHost(WebView2, WindowsFormsHost)를 Dispose 하기 전에 `HwndHostRelease.Detach(host)` 를 불러야 한다.
+
+  tools:
+    gitleaks:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    semgrep:
+      enabled: true
+    # README 는 줄 길이·HTML 이미지 태그를 일부러 쓰므로 markdownlint 는 끈다 (잡음만 많음)
+    markdownlint:
+      enabled: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+
+chat:
+  auto_reply: true
