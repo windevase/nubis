@@ -12,7 +12,7 @@ public enum PortForwardState { Starting, Active, Stopped, Failed }
 
 /// <summary>
 /// 포트 포워딩 목록의 행 하나 — 무엇이 포워딩하는지(kubectl · SSH 등)와 무관하게 같은 모양으로 보인다.
-/// Label 은 "localhost:8080 → svc/web:80" 모양
+/// Label 은 "127.0.0.1:8080 → svc/web:80" 모양
 /// </summary>
 public interface IPortForwardRow : INotifyPropertyChanged
 {

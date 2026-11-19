@@ -468,4 +468,16 @@ public partial class MainWindow
     /// <summary>창을 닫을 때 확인할 세션 수: 로컬 PowerShell 을 뺀, 끊기지 않은(연결됨·연결 중) 원격 세션</summary>
     internal static int LiveRemoteSessionCount(IEnumerable<(Protocol protocol, SessionStatus status)> tabs) =>
         tabs.Count(t => t.protocol != Protocol.Local && t.status != SessionStatus.Disconnected);
+
+    /// <summary>
+    /// 앱 종료 확인 문구: 원격 세션 수 + 실행 중인 쿠버네티스 포트 포워딩 수 (클러스터 탭은 로컬 터미널이라 세션 수에 들지 않는다).
+    /// 둘 다 0 이면 null (묻지 않음)
+    /// </summary>
+    internal static string? CloseAppPrompt(int liveSessions, int k8sForwards) => (liveSessions, k8sForwards) switch
+    {
+        ( <= 0, <= 0) => null,
+        (_, <= 0) => L.F("연결 중인 세션 {0}개가 종료됩니다. 닫을까요?", liveSessions),
+        ( <= 0, _) => L.F("실행 중인 쿠버네티스 포트 포워딩 {0}개가 멈춥니다. 닫을까요?", k8sForwards),
+        _ => L.F("연결 중인 세션 {0}개가 종료되고 쿠버네티스 포트 포워딩 {1}개가 멈춥니다. 닫을까요?", liveSessions, k8sForwards),
+    };
 }

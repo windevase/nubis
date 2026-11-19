@@ -65,6 +65,8 @@ public sealed class SshPortForwardSet
     private readonly List<ActiveForward> _items = new();
     private SshClient? _client;
     private int _nextId = 1;
+    /// <summary>탭이 닫힘 — 더는 포트를 쓰려 하지 않는다 (LocalPortRegistry 희망 목록에서 빠짐)</summary>
+    private bool _closed;
     /// <summary>
     /// 백그라운드에서 닫는 중인 포트들. SshClient 의 포워딩 목록(List)은 스레드 안전하지 않아, RemoveForwardedPort 와
     /// Disconnect(목록을 훑으며 Stop)가 겹치면 Disconnect 가 예외로 끝나 세션이 정리되지 않는다 — 연결을 닫는 쪽이 이걸 기다린다
@@ -112,6 +114,7 @@ public sealed class SshPortForwardSet
                 if (f.Port == null) f.State = !f.Enabled ? ForwardState.Off : client == null ? ForwardState.Waiting : f.State;
             if (client != null)
                 foreach (var f in _items.Where(f => f.Enabled && f.Port == null)) OpenLocked(f, client);
+            UpdateClaimsLocked();
         }
         StopInBackground(stop, client);
         Changed?.Invoke();
@@ -190,6 +193,7 @@ public sealed class SshPortForwardSet
                 f.Port = null;
                 f.State = ForwardState.Off;
             }
+            UpdateClaimsLocked();
         }
         if (stop != null) StopInBackground(new() { stop }, client);
         Changed?.Invoke();
@@ -206,6 +210,8 @@ public sealed class SshPortForwardSet
             if (_items.Count >= PortForwards.MaxRules) return (null, L.F("포트 포워딩은 호스트마다 {0}개까지입니다.", PortForwards.MaxRules));
             if (_items.Any(x => x.Enabled && x.Rule.LocalPort == rule.LocalPort))
                 return (null, L.F("로컬 포트 {0} 은(는) 이 탭의 다른 포워딩이 이미 씁니다.", rule.LocalPort));
+            // 쿠버네티스 포워딩이 잡은 포트 (kubectl 이 아직 포트를 열기 전이라 소켓 검사로 보이지 않을 수 있다)
+            if (LocalPortRegistry.IsReserved(rule.LocalPort)) return (null, ReservedError(rule.LocalPort));
             var r = rule.Clone();
             r.Enabled = true;
             r.TargetHost = PortForwards.NormalizeHost(r.TargetHost);
@@ -213,6 +219,7 @@ public sealed class SshPortForwardSet
             _items.Add(f);
             if (_client != null) OpenLocked(f, _client);
             else f.State = ForwardState.Waiting;
+            UpdateClaimsLocked();
         }
         Changed?.Invoke();
         return (f, null);
@@ -230,10 +237,19 @@ public sealed class SshPortForwardSet
             f.Port = null;
             f.State = ForwardState.Off;
             client = _client;
+            UpdateClaimsLocked();
         }
         if (stop != null) StopInBackground(new() { stop }, client);
         Changed?.Invoke();
         return true;
+    }
+
+    /// <summary>탭을 닫음 — 모두 닫고 이 탭이 쓰려던 포트를 LocalPortRegistry 에서 뺀다 (쿠버네티스 빈 포트 제안이 다시 고를 수 있게)</summary>
+    public void Close()
+    {
+        lock (_lock) _closed = true;
+        Detach();
+        LocalPortRegistry.ClearClaims(this);
     }
 
     public ActiveForward? Find(int id) { lock (_lock) return _items.FirstOrDefault(f => f.Id == id); }
@@ -249,6 +265,13 @@ public sealed class SshPortForwardSet
         {
             f.State = ForwardState.Failed;
             f.Error = bad;
+            return;
+        }
+        // 쿠버네티스 포워딩이 잡은 포트는 열지 않는다 — kubectl 이 인증을 마치고 포트를 열기 전이면 여기서 먼저 열어 그쪽이 실패한다
+        if (LocalPortRegistry.IsReserved(r.LocalPort))
+        {
+            f.State = ForwardState.Failed;
+            f.Error = ReservedError(r.LocalPort);
             return;
         }
         ForwardedPortLocal? port = null;
@@ -294,6 +317,15 @@ public sealed class SshPortForwardSet
             SocketError.AccessDenied => L.F("로컬 포트 {0} 을(를) 열 권한이 없습니다 (Windows 가 예약한 포트일 수 있음).", localPort),
             _ => ex.Message,
         };
+    }
+
+    internal static string ReservedError(int localPort) => L.F("로컬 포트 {0} 은(는) 쿠버네티스 포트 포워딩이 쓰고 있습니다.", localPort);
+
+    /// <summary>켜진 포워딩의 포트를 LocalPortRegistry 에 알린다 (연결 대기 중 포함 — 쿠버네티스 빈 포트 제안이 피하게)</summary>
+    private void UpdateClaimsLocked()
+    {
+        if (_closed) return;
+        LocalPortRegistry.SetClaims(this, _items.Where(f => f.Enabled).Select(f => f.Rule.LocalPort));
     }
 
     private List<ForwardedPortLocal> TakePortsLocked()

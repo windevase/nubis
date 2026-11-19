@@ -115,7 +115,9 @@ public class K8sPortForwardTests
     [Fact]
     public void 목록_문구는_로컬_주소_화살표_대상_포트()
     {
-        Assert.Equal("localhost:8080 → svc/web:80", K8sPortForward.Label(8080, "svc/web", 80));
+        Assert.Equal("127.0.0.1:8080 → svc/web:80", K8sPortForward.Label(8080, "svc/web", 80));
+        // SSH 포워딩과 같은 모양 (로컬 주소 → 대상)
+        Assert.Equal(PortForwards.Arrow(K8sPortForward.LocalAddress(8080), "svc/web:80"), K8sPortForward.Label(8080, "svc/web", 80));
         Assert.Equal("127.0.0.1:8080", K8sPortForward.LocalAddress(8080));
     }
 

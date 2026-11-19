@@ -495,7 +495,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 82 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 83 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -1027,7 +1027,7 @@ Opening a cluster opens a tab with two parts.
 
 describe and YAML run in the terminal on the right, but only while it shows a prompt; otherwise the command is copied to the clipboard instead. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
 
-**Port forwarding** — right-click a pod, deployment or service and choose **Port forward...**. The window lists the ports the resource declares (container ports, or the service's ports with their target port); pick one or type a remote port. The local port starts as the same number, or the next free one if it is taken, and you can change it. Nubis runs `kubectl port-forward --address 127.0.0.1` without a shell, so the port opens on **127.0.0.1 only** — other PCs on your network cannot use it. Open forwards appear above the terminal as `localhost:8080 → svc/web:80` with a status dot (connecting · connected · ended), and buttons to **copy the local address**, **open in browser** (shown for web-looking ports such as 80, 8080 or a port named `http`), **stop**, and — once a forward has ended, for example because the pod restarted — **restart** or **remove from list**. Closing the cluster tab stops every forward and deletes their temporary kubeconfigs, and `kubectl` cannot outlive Nubis even if it crashes. Claude can open one with `k8s_port_forward` (`list` · `start` · `stop`); `start` opens a port on your PC, so it needs your approval and is audit-logged.
+**Port forwarding** — right-click a pod, deployment or service and choose **Port forward...**. The window lists the ports the resource declares (container ports, or the service's ports with their target port); pick one or type a remote port. The local port starts as the same number, or the next free one if it is taken (ports of enabled SSH forwards in open SSH tabs are skipped too), and you can change it. SSH port forwarding will not open a port that a running Kubernetes forward holds. Nubis runs `kubectl port-forward --address 127.0.0.1` without a shell, so the port opens on **127.0.0.1 only** — other PCs on your network cannot use it. Open forwards appear above the terminal as `127.0.0.1:8080 → svc/web:80` with a status dot (connecting · connected · ended), and buttons to **copy the local address**, **open in browser** (shown for web-looking ports such as 80, 8080 or a port named `http`), **stop**, and — once a forward has ended, for example because the pod restarted — **restart** or **remove from list**. Closing the cluster tab stops every forward and deletes their temporary kubeconfigs, and `kubectl` cannot outlive Nubis even if it crashes. Claude can open one with `k8s_port_forward` (`list` · `start` · `stop`); `start` opens a port on your PC, so it needs your approval and is audit-logged.
 
 ### 16.7 Security
 

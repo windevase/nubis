@@ -364,6 +364,7 @@ public partial class MainWindow
         "- 접속이 안 된다고 하면 먼저 test_connection 으로 DNS·포트·SSH 배너를 확인하세요.\n" +
         "- 쿠버네티스는 list_k8s_clusters 로 등록된 클러스터를 보고, run_kubectl 로 클러스터를 지정해 실행합니다(인증은 앱이 고정, 승인 필요). 파드 셸·로그 탭은 open_k8s_session, 포트 포워딩은 k8s_port_forward(승인 필요). " +
         "클러스터 관리(이름·네임스페이스·그룹)는 update_k8s_cluster, 삭제 delete_k8s_cluster, 연결 확인 test_k8s_cluster, 클라우드에서 찾기 find_k8s_clusters, kubeconfig 가져오기 import_k8s_clusters.\n" +
+        "- 포트 포워딩: SSH 탭은 list_port_forwards 로 보고 add_port_forward(승인 필요, 이 탭에서만 임시)로 열고 close_port_forward 로 닫습니다. 클러스터 탭(쿠버네티스)은 k8s_port_forward(list · start · stop)입니다.\n" +
         "- 터미널의 현재 폴더·로그인 사용자·sudo 전환 여부는 get_terminal_info 로 바로 확인하세요(명령을 보내지 않아 빠르고 승인도 없음). pwd·whoami 를 send_to_terminal 로 보내지 마세요.\n" +
         "- send_to_terminal 은 명령이 끝나 셸 프롬프트가 돌아올 때까지(기본 10초) 기다려 출력을 함께 돌려줍니다. 그 결과로 바로 답하고, '아직 실행 중' 일 때만 wait_for_output 으로 이어서 기다리세요.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +

@@ -28,7 +28,9 @@ public partial class MainWindow
                 var tabs = IntArg(a, "session_id") is { } id ? _tabs.Where(t => t.Id == id).ToList() : _tabs.ToList();
                 if (IntArg(a, "session_id") != null && tabs.Count == 0) throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
                 var ssh = tabs.Where(t => t.View is SshSessionView).ToList();
-                if (ssh.Count == 0) return tabs.Count > 0 ? "SSH 탭이 아닙니다. 포트 포워딩은 SSH 탭에만 있습니다." : "열린 SSH 탭이 없습니다.";
+                // 쿠버네티스 포워딩은 다른 도구 — 클러스터 탭 포워딩을 찾던 중이면 그쪽으로 안내한다
+                const string k8sHint = " 쿠버네티스 클러스터 탭의 포트 포워딩은 k8s_port_forward action=list 로 보세요.";
+                if (ssh.Count == 0) return (tabs.Count > 0 && IntArg(a, "session_id") != null ? "SSH 탭이 아닙니다. 이 도구는 SSH 탭의 포트 포워딩만 다룹니다." : "열린 SSH 탭이 없습니다.") + k8sHint;
                 var sb = new StringBuilder("session_id | 호스트 | 포워딩 id | 로컬 → 대상 | 이름 | 상태 | 종류 | 연결 수 | 오류\n");
                 var any = false;
                 foreach (var t in ssh)

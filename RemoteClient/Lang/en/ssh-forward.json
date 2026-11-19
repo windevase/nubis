@@ -52,5 +52,6 @@
   "이 PC 의 {0} 으로 들어오는 연결을 SSH 서버를 거쳐 {1} 로 보냅니다 (이 탭에서만, 탭을 닫으면 닫힘). 이 PC 의 다른 프로그램도 이 포트를 쓸 수 있습니다.": "Connections to {0} on this PC will be sent through the SSH server to {1} (this tab only; closed when the tab closes). Other programs on this PC can also use this port.",
   "열린 포트 포워딩 (탭 왼쪽 도구 막대의 ⇄ 버튼)": "Open port forwards (the ⇄ button in the tab's left toolbar)",
   "포트 포워딩 (선택)": "Port forwarding (optional)",
-  "서버 뒤의 DB·관리 페이지를 이 PC 의 포트로 엽니다 (ssh -L). 탭이 연결되면 켜 둔 규칙이 이 PC 의 127.0.0.1 에만 열리고, 탭을 닫으면 닫힙니다. 대상 호스트는 SSH 서버에서 본 주소입니다 (비우면 localhost = 서버 자신).": "Opens a database or admin page behind the server on a port of this PC (ssh -L). When the tab connects, enabled rules open on 127.0.0.1 of this PC only, and they close with the tab. The target host is the address as seen from the SSH server (empty = localhost, the server itself)."
+  "서버 뒤의 DB·관리 페이지를 이 PC 의 포트로 엽니다 (ssh -L). 탭이 연결되면 켜 둔 규칙이 이 PC 의 127.0.0.1 에만 열리고, 탭을 닫으면 닫힙니다. 대상 호스트는 SSH 서버에서 본 주소입니다 (비우면 localhost = 서버 자신).": "Opens a database or admin page behind the server on a port of this PC (ssh -L). When the tab connects, enabled rules open on 127.0.0.1 of this PC only, and they close with the tab. The target host is the address as seen from the SSH server (empty = localhost, the server itself).",
+  "로컬 포트 {0} 은(는) 쿠버네티스 포트 포워딩이 쓰고 있습니다.": "Local port {0} is in use by a Kubernetes port forward."
 }

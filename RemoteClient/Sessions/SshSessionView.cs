@@ -288,8 +288,9 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     public void CloseSession()
     {
         _closed = true;
-        // 포워딩은 바로 닫는다 — 아래 SFTP 정리(최대 2분)를 기다리는 동안 이 PC 의 포트가 열려 있지 않게
-        _forwards.Detach();
+        // 포워딩은 바로 닫는다 — 아래 SFTP 정리(최대 2분)를 기다리는 동안 이 PC 의 포트가 열려 있지 않게.
+        // 이 탭이 쓰려던 포트도 앱 안 포트 현황(LocalPortRegistry)에서 뺀다
+        _forwards.Close();
         if (Dispatcher.CheckAccess()) PortForwardWindow.CloseFor(this);
         else Dispatcher.BeginInvoke(() => PortForwardWindow.CloseFor(this));
         // 셸(터미널 채널)은 바로 닫는다 — 실행 중이던 명령(tail -f 등)이 아래 SFTP 정리(최대 2분)를 기다리며 서버에 남지 않게.

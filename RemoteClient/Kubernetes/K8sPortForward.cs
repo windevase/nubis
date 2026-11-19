@@ -70,9 +70,9 @@ public static class K8sPortForward
         };
     }
 
-    /// <summary>목록 행 문구: "localhost:8080 → svc/web:80" (SSH 포트 포워딩 목록과 같은 모양)</summary>
+    /// <summary>목록 행 문구: "127.0.0.1:8080 → svc/web:80" (SSH 포트 포워딩과 같은 모양 — PortForwards.Arrow)</summary>
     public static string Label(int local, string target, int remote) =>
-        string.Create(CultureInfo.InvariantCulture, $"localhost:{local} → {target}:{remote}");
+        PortForwards.Arrow(LocalAddress(local), target + ":" + remote.ToString(CultureInfo.InvariantCulture));
 
     /// <summary>복사·브라우저용 주소 (127.0.0.1 에만 열리므로 localhost 대신 — ::1 로 먼저 가는 클라이언트가 있다)</summary>
     public static string LocalAddress(int local) => string.Create(CultureInfo.InvariantCulture, $"{BindAddress}:{local}");
@@ -163,46 +163,31 @@ public static class K8sPortForward
     public static List<K8sPort> TcpPorts(IEnumerable<K8sPort> ports) =>
         ports.Where(p => string.Equals(p.Protocol, "TCP", StringComparison.OrdinalIgnoreCase) || p.Protocol.Length == 0).ToList();
 
-    // ----- 앱 안의 로컬 포트 예약 -----
+    // ----- 앱 안의 로컬 포트 예약 (LocalPortRegistry — SSH 포트 포워딩과 함께 쓴다) -----
     // kubectl 은 API 서버 연결·인증(exec 플러그인)이 끝난 뒤에야 로컬 포트를 연다. 그 사이(몇 초)에는 소켓 검사로 보이지 않으므로
-    // 이 앱의 다른 포워딩(같은 탭·다른 탭)이 같은 포트를 고르거나 시작하지 않게 실행 중인 포워딩의 포트를 따로 잡아 둔다
-    private static readonly Dictionary<int, object> Reserved = new();
+    // 이 앱의 다른 포워딩(같은 탭·다른 탭·SSH 탭)이 같은 포트를 고르거나 시작하지 않게 실행 중인 포워딩의 포트를 따로 잡아 둔다
 
     /// <summary>포트를 owner 몫으로 잡는다. 다른 owner 가 잡고 있으면 false</summary>
-    public static bool TryReserve(int port, object owner)
-    {
-        lock (Reserved)
-        {
-            if (Reserved.TryGetValue(port, out var o)) return ReferenceEquals(o, owner);
-            Reserved[port] = owner;
-            return true;
-        }
-    }
+    public static bool TryReserve(int port, object owner) => LocalPortRegistry.TryReserve(port, owner);
 
     /// <summary>owner 가 잡은 포트를 놓는다 (다른 owner 의 것이면 그대로)</summary>
-    public static void Release(int port, object owner)
-    {
-        lock (Reserved)
-            if (Reserved.TryGetValue(port, out var o) && ReferenceEquals(o, owner)) Reserved.Remove(port);
-    }
+    public static void Release(int port, object owner) => LocalPortRegistry.Release(port, owner);
 
-    public static bool IsReserved(int port)
-    {
-        lock (Reserved) return Reserved.ContainsKey(port);
-    }
+    public static bool IsReserved(int port) => LocalPortRegistry.IsReserved(port);
 
     /// <summary>새 포워딩에 쓸 수 있는가: 이 앱의 실행 중 포워딩이 잡지 않았고 이 PC 에서도 비어 있음</summary>
     public static bool IsPortAvailable(int port) => !IsReserved(port) && IsLocalPortFree(port);
 
     /// <summary>
-    /// 빈 포트 제안용 검사 함수 — 듣는 소켓 목록을 한 번만 읽는다 (SuggestLocalPort 가 후보 100여 개를 볼 때마다 다시 읽지 않게)
+    /// 빈 포트 제안용 검사 함수 — 듣는 소켓 목록을 한 번만 읽는다 (SuggestLocalPort 가 후보 100여 개를 볼 때마다 다시 읽지 않게).
+    /// SSH 탭의 켜진 포워딩 포트(연결을 기다리는 중이라 아직 소켓이 없는 것 포함)도 피한다
     /// </summary>
     public static Func<int, bool> PortProbe()
     {
         HashSet<int>? listening = null;
         try { listening = IPGlobalProperties.GetIPGlobalProperties().GetActiveTcpListeners().Select(e => e.Port).ToHashSet(); }
         catch { }
-        return p => ValidPort(p) && !IsReserved(p) && listening?.Contains(p) != true && CanBind(p);
+        return p => ValidPort(p) && !IsReserved(p) && !LocalPortRegistry.IsClaimed(p) && listening?.Contains(p) != true && CanBind(p);
     }
 
     /// <summary>

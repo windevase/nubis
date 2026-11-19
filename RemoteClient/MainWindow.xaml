@@ -46,13 +46,13 @@
                     </Grid>
                     <TextBlock x:Name="title" Grid.Column="1" Text="{Binding Title}" Margin="10,0,6,0" VerticalAlignment="Center"
                                TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
-                    <!-- 닫기: 마우스를 올린 탭 · 선택된 탭에만 보인다 (Hidden — 자리는 유지해 탭 폭이 흔들리지 않게) -->
                     <!-- 포트 포워딩이 열린 SSH 탭: ⇄ + 열린 수 (평소 Collapsed) -->
                     <TextBlock x:Name="fwd" Grid.Column="2" VerticalAlignment="Center" Margin="0,0,4,0" FontSize="11"
                                Foreground="{StaticResource AccentText}" Visibility="Collapsed"
                                ToolTip="{l:Tr '열린 포트 포워딩 (탭 왼쪽 도구 막대의 ⇄ 버튼)'}">
                         <Run Text="&#xE8AB;" FontFamily="{StaticResource IconFont}" FontSize="10"/><Run Text="{Binding ForwardCount, Mode=OneWay}"/>
                     </TextBlock>
+                    <!-- 닫기: 마우스를 올린 탭 · 선택된 탭에만 보인다 (Hidden — 자리는 유지해 탭 폭이 흔들리지 않게) -->
                     <Button x:Name="closeBtn" Grid.Column="3" Style="{StaticResource IconButton}" Width="22" Height="22" FontSize="8"
                             Content="&#xE8BB;" Click="OnTabClose" Visibility="Hidden"
                             ToolTip="{l:Tr '탭 닫기 (Ctrl+Shift+W)'}" AutomationProperties.Name="{l:Tr '탭 닫기'}"/>
@@ -2300,7 +2300,7 @@
                         <TextBlock x:Name="SplitRightTitle" Margin="10,0" VerticalAlignment="Center" FontSize="12"
                                    TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextSecondary}"/>
                         <Button Grid.Column="1" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="11"
-                                Content="&#xE8AB;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"/>
+                                Content="&#xE895;" Click="OnSplitSwap" ToolTip="{l:Tr '좌우 바꾸기'}"/>
                         <Button Grid.Column="2" Style="{StaticResource IconButton}" Width="24" Height="24" FontSize="9" Margin="0,0,4,0"
                                 Content="&#xE8BB;" Click="OnSplitClose" ToolTip="{l:Tr '나란히 보기 해제'}"/>
                     </Grid>

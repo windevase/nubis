@@ -165,6 +165,10 @@ public partial class MainWindow
             Note(McpHostRules.GatewayLabel, h.RdpGateway, "없음");
             h.RdpGateway = null;
         }
+        // 포트 포워딩(ssh -L)도 SSH 전용 — 편집 창처럼 지운다 (규칙 내용은 승인 창 아래 요약·get_host 에, 여기는 개수만)
+        if (h.PortForwards is { Count: > 0 } fwds && h.Protocol != Protocol.Ssh)
+            Note(McpHostRules.ForwardsLabel, $"{fwds.Count}개", "없음");
+        McpHostRules.ClearForwardsIfNotSsh(h);
         if (h.Protocol != Protocol.Rdp && h.RdpDisableNla && !Has(a, "rdp_disable_nla"))
         {
             Note(McpHostRules.NlaLabel, "끔", "켬");
@@ -235,6 +239,7 @@ public partial class MainWindow
         $" · Vault {VaultStore.Get(h.VaultId)?.Name ?? "없음"}" +
         (h.TagsText.Length > 0 ? $" · 태그 {h.TagsText}" : "") +
         (h.JumpHostId != null ? $" · 점프 서버 {JumpName(h.JumpHostId)}" : "") +
+        (McpHostRules.ForwardsSummary(h.PortForwards) is { } fwd ? $" · {McpHostRules.ForwardsLabel} {fwd}" : "") +
         (h.RdpGateway != null ? $" · RD 게이트웨이 {h.RdpGateway}" : "") +
         (h.RdpDisableNla ? " · NLA 끔" : "") +
         (h.Favorite ? " · 즐겨찾기" : "");
@@ -349,6 +354,9 @@ public partial class MainWindow
             if (Changed(McpHostRules.JumpLabel)) h.JumpHostId = copy.JumpHostId;
             if (Changed(McpHostRules.GatewayLabel)) h.RdpGateway = copy.RdpGateway;
             if (Changed(McpHostRules.NlaLabel)) h.RdpDisableNla = copy.RdpDisableNla;
+            // 위에서 반영한 프로토콜이 SSH 가 아니면 포트 포워딩 규칙도 지운다 (편집 창과 같음). 승인 창에 보인 개수와 달라도
+            // (대기 중 편집 창에서 규칙을 바꿈) SSH 가 아닌 호스트의 규칙은 쓰이지 않으므로 같이 지운다
+            McpHostRules.ClearForwardsIfNotSsh(h);
             // 태그는 요청에서 바뀐 키만 원본에 반영 (대기 중 다른 경로로 바뀐 다른 키는 유지)
             var tagKeys = McpHostRules.ChangedTagKeys(tagsBefore, copy.Tags);
             if (tagKeys.Count > 0)

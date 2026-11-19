@@ -91,7 +91,7 @@ public partial class MainWindow
             return (c, n, target.Kind, target.Name, r, l, "kubectl " + string.Join(" ", args.Select(K8sTerminal.Quote)));
         });
 
-        var label = $"{McpHelpers.VisibleControlChars(cluster.Name)}  ({cluster.Endpoint})";
+        var label = K8sForwardAuditTarget(cluster);
         var what = K8sPortForward.Label(local, K8sPortForward.TargetRef(kind, name), remote);
         var approved = await OnUiAsync(() => AskApprovalAsync("k8s_port_forward",
             L.F("Claude 가 클러스터 '{0}' 의 포트 포워딩을 요청합니다", McpHelpers.VisibleControlChars(cluster.Name)),
@@ -109,17 +109,26 @@ public partial class MainWindow
         K8sForward forward;
         try
         {
-            (sessionId, forward) = await OnUi(() =>
+            (sessionId, forward) = await OnUiAsync(async () =>
             {
-                SessionTab? tab = null;
-                if (IntArg(a, "session_id") is { } sid)
+                SessionTab? FindTab()
                 {
-                    tab = _tabs.FirstOrDefault(t => t.Id == sid);
-                    if (tab?.View is not K8sSessionView v0 || v0.ClusterId != cluster.Id)
-                        throw new McpToolException($"session_id={sid} 은(는) 클러스터 '{cluster.Name}' 의 클러스터 탭이 아닙니다.");
+                    if (IntArg(a, "session_id") is { } sid)
+                    {
+                        var found = _tabs.FirstOrDefault(t => t.Id == sid);
+                        if (found?.View is not K8sSessionView v0 || v0.ClusterId != cluster.Id)
+                            throw new McpToolException($"session_id={sid} 은(는) 클러스터 '{cluster.Name}' 의 클러스터 탭이 아닙니다.");
+                        return found;
+                    }
+                    return K8sClusterTabs().Where(x => x.View.ClusterId == cluster.Id).Select(x => x.Tab).FirstOrDefault();
                 }
-                tab ??= K8sClusterTabs().Where(x => x.View.ClusterId == cluster.Id).Select(x => x.Tab).FirstOrDefault();
-                tab ??= OpenK8sTab(cluster) ?? throw new McpToolException("클러스터 탭을 열지 못했습니다 (앱에 안내 창이 떴습니다).");
+                // 탭이 없어 새로 열 때만 RDP 입력 구간 잠금 안에서 (새 탭이 선택되며 진행 중인 RDP 입력을 끊지 않게 — open_k8s_session 과 같음).
+                // 잠금을 기다리는 사이 탭이 생겼을 수 있어 안에서 다시 찾는다
+                var tab = FindTab() ?? await UnderRdpInputSectionAsync(() =>
+                    FindTab() ?? OpenK8sTab(cluster) ?? throw new McpToolException("클러스터 탭을 열지 못했습니다 (앱에 안내 창이 떴습니다)."));
+                // 잠금을 기다리는 사이 탭이 닫혔을 수 있다
+                if (!_tabs.Contains(tab) || tab.View is not K8sSessionView)
+                    throw new McpToolException("기다리는 사이 클러스터 탭이 닫혔습니다. 다시 요청하세요.");
                 try { return (tab.Id, ((K8sSessionView)tab.View).StartForward(ns, kind, name, local, remote, null)); }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { throw new McpToolException(ex.Message); }
             });
@@ -164,8 +173,11 @@ public partial class MainWindow
         foreach (var (tab, f) in hits)
         {
             f.Stop();
-            AuditLog.Write("k8s_port_forward", new[] { McpHelpers.VisibleControlChars(tab.Title) }, f.CommandLine, "중지");
+            AuditLog.Write("k8s_port_forward", new[] { K8sForwardAuditTarget(f.Cluster) }, f.CommandLine, "중지");
         }
         return string.Join("\n", hits.Select(h => $"중지했습니다: {h.f.Label} (session_id={h.Tab.Id})"));
     }
+
+    /// <summary>감사 로그·승인 창 대상: "클러스터 이름  (엔드포인트)" — start · stop 이 같은 모양</summary>
+    private static string K8sForwardAuditTarget(K8sCluster c) => $"{McpHelpers.VisibleControlChars(c.Name)}  ({c.Endpoint})";
 }

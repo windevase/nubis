@@ -19,6 +19,37 @@ internal static class McpHostRules
     public const string NlaLabel = "NLA(CredSSP)";
     public const string AnswersLabel = "기억한 인증 답";
     public const string TagLabel = "태그";
+    /// <summary>저장된 SSH 포트 포워딩 규칙 (SSH 가 아닌 프로토콜로 바꾸면 지운다 — 편집 창과 같음)</summary>
+    public const string ForwardsLabel = "포트 포워딩";
+
+    /// <summary>
+    /// 편집 창(SaveEditor)과 같게: SSH 가 아닌 호스트면 저장된 포트 포워딩 규칙을 지운다. 지운 규칙 수 (지운 것이 없으면 0)
+    /// </summary>
+    public static int ClearForwardsIfNotSsh(HostEntry h)
+    {
+        if (h.Protocol == Protocol.Ssh || h.PortForwards == null) return 0;
+        var n = h.PortForwards.Count;
+        h.PortForwards = null;
+        return n;
+    }
+
+    /// <summary>
+    /// 저장된 포트 포워딩 규칙 요약 (승인 창·감사 로그·get_host): "2개 — 127.0.0.1:15432 → db:5432 (prod-db), 127.0.0.1:8080 → localhost:80 (꺼짐)".
+    /// 앞의 max 개만 보이고 나머지는 "외 N개". 규칙이 없으면 null
+    /// </summary>
+    public static string? ForwardsSummary(IReadOnlyCollection<PortForwardRule>? rules, int max = 5)
+    {
+        if (rules is not { Count: > 0 }) return null;
+        var shown = rules.Take(max).Select(r =>
+        {
+            var extra = new List<string>();
+            if (!string.IsNullOrWhiteSpace(r.Name)) extra.Add(McpHelpers.VisibleControlChars(r.Name.Trim()));
+            if (!r.Enabled) extra.Add("꺼짐");
+            // hosts.json 을 손으로 고친 값일 수 있어 대상 호스트도 보이게 바꿔 넣는다
+            return McpHelpers.VisibleControlChars(PortForwards.Describe(r)) + (extra.Count > 0 ? $" ({string.Join(", ", extra)})" : "");
+        });
+        return $"{rules.Count}개 — {string.Join(", ", shown)}" + (rules.Count > max ? $" 외 {rules.Count - max}개" : "");
+    }
 
     /// <summary>두 태그 묶음 사이에 값이 달라진 키 (대소문자 무시)</summary>
     public static List<string> ChangedTagKeys(IReadOnlyDictionary<string, string>? before, IReadOnlyDictionary<string, string>? after)
@@ -32,7 +63,9 @@ internal static class McpHostRules
     private static readonly string[] RiskyLabels = { "주소", "공인", "Vault", "포트", JumpLabel, GatewayLabel, NlaLabel };
 
     /// <summary>접속 대상·계정·경로를 바꾸는 변경 (승인 창에 경고)</summary>
-    public static bool IsRisky(string change) => RiskyLabels.Any(l => change.StartsWith(l, StringComparison.Ordinal));
+    public static bool IsRisky(string change) =>
+        // "포트 포워딩" 은 "포트" 로 시작하지만 규칙을 지우기만 하므로(노출이 줄어듦) 위험 변경이 아니다
+        !change.StartsWith(ForwardsLabel, StringComparison.Ordinal) && RiskyLabels.Any(l => change.StartsWith(l, StringComparison.Ordinal));
 
     /// <summary>즐겨찾기만 바꾸는 변경인가 (승인 생략 대상). 빈 목록은 false</summary>
     public static bool IsFavoriteOnly(IReadOnlyCollection<string> changes) =>
@@ -208,6 +241,7 @@ internal static class McpHostParity
         if (h.Protocol == Protocol.Ssh)
         {
             sb.AppendLine($"점프 서버: {jump ?? "없음"}");
+            sb.AppendLine($"{McpHostRules.ForwardsLabel}(저장된 규칙): {McpHostRules.ForwardsSummary(h.PortForwards) ?? "없음"}");
             if (!string.IsNullOrWhiteSpace(h.SshBannerOs)) sb.AppendLine($"서버 OS(SSH 배너로 판별): {V(h.SshBannerOs)}");
         }
         if (h.Protocol == Protocol.Rdp)

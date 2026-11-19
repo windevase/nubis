@@ -41,6 +41,8 @@ public sealed class K8sForward : IPortForwardRow
         BrowserUrl = K8sPortForward.BrowserUrl(local, scheme);
     }
 
+    /// <summary>포워딩을 연 클러스터 (MCP 감사 로그 대상)</summary>
+    public K8sCluster Cluster => _cluster;
     public string Namespace { get; }
     /// <summary>pod/x · deploy/x · svc/x</summary>
     public string Target { get; }

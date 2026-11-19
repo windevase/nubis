@@ -28,5 +28,7 @@
   "포트 포워딩을 열었습니다: {0}": "Port forwarding opened: {0}",
   "포트 포워딩이 멈췄습니다: {0}": "Port forwarding stopped: {0}",
   "Claude 가 클러스터 '{0}' 의 포트 포워딩을 요청합니다": "Claude is requesting port forwarding for cluster '{0}'",
-  "승인하면 이 PC 의 127.0.0.1:{0} 이(가) 클러스터 안의 {1} (네임스페이스 {2}) 포트 {3} 으로 연결됩니다. 이 PC 의 프로그램이 그 포트로 클러스터에 접속할 수 있습니다 (다른 PC 는 불가). 클러스터 탭의 목록에서 중지하거나 탭을 닫으면 멈춥니다.": "If approved, 127.0.0.1:{0} on this PC is connected to port {3} of {1} (namespace {2}) inside the cluster. Programs on this PC can reach the cluster through that port (other PCs can't). It stops when you stop it in the cluster tab's list or close the tab."
+  "승인하면 이 PC 의 127.0.0.1:{0} 이(가) 클러스터 안의 {1} (네임스페이스 {2}) 포트 {3} 으로 연결됩니다. 이 PC 의 프로그램이 그 포트로 클러스터에 접속할 수 있습니다 (다른 PC 는 불가). 클러스터 탭의 목록에서 중지하거나 탭을 닫으면 멈춥니다.": "If approved, 127.0.0.1:{0} on this PC is connected to port {3} of {1} (namespace {2}) inside the cluster. Programs on this PC can reach the cluster through that port (other PCs can't). It stops when you stop it in the cluster tab's list or close the tab.",
+  "실행 중인 쿠버네티스 포트 포워딩 {0}개가 멈춥니다. 닫을까요?": "{0} running Kubernetes port forwards will stop. Close?",
+  "연결 중인 세션 {0}개가 종료되고 쿠버네티스 포트 포워딩 {1}개가 멈춥니다. 닫을까요?": "{0} connected sessions will end and {1} Kubernetes port forwards will stop. Close?"
 }
