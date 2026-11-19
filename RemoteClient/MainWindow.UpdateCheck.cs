@@ -15,7 +15,8 @@ namespace Nubis;
 /// </summary>
 public partial class MainWindow
 {
-    private static string CurrentVersion => typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "0";
+    // 4자리 전부 비교한다 — ToString(3) 이면 0.6.1.1 빌드가 v0.6.1.1 릴리스를 계속 "새 버전" 으로 본다
+    private static string CurrentVersion => typeof(MainWindow).Assembly.GetName().Version?.ToString() ?? "0";
 
     private ReleaseInfo? _availableUpdate;
     private bool _updateChecking;
@@ -48,7 +49,8 @@ public partial class MainWindow
             s.UpdateLastCheckUtc = DateTime.UtcNow;
             if (latest != null) { s.UpdateLatestTag = latest.Tag; s.UpdateLatestUrl = latest.Url; }
         });
-        if (latest == null || !IsLoaded) return;
+        // 확인하는 동안 사용자가 설정을 껐으면 알리지 않는다
+        if (latest == null || !IsLoaded || !SettingsStore.Global.CheckForUpdates) return;
         if (!UpdateCheck.ShouldNotify(CurrentVersion, latest, SettingsStore.Global.UpdateSkipVersion)) { SetAvailableUpdate(null); return; }
         SetAvailableUpdate(latest);
         Toast.Show(L.F("Nubis {0} 가 나왔습니다. 눌러서 릴리스 노트 열기", latest.Version), ToastKind.Info, 12000,
@@ -104,7 +106,8 @@ public partial class MainWindow
     private void OnUpdateCheckClick(object sender, RoutedEventArgs e)
     {
         var on = UpdateCheckBox.IsChecked == true;
-        SettingsStore.UpdateGlobal(s => s.CheckForUpdates = on);
+        // 상태 저장으로 충분 — UpdateGlobal 은 Changed 로 열린 터미널 전부에 설정을 다시 보낸다 (이 값은 터미널과 무관)
+        SettingsStore.UpdateGlobalState(s => s.CheckForUpdates = on);
         if (!on) SetAvailableUpdate(null);
         else
         {

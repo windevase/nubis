@@ -120,7 +120,7 @@ public static class UpdateCheck
             var body = await res.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             return Parse(body);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException or InvalidOperationException)
+        catch (Exception)   // 어떤 실패든 알림만 건너뛴다 (백그라운드 확인이 앱에 영향을 주지 않게)
         {
             return null;
         }
