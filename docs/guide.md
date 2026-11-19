@@ -62,7 +62,7 @@ Only one Nubis runs at a time. Starting it again while it is open (including wit
 
    You can open the guide again at any time with **Show the getting-started guide** in Settings.
 
-Not sure where to start? If you use a cloud provider, begin with [importing cloud servers](#8-importing-cloud-servers). If your servers are listed in Excel, `~/.ssh/config`, mRemoteNG, Ansible or Active Directory, [import them](#9-importing-on-premises-servers). Otherwise, [add a host yourself](#31-adding-a-host).
+Not sure where to start? If you use a cloud provider, begin with [importing cloud servers](#8-importing-cloud-servers). If your servers are listed in Excel, `~/.ssh/config`, mRemoteNG, Ansible, Active Directory or `.rdp` files, [import them](#9-importing-on-premises-servers). Otherwise, [add a host yourself](#31-adding-a-host).
 
 ---
 
@@ -348,6 +348,7 @@ You can also ask Claude to find and add them for you ([10.2](#102-what-you-can-a
 | **mRemoteNG** | `confCons.xml` (default `%APPDATA%\mRemoteNG\confCons.xml`). **Browse** · **Load** | SSH and RDP connections. Folders become groups (`A / B`), and inherited user, port and protocol are resolved. A fully encrypted file must be re-exported without full-file encryption |
 | **Ansible inventory** | An INI or YAML file, or paste the inventory text (pasted text takes priority) | Groups, `children`, ranges such as `web[01:10]`, `ansible_host` · `ansible_port` · `ansible_user`, and the jump host in `ansible_ssh_common_args` (`-J` / ProxyJump). When loaded from a file, `group_vars/` and `host_vars/` next to it are read too. `ansible_connection: winrm` hosts come in as RDP. Password variables, `!vault` and Jinja values are skipped with a warning |
 | **Active Directory** | Domain and options, then **Import** ([9.2](#92-active-directory)) | Computer accounts: name, DNS name, OS, OU path as the group |
+| **.rdp files** | **Choose files** (several at once), or drag `.rdp` files onto this window — or straight onto the host list, which opens this preview | One RDP host per file, named after the file. `full address` (including `host:3390`) and `server port`, `username` as written (`AzureAD\user@example.com`, `DOMAIN\user`), `enablecredsspsupport:i:0` → **Don't use NLA** on the host, `gatewayhostname` → the host's RD Gateway (skipped when `gatewayusagemethod` is 0). Saved passwords (`password 51:b:`) are ignored with a warning. UTF-16 and UTF-8 files are read; files over 1 MB or that aren't text are skipped |
 
 Sources that can't be read completely (unknown protocols, `Match` blocks, password columns and so on) are listed in the warnings panel of the preview.
 
@@ -586,7 +587,7 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 
 | Tool | Purpose |
 |---|---|
-| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible or AD — preview first, then add with one approval |
+| `import_hosts` | Import from Excel/CSV, `~/.ssh/config`, mRemoteNG, Ansible, AD or an `.rdp` file — preview first, then add with one approval |
 
 **Kubernetes**
 

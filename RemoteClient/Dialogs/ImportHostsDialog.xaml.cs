@@ -14,7 +14,7 @@ using System.Windows.Threading;
 namespace Nubis;
 
 /// <summary>
-/// 호스트 가져오기 창: 출처(엑셀·CSV / ~/.ssh/config / mRemoteNG / Ansible / Active Directory)에서 서버를 읽어 미리 보고,
+/// 호스트 가져오기 창: 출처(엑셀·CSV / ~/.ssh/config / mRemoteNG / Ansible / Active Directory / .rdp 파일)에서 서버를 읽어 미리 보고,
 /// 체크한 줄과 옵션을 돌려준다. 호스트 목록에 반영·저장은 호출한 쪽이 한다:
 /// <code>
 /// if (ImportHostsDialog.Ask(this, _hosts) is { } r)
@@ -92,10 +92,14 @@ public partial class ImportHostsDialog : Window
         _ready = true;
     }
 
-    /// <summary>등록할 계획 (체크한 줄 + 옵션), 취소하면 null. 반영·저장은 호출한 쪽에서 (클래스 설명 참고)</summary>
-    public static ImportPlanResult? Ask(Window owner, IReadOnlyList<HostEntry> existing)
+    /// <summary>
+    /// 등록할 계획 (체크한 줄 + 옵션), 취소하면 null. 반영·저장은 호출한 쪽에서 (클래스 설명 참고).
+    /// rdpFiles 를 주면 .rdp 파일 출처를 고른 상태로 열고 바로 읽는다 (호스트 목록에 .rdp 파일을 끌어다 놓았을 때)
+    /// </summary>
+    public static ImportPlanResult? Ask(Window owner, IReadOnlyList<HostEntry> existing, IReadOnlyList<string>? rdpFiles = null)
     {
         var dlg = new ImportHostsDialog(existing) { Owner = owner };
+        if (rdpFiles is { Count: > 0 }) dlg.StartWithRdp(rdpFiles);
         return dlg.ShowDialog() == true ? dlg._final : null;
     }
 
@@ -137,6 +141,7 @@ public partial class ImportHostsDialog : Window
         FilePanel.Visibility = SrcSsh.IsChecked == true || SrcMrng.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         AnsiblePanel.Visibility = SrcAnsible.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         AdPanel.Visibility = SrcAd.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        RdpPanel.Visibility = SrcRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
 
         if (SrcSsh.IsChecked == true)
         {

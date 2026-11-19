@@ -76,9 +76,11 @@ public sealed class RdpDefaults
     }
 
     /// <summary>.rdp 는 보통 UTF-16LE(BOM) 이지만 UTF-8 로 저장된 것도 있다</summary>
-    private static string ReadText(string path)
+    private static string ReadText(string path) => Decode(File.ReadAllBytes(path));
+
+    /// <summary>.rdp 바이트 → 텍스트: UTF-16LE(BOM 또는 BOM 없이 둘째 바이트가 0) · 그 밖은 UTF-8 (BOM 제거). .rdp 가져오기(RdpFileImport)도 쓴다</summary>
+    internal static string Decode(byte[] bytes)
     {
-        var bytes = File.ReadAllBytes(path);
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
         if (bytes.Length >= 2 && bytes[1] == 0 && bytes[0] != 0) return Encoding.Unicode.GetString(bytes);
         return Encoding.UTF8.GetString(bytes).TrimStart('\uFEFF');

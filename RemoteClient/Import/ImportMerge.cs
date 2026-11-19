@@ -164,6 +164,9 @@ public static class ImportMerge
             Username = vault == null ? (h.Username?.Trim() ?? "") : "",
             VaultId = vault,
             Os = string.IsNullOrWhiteSpace(h.Os) ? null : h.Os.Trim(),
+            // RDP 전용 값은 RDP 호스트에만 (호스트 편집기 · MCP 와 같은 규칙)
+            RdpGateway = proto == Protocol.Rdp && !string.IsNullOrWhiteSpace(h.RdpGateway) ? h.RdpGateway.Trim() : null,
+            RdpDisableNla = proto == Protocol.Rdp && h.RdpDisableNla,
         };
     }
 

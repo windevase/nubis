@@ -369,7 +369,8 @@
                 </Border>
 
                 <!-- 호스트 페이지 -->
-                <Grid x:Name="HostsPage" Grid.Column="1">
+                <Grid x:Name="HostsPage" Grid.Column="1" Background="Transparent"
+                      AllowDrop="True" PreviewDragOver="OnHostsRdpDragOver" PreviewDrop="OnHostsRdpDrop">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
@@ -424,10 +425,10 @@
                                         <TextBlock Text="NEW HOST" Margin="8,0,0,0" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center"/>
                                     </StackPanel>
                                 </Button>
-                                <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory 에서 한꺼번에 등록 -->
+                                <!-- 온프레미스: 엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible · Active Directory · .rdp 에서 한꺼번에 등록 -->
                                 <Button Style="{StaticResource GhostButton}" Click="OnImportHosts" Padding="12,7" Margin="8,0,0,0"
                                         AutomationProperties.Name="{l:Tr '가져오기...'}"
-                                        ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 서버를 한꺼번에 가져옵니다'}">
+                                        ToolTip="{l:Tr '엑셀·CSV · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory · .rdp 파일에서 서버를 한꺼번에 가져옵니다. .rdp 파일은 호스트 목록에 끌어다 놓아도 됩니다'}">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="&#xE8B5;" FontFamily="{StaticResource IconFont}" FontSize="11" VerticalAlignment="Center"
                                                    Foreground="{StaticResource TextSecondary}"/>

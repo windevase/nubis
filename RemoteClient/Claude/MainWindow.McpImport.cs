@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 namespace Nubis;
 
 /// <summary>
-/// Claude 패널 MCP 도구: import_hosts — 엑셀·CSV 표 · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory 에서 호스트 가져오기.
+/// Claude 패널 MCP 도구: import_hosts — 엑셀·CSV 표 · ~/.ssh/config · mRemoteNG · Ansible 인벤토리 · Active Directory · .rdp 파일에서 호스트 가져오기.
 /// 흐름은 가져오기 창과 같다 (파서 → ImportMerge.Plan → ApplyTo · SaveHosts · RefreshHosts).
 /// 보안 원칙:
 /// - apply=false(기본)는 미리보기만 (목록을 바꾸지 않음). AD 조회는 서버에 접속하므로 감사 로그에 "조회" 로 남긴다
@@ -30,7 +30,8 @@ public partial class MainWindow
             "mremoteng = mRemoteNG 연결 파일 (path 생략 시 %APPDATA%\\mRemoteNG\\confCons.xml, 또는 text) / " +
             "ansible = Ansible 인벤토리 INI·YAML (text 또는 path) / " +
             "ad = Active Directory 컴퓨터 개체 (domain 생략 시 이 PC 의 도메인, server · search_base · servers_only · skip_disabled · active_within_days · resolve_ip; " +
-            "기본은 현재 Windows 로그인으로 조회, 다른 계정이면 ad_vault 에 Vault 계정 — 조회 전에 앱이 사용자 승인을 받음). " +
+            "기본은 현재 Windows 로그인으로 조회, 다른 계정이면 ad_vault 에 Vault 계정 — 조회 전에 앱이 사용자 승인을 받음) / " +
+            "rdp = 원격 데스크톱 연결(mstsc)의 .rdp 파일 하나 (path 에 .rdp 파일 — 이름은 파일 이름, 또는 text 에 내용 — 이름은 주소). 주소·포트·사용자명·RD 게이트웨이·NLA 끄기(enablecredsspsupport:i:0)를 RDP 호스트로 옮기고 저장된 비밀번호는 무시. " +
             "흐름: 먼저 apply=false(기본)로 불러 미리보기(상태별 개수 New/Existing/Duplicate/Invalid, 줄 목록, 경고)를 사용자에게 보여 주고, " +
             "확인받으면 같은 인자에 apply=true 를 더해 다시 부른다 — 앱이 다시 읽고 사용자 승인을 받아 등록한다. 기본은 New 줄 전체, select 에 이름·주소(또는 주소:포트) 목록을 주면 그 줄만. " +
             "update_existing=true 면 이미 있는 호스트(주소·포트·종류가 같음)의 이름·그룹·사용자명을 갱신한다 (클라우드 동기화 호스트는 바꾸지 않음). " +
@@ -38,7 +39,7 @@ public partial class MainWindow
             "비밀번호·키는 어떤 출처에서도 가져오지 않으며 비밀번호 인자도 없다 — 계정은 ssh_vault / rdp_vault 에 Vault 계정(list_vault)을 지정한다.",
             Schema(new
             {
-                source = new { type = "string", @enum = new[] { "table", "ssh_config", "mremoteng", "ansible", "ad" } },
+                source = new { type = "string", @enum = new[] { "table", "ssh_config", "mremoteng", "ansible", "ad", "rdp" } },
                 text = new { type = "string", description = "붙여 넣은 내용 (table: 표 · ansible: 인벤토리 · ssh_config / mremoteng 도 가능). path 와 함께 쓰지 않음" },
                 path = new { type = "string", description = "이 PC 의 파일 경로 (ssh_config / mremoteng 는 생략 시 기본 위치). Nubis 데이터 폴더·개인키·네트워크 경로(UNC)는 읽지 않음" },
                 domain = new { type = "string", description = "ad: 도메인 DNS 이름 (예: corp.example.com). 생략 시 이 PC 의 도메인" },
@@ -99,6 +100,7 @@ public partial class MainWindow
             McpImportSource.Table => L.T("엑셀·CSV"),
             McpImportSource.SshConfig => "~/.ssh/config",
             McpImportSource.MRemoteNg => "mRemoteNG",
+            McpImportSource.Rdp => L.T(".rdp 파일"),
             _ => L.T("Ansible 인벤토리"),
         };
         var name = McpImport.SourceName(args.Source);
@@ -118,9 +120,16 @@ public partial class MainWindow
                         McpImportSource.Table => TableImport.Parse(args.Text),
                         McpImportSource.SshConfig => SshConfigImport.Parse(args.Text, null, includeGuard),
                         McpImportSource.MRemoteNg => MRemoteNgImport.Parse(args.Text),
+                        McpImportSource.Rdp => RdpFileImport.Parse(args.Text, ""),
                         _ => AnsibleInventoryImport.Parse(args.Text),
                     };
                     return (r, label, $"{name} (붙여 넣은 내용)");
+                }
+
+                if (args.Source == McpImportSource.Rdp)
+                {
+                    var rdp = ReadRdpImportFile(args.Path!);
+                    return (RdpFileImport.ParseFile(rdp), $"{label} ({rdp})", $"{name} ({rdp})");
                 }
 
                 var path = args.Path ?? (args.Source == McpImportSource.SshConfig ? SshConfigImport.DefaultPath : MRemoteNgImport.DefaultPath);
@@ -165,6 +174,19 @@ public partial class MainWindow
         }
         if (McpImport.LooksLikePrivateKey(text)) throw new McpToolException("개인키가 들어 있는 파일은 읽을 수 없습니다.");
         return (full, text);
+    }
+
+    /// <summary>.rdp 경로 검사 (다른 출처와 같은 차단 규칙 + .rdp 크기 한도). 문제 없으면 전체 경로</summary>
+    private static string ReadRdpImportFile(string path)
+    {
+        var sshDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+        if (McpImport.BlockedPathReason(path, AppPaths.DataDir, AppPaths.RootDir, sshDir, false) is { } why)
+            throw new McpToolException(why);
+        var full = Path.GetFullPath(path.Trim());
+        if (!File.Exists(full)) throw new McpToolException($"파일을 찾을 수 없습니다: {full}");
+        var size = new FileInfo(full).Length;
+        if (size > RdpFileImport.MaxFileBytes) throw new McpToolException($"파일이 너무 큽니다 ({size:N0} 바이트, .rdp 최대 {RdpFileImport.MaxFileBytes:N0}).");
+        return full;
     }
 
     /// <summary>
