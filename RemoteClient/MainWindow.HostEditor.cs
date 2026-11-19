@@ -64,6 +64,7 @@ public partial class MainWindow
         UpdateRememberedUi(h);
         _edJumpId = h?.JumpHostId;
         UpdateJumpUi();
+        LoadForwardEditor(h);
         UpdateAuthUi();
         _editorValues = EditorValues();
         _editorSnapshot = EditorSnapshot();
@@ -93,7 +94,7 @@ public partial class MainWindow
 
     // EditorValues 의 칸 순서
     private const int FProto = 0, FAddress = 1, FPort = 2, FPublicIp = 3, FUsePublic = 4, FLabel = 5, FGroup = 6, FUser = 7,
-                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14, FNoNla = 15;
+                      FPassword = 8, FKey = 9, FGateway = 10, FVault = 11, FClearAnswers = 12, FJump = 13, FTags = 14, FNoNla = 15, FForwards = 16;
 
     /// <summary>편집 칸 값 (칸별)</summary>
     private string[] EditorValues() => new[]
@@ -101,6 +102,7 @@ public partial class MainWindow
         (ProtoRdp.IsChecked == true).ToString(), EdAddress.Text, EdPort.Text, EdPublicIp.Text, (EdUsePublic.IsChecked == true).ToString(),
         EdLabel.Text, EdGroup.Text, EdUser.Text, EdPassword.Password, EdKey.Text, EdGateway.Text,
         _edVaultId?.ToString() ?? "", _edClearAnswers.ToString(), _edJumpId?.ToString() ?? "", EdTags.Text, (EdNoNla.IsChecked == true).ToString(),
+        PortForwards.Snapshot(_edForwards),
     };
 
     /// <summary>편집 칸 값 전체 (닫을 때 바뀐 게 있는지 비교)</summary>
@@ -179,6 +181,7 @@ public partial class MainWindow
     {
         KeyPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         JumpPanel.Visibility = ProtoSsh.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        if (ForwardPanel != null) ForwardPanel.Visibility = JumpPanel.Visibility;   // InitializeComponent 중이면 아직 없음
         GatewayPanel.Visibility = ProtoRdp.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
         if (ProtoRdp.IsChecked == true)
         {
@@ -410,6 +413,7 @@ public partial class MainWindow
             EdTags.Focus();
             return null;
         }
+        if (CheckEditorForwards(ProtoSsh.IsChecked == true) is { } fwdErr) { EditorError.Text = fwdErr; return null; }
         EditorError.Text = "";
         // 지워진 Vault 계정을 가리키고 있으면 저장 전에 고르게 한다 — 원본 호스트를 바꾸기 전에 (취소하면 아무것도 바뀌지 않게)
         if (_edVaultId != null && VaultStore.Get(_edVaultId) == null) { OnPickVault(this, new RoutedEventArgs()); return null; }
@@ -455,6 +459,7 @@ public partial class MainWindow
         if (changed[FGateway] || changed[FProto]) h.RdpGateway = !ssh && EdGateway.Text.Trim().Length > 0 ? EdGateway.Text.Trim() : null;
         if (_edClearAnswers) h.PromptAnswers = null;
         if (changed[FJump] || changed[FProto]) h.JumpHostId = ssh ? _edJumpId : null;
+        if (changed[FForwards] || changed[FProto]) h.PortForwards = ssh ? PortForwards.CloneList(_edForwards) : null;
 
         if (readd)
         {

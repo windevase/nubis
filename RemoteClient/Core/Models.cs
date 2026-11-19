@@ -45,6 +45,8 @@ public sealed class HostEntry : INotifyPropertyChanged
     [JsonIgnore] public HostEntry? Jump { get; set; }
     /// <summary>점프 서버로 지정한 호스트가 목록에 없음 (지워짐) — 이 표시가 있는 Jump 로는 연결하지 않는다 (점프 없이 직접 연결 방지)</summary>
     [JsonIgnore] public bool IsMissingJump { get; set; }
+    /// <summary>SSH: 로컬 포트 포워딩 규칙 (ssh -L). 탭이 연결되면 켜진 규칙을 127.0.0.1 에 연다. 없으면 null</summary>
+    public List<PortForwardRule>? PortForwards { get; set; }
     // 예전 형식(암호/키 따로 선택) 읽기 전용 — HostStore.Load 에서 VaultId 로 옮긴다
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultPasswordId { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? VaultKeyId { get; set; }
@@ -256,6 +258,7 @@ public sealed class HostEntry : INotifyPropertyChanged
         // 얕은 복사면 복제본에서 기억한 답이 원본에도 들어간다
         c.PromptAnswers = PromptAnswers == null ? null : new Dictionary<string, string>(PromptAnswers);
         c.Tags = Tags == null ? null : new Dictionary<string, string>(Tags, StringComparer.OrdinalIgnoreCase);
+        c.PortForwards = PortForwards?.ConvertAll(r => r.Clone());
         return c;
     }
 
@@ -465,6 +468,15 @@ public sealed class SessionTab : INotifyPropertyChanged
         // 같은 값이면 알리지 않는다 — 탭을 고를 때마다 모든 탭 항목의 바인딩·트리거가 다시 도는 것을 막는다
         set { if (_isSelected == value) return; _isSelected = value; OnChanged(); }
     }
+
+    private int _forwardCount;
+    /// <summary>SSH 탭에 열린 포트 포워딩 수 (탭 줄 배지)</summary>
+    public int ForwardCount
+    {
+        get => _forwardCount;
+        set { if (_forwardCount == value) return; _forwardCount = value; OnChanged(); OnChanged(nameof(HasForwards)); }
+    }
+    public bool HasForwards => _forwardCount > 0;
 
     public SessionStatus Status
     {

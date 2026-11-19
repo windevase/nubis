@@ -203,6 +203,8 @@ public partial class MainWindow
             tab.Status = s;
             if (tab.IsSelected) UpdateActiveContext();
         };
+        // SSH 탭의 열린 포트 포워딩 수 → 탭 줄 배지
+        if (tab.View is SshSessionView ssh) ssh.ForwardsChanged += n => tab.ForwardCount = n;
         _tabs.Add(tab);
         SessionsHost.Children.Add(tab.View);
         SelectTab(tab);

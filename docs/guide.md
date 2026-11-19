@@ -184,6 +184,18 @@ Multi-line text asks first with a preview (not when the server has bracketed pas
 - **Authentication failure hints** — Nubis looks at which methods the server allows (for example, keys only) and tells you the likely cause.
 - **Claude on OTP servers** — Claude's `run_command` runs over an SSH tab you have already opened and signed in to, so it does not need the OTP again ([10.6](#106-running-commands-on-several-servers-ssh--winrm)). Without an open tab, and for Claude's SFTP tools, it cannot enter an OTP, so it stops and reports the reason.
 
+### 4.1 Port forwarding (tunnels)
+
+Open a database (3306, 5432) or an admin web page that sits behind a server on a port of this PC — the same as `ssh -L localport:targethost:targetport`.
+
+- **Saved rules** — in the host editor (SSH), fill in local port · target host · target port · name (optional) under **Port forwarding**, click **Add**, then **Save**. The target host is the address **as seen from the SSH server**; left empty it is `localhost` (the server itself). Each rule has its own on/off switch. Two enabled rules can't share a local port.
+- **Opened and closed for you** — when the SSH tab connects, the enabled rules open; they close when the tab closes or the connection drops, and reopen when it reconnects. They use the tab's SSH connection, so there is no second sign-in (OTP servers included).
+- **This PC only** — always opened on `127.0.0.1`. Other PCs can't use the tunnel; other programs on this PC can.
+- **If a local port is already in use**, only that rule is marked as failed (also noted in the terminal) and the rest still open.
+- **The tab's forwarding window** — the ⇄ button in the toolbar left of the terminal (with a count badge; the tab title shows ⇄ and the count too). It shows each forward's state (open · waiting · off · failed with the reason), copies the local address, opens it in the browser when it looks like a web port, and turns forwards on or off for this tab. The fields below add a forward **for this tab only** (not saved; gone when the tab closes).
+- If the server blocks forwarding (`AllowTcpForwarding no`), the listener still opens but connections fail, and the reason appears in the forwarding window.
+- Claude can see open forwards with `list_port_forwards` and open a temporary one in a tab with `add_port_forward` (it opens a port on this PC, so it **always asks for approval**).
+
 ---
 
 ## 5. SFTP file transfer
@@ -442,6 +454,9 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 | Showing a Vault account's public key (`vault_get_public_key`) or the stored host keys (`list_known_hosts`) | None (written to the audit log) |
 | Screen and tab actions: opening, switching, renaming, reconnecting and reopening tabs (`open_session`, `select_session`, `rename_session`, `reconnect_session`, `reopen_closed_tab`), a new local PowerShell tab, showing the SFTP panel, collapsing groups, opening app screens (`open_app_page`), connecting up to 8 hosts at once (`connect_hosts`), moving a tab (`move_session`), a terminal tab's font size (`set_terminal_zoom`), the main window state (`set_window_state`), Claude giving back RDP screen control (`rdp_release_control`), starring a host, cancelling a cloud sync | None (written to the audit log) |
 | Display and convenience settings (theme, font, copy-on-select, auto reconnect and so on) | None (written to the audit log) |
+| Listing an SSH tab's port forwards (`list_port_forwards`) | None |
+| Closing an SSH tab's port forward (`close_port_forward`) | None (written to the audit log) |
+| Opening a temporary port forward in an SSH tab (`add_port_forward`, opens a 127.0.0.1 port on this PC) | **Always an approval prompt** |
 | Kubernetes: listing clusters (`list_k8s_clusters`, no credentials included) | None |
 | Kubernetes: opening a cluster tab, a pod shell tab or a log tab (`open_k8s_session`) | None (written to the audit log) |
 | Kubernetes: finding clusters in the cloud (`find_k8s_clusters`) | None (written to the audit log); removing the clusters of unselected profiles asks first |
@@ -477,7 +492,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 79 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 82 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -507,6 +522,7 @@ Claude has 79 tools. Anything you can do by hand in the app, Claude can do too. 
 | `list_closed_tabs` · `reopen_closed_tab` | Closed-tab history (Kubernetes cluster tabs included) and reopening (`Ctrl+Shift+R`) |
 | `open_local_terminal` | Open a local PowerShell tab |
 | `toggle_sftp_panel` | Show or hide an SSH tab's SFTP panel |
+| `list_port_forwards` · `add_port_forward` · `close_port_forward` | An SSH tab's port forwards: list · open a temporary one in that tab (approval) · close (a temporary one is removed, a saved rule is turned off in that tab only). See [4.1](#41-port-forwarding-tunnels) |
 
 **Terminal**
 
