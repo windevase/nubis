@@ -461,6 +461,7 @@ While Claude runs commands on servers, a **Running · Cancel** bar appears at th
 | Opening a temporary port forward in an SSH tab (`add_port_forward`, opens a 127.0.0.1 port on this PC) | **Always an approval prompt** |
 | Kubernetes: listing clusters (`list_k8s_clusters`, no credentials included) | None |
 | Kubernetes: opening a cluster tab, a pod shell tab or a log tab (`open_k8s_session`) | None (written to the audit log) |
+| Kubernetes: opening a port forward on this PC (`k8s_port_forward start`) | Every time (stopping is only logged) |
 | Kubernetes: finding clusters in the cloud (`find_k8s_clusters`) | None (written to the audit log); removing the clusters of unselected profiles asks first |
 | Kubernetes: testing a cluster connection (`test_k8s_cluster`) | Approval prompt (skipped when read-only auto-approve is on) |
 | Kubernetes: changing or deleting a cluster, importing from a kubeconfig (`update_k8s_cluster`, `delete_k8s_cluster`, `import_k8s_clusters`) | **Always an approval prompt** (imports are previewed first) |
@@ -611,8 +612,9 @@ Claude looks at the screen with `capture_screen` and works it like a person woul
 | Tool | Purpose |
 |---|---|
 | `list_k8s_clusters` | Registered clusters (never credentials), and the path of the `kubectl` found on this PC |
-| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead. Also refused: `kubectl config view` in any form, options that read or write local files (`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` and so on) and kubectl plugins |
+| `run_kubectl` | Run `kubectl` on a named cluster with this PC's `kubectl`, no shell in between. The cluster and credentials are fixed to the saved ones (`--kubeconfig`, `--context`, `--server`, `--token`, `--as` and similar are refused). Interactive or never-ending commands (`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`) are refused — use `open_k8s_session` instead (`k8s_port_forward` for port forwarding). Also refused: `kubectl config view` in any form, options that read or write local files (`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` and so on) and kubectl plugins |
 | `open_k8s_session` | Open a cluster tab, a pod shell tab or a pod log tab ([16.6](#166-cluster-tab)) |
+| `k8s_port_forward` | List, start or stop port forwards on cluster tabs (`kubectl port-forward` to 127.0.0.1 only; `start` needs approval) ([16.6](#166-cluster-tab)) |
 | `update_k8s_cluster` · `delete_k8s_cluster` | Change a cluster's name, default namespace or group; delete it from Nubis (the cluster itself is untouched) |
 | `test_k8s_cluster` | Connection test, like **Test connection** on the page |
 | `find_k8s_clusters` | **Find in cloud** with the profiles you name ([16.3](#163-finding-clusters-in-the-cloud)) |
@@ -1018,11 +1020,14 @@ Opening a cluster opens a tab with two parts.
 
 | Resource | Actions |
 |---|---|
-| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** (also a submenu when there are several containers) · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
-| Deployment | describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
-| Service · Node | describe · **View YAML** |
+| Pod | Double-click or `Enter`: shell tab (`kubectl exec -it`, bash or sh when bash is missing). Right-click: **Open shell** · **View logs** (`logs -f --tail=500`; a submenu when the pod has several containers) · **Previous container logs** (also a submenu when there are several containers) · **Port forward...** · describe · **View YAML** · **Copy name** · **Delete** (after confirming; a pod managed by a controller is created again) |
+| Deployment | **Port forward...** · describe · **View YAML** · **Restart** (`rollout restart`, after confirming) |
+| Service | **Port forward...** · describe · **View YAML** |
+| Node | describe · **View YAML** |
 
 describe and YAML run in the terminal on the right, but only while it shows a prompt; otherwise the command is copied to the clipboard instead. Closing a shell or log tab ends `kubectl` and its child processes. A closed cluster tab can be reopened with `Ctrl+Shift+R`, and clusters and the **Kubernetes page** also appear in the command palette (`Ctrl+K`).
+
+**Port forwarding** — right-click a pod, deployment or service and choose **Port forward...**. The window lists the ports the resource declares (container ports, or the service's ports with their target port); pick one or type a remote port. The local port starts as the same number, or the next free one if it is taken, and you can change it. Nubis runs `kubectl port-forward --address 127.0.0.1` without a shell, so the port opens on **127.0.0.1 only** — other PCs on your network cannot use it. Open forwards appear above the terminal as `localhost:8080 → svc/web:80` with a status dot (connecting · connected · ended), and buttons to **copy the local address**, **open in browser** (shown for web-looking ports such as 80, 8080 or a port named `http`), **stop**, and — once a forward has ended, for example because the pod restarted — **restart** or **remove from list**. Closing the cluster tab stops every forward and deletes their temporary kubeconfigs, and `kubectl` cannot outlive Nubis even if it crashes. Claude can open one with `k8s_port_forward` (`list` · `start` · `stop`); `start` opens a port on your PC, so it needs your approval and is audit-logged.
 
 ### 16.7 Security
 
@@ -1031,5 +1036,6 @@ describe and YAML run in the terminal on the right, but only while it shows a pr
 | Storage | Each cluster's kubeconfig is encrypted separately with DPAPI, inside `k8s_clusters.json`, which is encrypted as a whole |
 | While in use | The decrypted kubeconfig is a temporary file under `k8s-run\` in the data folder, readable only by your Windows account, and exists only while a cluster tab is open or `kubectl` is running. It is deleted when they close; files left behind by a crash are cleaned up at the next start |
 | Running kubectl | Nubis starts `kubectl` directly, without a shell. Claude's `run_kubectl` refuses `--kubeconfig`, `--context`, `--cluster`, `--user`, `-s`/`--server`, `--token`, `--as` and similar options, so saved credentials cannot be sent to another server or swapped for another kubeconfig |
-| Claude panel | Reading `k8s_clusters.json` and `k8s-run` is blocked by the deny rules (a second safety net). `run_kubectl` needs approval and is audit-logged ([10.3](#103-approval-and-logging)) |
+| Port forwarding | Binds only to 127.0.0.1. Each forward has its own temporary kubeconfig that is deleted when it stops, and its `kubectl` is in a kill-on-close job object, so it ends with Nubis even after a crash |
+| Claude panel | Reading `k8s_clusters.json` and `k8s-run` is blocked by the deny rules (a second safety net). `run_kubectl` and `k8s_port_forward start` need approval and are audit-logged ([10.3](#103-approval-and-logging)) |
 | Export | An exported kubeconfig is a plain, unencrypted file — keep it somewhere safe |

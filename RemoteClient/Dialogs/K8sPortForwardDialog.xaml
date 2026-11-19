@@ -1,0 +1,57 @@
+<Window x:Class="Nubis.K8sPortForwardDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:l="clr-namespace:Nubis"
+        Title="{l:Tr '포트 포워딩'}" Width="460" SizeToContent="Height" WindowStyle="None" ResizeMode="NoResize"
+        AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner" FontFamily="{StaticResource UiFont}" Foreground="{StaticResource TextPrimary}" FontSize="13">
+    <!-- 공통 대화상자 틀 (PromptDialog 와 같음) -->
+    <Border Background="{StaticResource OverlayBg}" BorderBrush="{StaticResource StrokeStrong}" BorderThickness="1"
+            CornerRadius="{StaticResource RadiusXl}" Margin="20,14,20,26" Effect="{StaticResource Shadow16}"
+            MouseLeftButtonDown="OnDrag">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <StackPanel Margin="{StaticResource PadDialog}">
+                <TextBlock Text="{l:Tr '포트 포워딩'}" Style="{StaticResource TextSubtitle}"/>
+                <TextBlock x:Name="TargetText" FontFamily="{StaticResource MonoFont}" Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0"
+                           TextTrimming="CharacterEllipsis"/>
+
+                <StackPanel x:Name="PortsSection">
+                    <TextBlock Text="{l:Tr '알려진 포트'}" Style="{StaticResource FieldLabel}" Margin="0,16,0,6"/>
+                    <ListBox x:Name="PortList" MaxHeight="150" Background="{StaticResource InputBg}" BorderBrush="{StaticResource Line}"
+                             BorderThickness="1" Foreground="{StaticResource Text}" Padding="2" SelectionChanged="OnPortSelected"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="{l:Tr '알려진 포트'}"/>
+                </StackPanel>
+
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="{l:Tr '원격 포트'}" Style="{StaticResource FieldLabel}" Margin="0,0,0,6"/>
+                        <TextBox x:Name="RemoteBox" TextChanged="OnRemoteChanged" AutomationProperties.Name="{l:Tr '원격 포트'}"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="{l:Tr '로컬 포트 (이 PC)'}" Style="{StaticResource FieldLabel}" Margin="0,0,0,6"/>
+                        <TextBox x:Name="LocalBox" TextChanged="OnLocalChanged" AutomationProperties.Name="{l:Tr '로컬 포트 (이 PC)'}"/>
+                    </StackPanel>
+                </Grid>
+                <TextBlock Text="{l:Tr '이 PC 의 127.0.0.1 에만 열립니다 (다른 PC 에서는 접속할 수 없음). 클러스터 탭을 닫으면 멈춥니다.'}"
+                           Style="{StaticResource TextCaption}" Foreground="{StaticResource TextTertiary}" TextWrapping="Wrap" Margin="0,10,0,0"/>
+                <TextBlock x:Name="ErrorText" Foreground="{StaticResource Danger}" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+            <Border Grid.Row="1" Background="{StaticResource Layer2Bg}" BorderBrush="{StaticResource StrokeSubtle}" BorderThickness="0,1,0,0"
+                    CornerRadius="0,0,11,11" Padding="24,14,24,14">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="{l:Tr '취소'}" Style="{StaticResource GhostButton}" Margin="0,0,8,0" IsCancel="True" MinWidth="96"/>
+                    <Button Content="{l:Tr '시작'}" Style="{StaticResource PrimaryButton}" IsDefault="True" Click="OnOk" MinWidth="96"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Border>
+</Window>
