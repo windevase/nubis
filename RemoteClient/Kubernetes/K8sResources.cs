@@ -23,7 +23,13 @@ public sealed record K8sItem(K8sKind Kind, string Name, string Namespace, string
     };
 
     public string ToolTipText => Namespace.Length > 0 ? $"{Namespace}/{Name}\n{Status}  {Extra}" : $"{Name}\n{Status}  {Extra}";
+
+    /// <summary>알려진 포트 (파드·디플로이먼트: 컨테이너 포트, 서비스: 서비스 포트) — 포트 포워딩 창의 목록</summary>
+    public IReadOnlyList<K8sPort> Ports { get; init; } = Array.Empty<K8sPort>();
 }
+
+/// <summary>리소스의 포트 하나. Detail 은 컨테이너 이름(파드) 또는 대상 포트(서비스), AppProtocol 은 서비스의 appProtocol</summary>
+public sealed record K8sPort(int Port, string Name, string Protocol, string Detail, string AppProtocol = "");
 
 /// <summary>kubectl JSON 출력 → 패널 행 (화면 무관, K8sResourcesTests)</summary>
 public static class K8sResources
@@ -72,8 +78,19 @@ public static class K8sResources
         var (status, ready, total, restarts) = PodStatus(p);
         var healthy = status is "Running" or "Succeeded" or "Completed" && (status != "Running" || ready == total);
         return new K8sItem(K8sKind.Pods, Str(p, "metadata", "name"), Str(p, "metadata", "namespace"), $"{ready}/{total}", status,
-            restarts.ToString(CultureInfo.InvariantCulture), Age(p, now), Str(p, "spec", "nodeName"), containers, healthy);
+            restarts.ToString(CultureInfo.InvariantCulture), Age(p, now), Str(p, "spec", "nodeName"), containers, healthy)
+        { Ports = ContainerPorts(Arr(p, "spec", "containers")) };
     }
+
+    /// <summary>컨테이너 포트 (containerPort · name · protocol, 컨테이너 이름을 Detail 로). 같은 포트·프로토콜은 한 번만</summary>
+    internal static List<K8sPort> ContainerPorts(IEnumerable<JsonElement> containers) =>
+        containers.SelectMany(c => Arr(c, "ports").Select(p => (c: Str(c, "name"), p)))
+            .Where(x => Int(x.p, "containerPort") is >= 1 and <= 65535)
+            .Select(x => new K8sPort(Int(x.p, "containerPort")!.Value, Str(x.p, "name"), Proto(x.p), x.c))
+            .DistinctBy(x => (x.Port, x.Protocol)).ToList();
+
+    /// <summary>protocol (생략하면 TCP)</summary>
+    private static string Proto(JsonElement p) => Str(p, "protocol") is { Length: > 0 } v ? v : "TCP";
 
     /// <summary>
     /// kubectl get pods 의 STATUS · READY · RESTARTS 열과 같은 규칙 (kubernetes/kubectl printers.go printPod, 1.27+):
@@ -172,7 +189,7 @@ public static class K8sResources
     public static bool SameItem(K8sItem a, K8sItem b) =>
         a.Kind == b.Kind && a.Name == b.Name && a.Namespace == b.Namespace && a.Ready == b.Ready && a.Status == b.Status
         && a.Restarts == b.Restarts && a.Age == b.Age && a.Extra == b.Extra && a.Healthy == b.Healthy
-        && a.Containers.SequenceEqual(b.Containers, StringComparer.Ordinal);
+        && a.Containers.SequenceEqual(b.Containers, StringComparer.Ordinal) && a.Ports.SequenceEqual(b.Ports);
 
     /// <summary>
     /// 다음 자동 새로고침까지 기다릴 시간: 기본 5초, kubectl 이 오래 걸린 큰 목록이면 걸린 시간의 3배 (최대 60초)
@@ -209,7 +226,8 @@ public static class K8sResources
         var containers = Arr(d, "spec", "template", "spec", "containers").Select(c => Str(c, "image")).Where(n => n.Length > 0).ToList();
         return new K8sItem(K8sKind.Deployments, Str(d, "metadata", "name"), Str(d, "metadata", "namespace"), $"{ready}/{want}",
             ready >= want ? "Available" : "Progressing", avail.ToString(CultureInfo.InvariantCulture), Age(d, now),
-            string.Join(", ", containers), Array.Empty<string>(), ready >= want);
+            string.Join(", ", containers), Array.Empty<string>(), ready >= want)
+        { Ports = ContainerPorts(Arr(d, "spec", "template", "spec", "containers")) };
     }
 
     private static K8sItem Service(JsonElement s, DateTime now)
@@ -224,8 +242,20 @@ public static class K8sResources
         var external = Arr(s, "status", "loadBalancer", "ingress").Select(i => Str(i, "ip") is { Length: > 0 } ip ? ip : Str(i, "hostname"))
             .FirstOrDefault(x => x.Length > 0) ?? "";
         return new K8sItem(K8sKind.Services, Str(s, "metadata", "name"), Str(s, "metadata", "namespace"), type, Str(s, "spec", "clusterIP"),
-            ports, Age(s, now), external, Array.Empty<string>(), true);
+            ports, Age(s, now), external, Array.Empty<string>(), true)
+        { Ports = ServicePorts(s) };
     }
+
+    /// <summary>서비스 포트 (port · name · protocol · appProtocol, targetPort 를 Detail 로 — 숫자 또는 이름)</summary>
+    internal static List<K8sPort> ServicePorts(JsonElement s) =>
+        Arr(s, "spec", "ports").Where(p => Int(p, "port") is >= 1 and <= 65535).Select(p =>
+        {
+            var target = TryPath(p, new[] { "targetPort" }, out var t)
+                ? t.ValueKind == JsonValueKind.Number && t.TryGetInt32(out var tn) ? tn.ToString(CultureInfo.InvariantCulture)
+                : t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : ""
+                : "";
+            return new K8sPort(Int(p, "port")!.Value, Str(p, "name"), Proto(p), target, Str(p, "appProtocol"));
+        }).ToList();
 
     private static K8sItem Node(JsonElement n, DateTime now)
     {

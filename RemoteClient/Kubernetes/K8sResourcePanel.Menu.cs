@@ -72,6 +72,11 @@ public partial class K8sResourcePanel
             }
             ItemMenu.Items.Add(new Separator());
         }
+        if (K8sPortForward.CanForward(item))
+        {
+            ItemMenu.Items.Add(Item(L.T("포트 포워딩..."), () => PortForwardRequested?.Invoke(item)));
+            ItemMenu.Items.Add(new Separator());
+        }
         ItemMenu.Items.Add(Item("describe", () => Describe(item)));
         ItemMenu.Items.Add(Item(L.T("YAML 보기"), () => TerminalCommand?.Invoke($"kubectl get {item.Ref}{NsArg(item)} -o yaml")));
         ItemMenu.Items.Add(Item(L.T("이름 복사"), () => { try { Clipboard.SetText(item.Name); } catch { } }));

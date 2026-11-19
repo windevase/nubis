@@ -10,8 +10,9 @@ using System.Windows.Controls;
 namespace Nubis;
 
 /// <summary>
-/// 클러스터 탭: [도구 막대] [리소스 패널] [분할선] [kubectl 터미널(PowerShell, KUBECONFIG = 이 클러스터)].
+/// 클러스터 탭: [도구 막대] [리소스 패널] [분할선] [포트 포워딩 목록 / kubectl 터미널(PowerShell, KUBECONFIG = 이 클러스터)].
 /// 복호화한 kubeconfig 는 탭이 열려 있는 동안만 현재 사용자 전용 임시 파일로 두고, 탭을 닫으면 지운다.
+/// 포트 포워딩(kubectl port-forward)은 이 탭에 딸리며 탭을 닫으면 모두 멈춘다 (K8sForward — 각자 임시 kubeconfig 를 갖는다)
 /// </summary>
 public sealed class K8sSessionView : UserControl, ISessionView
 {
@@ -20,6 +21,8 @@ public sealed class K8sSessionView : UserControl, ISessionView
     private readonly LocalTerminalView _term;
     private readonly ColumnDefinition _panelColumn = new() { Width = new GridLength(0) };
     private readonly GridSplitter _splitter;
+    private readonly PortForwardList _forwards = new();
+    private bool _closed;
     private K8sResourcePanel? _panel;
     private double _panelWidth = 460;
 
@@ -38,7 +41,9 @@ public sealed class K8sSessionView : UserControl, ISessionView
         _term = new LocalTerminalView(() => K8sTerminal.ClusterShellCommand(cluster), home, L.T("PowerShell 이 종료되었습니다."),
             extraEnv: K8sTerminal.Environment(_cfg.Path), onClosed: () =>
             {
+                _closed = true;
                 _panel?.Shutdown();
+                _forwards.StopAll();
                 _cfg.Dispose();
             });
         _term.StatusChanged += s => StatusChanged?.Invoke(s);
@@ -57,10 +62,17 @@ public sealed class K8sSessionView : UserControl, ISessionView
             Visibility = Visibility.Collapsed,
         };
         Grid.SetColumn(_splitter, 2);
-        Grid.SetColumn(_term, 3);
+        // 오른쪽: 포트 포워딩 목록(있을 때만) 위, 터미널 아래
+        var right = new Grid();
+        right.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        right.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        Grid.SetRow(_term, 1);
+        right.Children.Add(_forwards);
+        right.Children.Add(_term);
+        Grid.SetColumn(right, 3);
         grid.Children.Add(strip);
         grid.Children.Add(_splitter);
-        grid.Children.Add(_term);
+        grid.Children.Add(right);
         Content = grid;
         TogglePanel(true);
     }
@@ -105,6 +117,7 @@ public sealed class K8sSessionView : UserControl, ISessionView
                 _panel.CloseRequested += () => TogglePanel(false);
                 _panel.ShellRequested += (pod, c) => ShellRequested?.Invoke(_cluster, pod, c);
                 _panel.LogsRequested += (pod, c, prev) => LogsRequested?.Invoke(_cluster, pod, c, prev);
+                _panel.PortForwardRequested += OpenPortForward;
                 // describe · YAML 은 오른쪽 터미널에 입력해 실행 (출력을 스크롤·검색·복사할 수 있게)
                 _panel.TerminalCommand += cmd => _ = RunInTerminalAsync(cmd);
                 Grid.SetColumn(_panel, 1);
@@ -124,6 +137,39 @@ public sealed class K8sSessionView : UserControl, ISessionView
             if (_panel != null) _panel.Visibility = Visibility.Collapsed;
             _term.FocusSession();
         }
+    }
+
+    // ----- 포트 포워딩 -----
+
+    /// <summary>이 탭의 포트 포워딩 (MCP 목록·중지용)</summary>
+    public IReadOnlyList<K8sForward> Forwards => _forwards.Rows.OfType<K8sForward>().ToList();
+
+    private void OpenPortForward(K8sItem item)
+    {
+        if (_closed || K8sPortForwardDialog.Ask(Window.GetWindow(this), item) is not { } c) return;
+        try { StartForward(item.Namespace, item.Kind, item.Name, c.Local, c.Remote, c.Port); }
+        catch (Exception ex) { Dialog.Show(Window.GetWindow(this), ex.Message, "Kubernetes", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+
+    /// <summary>
+    /// 포트 포워딩을 목록에 넣고 시작한다 (UI 스레드). 시작 결과는 행의 상태로 보인다 — 실행 자체가 실패해도 Failed 행으로 남는다.
+    /// 이름·포트가 규칙에 맞지 않거나 탭이 닫혔으면 예외
+    /// </summary>
+    public K8sForward StartForward(string ns, K8sKind kind, string name, int local, int remote, K8sPort? port)
+    {
+        if (_closed) throw new InvalidOperationException(L.T("클러스터 탭이 닫혔습니다."));
+        var f = new K8sForward(_cluster, ns, kind, name, local, remote, K8sPortForward.WebScheme(remote, port));
+        f.StateChanged += OnForwardStateChanged;
+        _forwards.Rows.Add(f);
+        f.Start();
+        return f;
+    }
+
+    private void OnForwardStateChanged(K8sForward f)
+    {
+        if (_closed) return;
+        if (f.State == PortForwardState.Active) Toast.Show(L.F("포트 포워딩을 열었습니다: {0}", f.Label), ToastKind.Success);
+        else if (f.State == PortForwardState.Failed) Toast.Show(L.F("포트 포워딩이 멈췄습니다: {0}", f.Label), ToastKind.Warning, 6000);
     }
 
     /// <summary>

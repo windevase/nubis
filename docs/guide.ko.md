@@ -444,6 +444,7 @@ Claude 가 서버에 명령을 실행하는 동안 패널 위에 **실행 중 ·
 | 화면·편의 설정 (테마, 글꼴, 선택하면 바로 복사, 자동 재연결 등) | 없음 (감사 로그에 기록) |
 | 쿠버네티스: 클러스터 목록 (`list_k8s_clusters`, 인증 정보는 포함하지 않음) | 없음 |
 | 쿠버네티스: 클러스터 탭 · 파드 셸 탭 · 로그 탭 열기 (`open_k8s_session`) | 없음 (감사 로그에 기록) |
+| 쿠버네티스: 이 PC 에 포트 포워딩 열기 (`k8s_port_forward start`) | 매번 (중지는 기록만) |
 | 쿠버네티스: 클라우드에서 클러스터 찾기 (`find_k8s_clusters`) | 없음 (감사 로그에 기록). 선택 해제한 프로필의 클러스터를 지울 때만 승인 창 |
 | 쿠버네티스: 클러스터 연결 테스트 (`test_k8s_cluster`) | 승인 창 (읽기 전용 자동 승인을 켜면 생략) |
 | 쿠버네티스: 클러스터 변경·삭제, kubeconfig 에서 가져오기 (`update_k8s_cluster`, `delete_k8s_cluster`, `import_k8s_clusters`) | **항상 승인 창** (가져오기는 먼저 미리 봄) |
@@ -595,6 +596,7 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 | `list_k8s_clusters` | 등록된 클러스터 목록 (인증 정보는 포함하지 않음)과 이 PC 에서 찾은 `kubectl` 경로 |
 | `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session`. `kubectl config view`(모든 형태), 로컬 파일을 읽고 쓰는 옵션(`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` 등), kubectl 플러그인 실행도 거부 |
 | `open_k8s_session` | 클러스터 탭 · 파드 셸 탭 · 파드 로그 탭 열기 ([16.6](#166-클러스터-탭)) |
+| `k8s_port_forward` | 클러스터 탭의 포트 포워딩 목록 · 시작 · 중지 (`kubectl port-forward`, 127.0.0.1 에만, `start` 는 승인 필요) ([16.6](#166-클러스터-탭)) |
 | `update_k8s_cluster` · `delete_k8s_cluster` | 클러스터 이름 · 기본 네임스페이스 · 그룹 변경, Nubis 에서 삭제 (클러스터 자체는 그대로) |
 | `test_k8s_cluster` | 연결 테스트 (페이지의 **연결 테스트** 와 같음) |
 | `find_k8s_clusters` | 지정한 프로필로 **클라우드에서 찾기** ([16.3](#163-클라우드에서-찾기)) |
@@ -999,11 +1001,14 @@ Settings 페이지가 아니라 Cloud 페이지의 섹션마다 **경로 변경*
 
 | 리소스 | 동작 |
 |---|---|
-| 파드 | 더블클릭 · `Enter`: 셸 탭 (`kubectl exec -it`, bash 가 없으면 sh). 우클릭: **셸 열기** · **로그 보기** (`logs -f --tail=500`, 컨테이너가 여럿이면 하위 메뉴) · **이전 컨테이너 로그** (컨테이너가 여럿이면 하위 메뉴) · describe · **YAML 보기** · **이름 복사** · **삭제** (확인 창, 컨트롤러가 관리하는 파드는 다시 만들어짐) |
-| 디플로이먼트 | describe · **YAML 보기** · **다시 시작** (`rollout restart`, 확인 창) |
-| 서비스 · 노드 | describe · **YAML 보기** |
+| 파드 | 더블클릭 · `Enter`: 셸 탭 (`kubectl exec -it`, bash 가 없으면 sh). 우클릭: **셸 열기** · **로그 보기** (`logs -f --tail=500`, 컨테이너가 여럿이면 하위 메뉴) · **이전 컨테이너 로그** (컨테이너가 여럿이면 하위 메뉴) · **포트 포워딩...** · describe · **YAML 보기** · **이름 복사** · **삭제** (확인 창, 컨트롤러가 관리하는 파드는 다시 만들어짐) |
+| 디플로이먼트 | **포트 포워딩...** · describe · **YAML 보기** · **다시 시작** (`rollout restart`, 확인 창) |
+| 서비스 | **포트 포워딩...** · describe · **YAML 보기** |
+| 노드 | describe · **YAML 보기** |
 
 describe 와 YAML 은 터미널이 프롬프트일 때만 오른쪽 터미널에 입력해 실행하고, 아니면 명령을 클립보드에 복사합니다. 셸·로그 탭을 닫으면 `kubectl` 과 하위 프로세스도 끝납니다. 닫은 클러스터 탭은 `Ctrl+Shift+R` 로 다시 열고, 명령 팔레트(`Ctrl+K`)에서도 클러스터와 **Kubernetes 페이지** 를 찾을 수 있습니다.
+
+**포트 포워딩** — 파드·디플로이먼트·서비스를 우클릭해 **포트 포워딩...** 을 고릅니다. 창에 리소스가 선언한 포트(컨테이너 포트, 서비스는 서비스 포트와 대상 포트)가 목록으로 나오니 고르거나 원격 포트를 직접 입력합니다. 로컬 포트는 같은 번호로 채워지고, 이미 쓰이고 있으면 다음 빈 포트를 제안하며 직접 바꿀 수 있습니다. Nubis 는 `kubectl port-forward --address 127.0.0.1` 을 셸 없이 실행하므로 포트는 **127.0.0.1 에만** 열리고 같은 네트워크의 다른 PC 는 쓸 수 없습니다. 열린 포워딩은 터미널 위에 `localhost:8080 → svc/web:80` 처럼 상태 점(시작 중 · 연결됨 · 끝남)과 함께 보이고, **로컬 주소 복사** · **브라우저로 열기**(80 · 8080 이나 이름이 `http` 인 포트처럼 웹으로 보일 때) · **중지** 버튼이 있습니다. 파드가 다시 시작되는 등으로 끝나면 **다시 시작** · **목록에서 지우기** 가 나옵니다. 클러스터 탭을 닫으면 모든 포워딩을 멈추고 임시 kubeconfig 를 지우며, Nubis 가 비정상 종료해도 `kubectl` 이 남지 않습니다. Claude 는 `k8s_port_forward`(`list` · `start` · `stop`)로 열 수 있고, `start` 는 이 PC 의 포트를 여는 동작이라 승인과 감사 로그를 거칩니다.
 
 ### 16.7 보안
 
@@ -1012,5 +1017,6 @@ describe 와 YAML 은 터미널이 프롬프트일 때만 오른쪽 터미널에
 | 저장 | 클러스터마다 kubeconfig 를 DPAPI 로 따로 암호화해, 파일 전체가 암호화된 `k8s_clusters.json` 에 저장 |
 | 쓰는 동안 | 복호화한 kubeconfig 는 데이터 폴더 아래 `k8s-run\` 의 임시 파일로, 현재 Windows 계정만 접근할 수 있고 클러스터 탭이 열려 있거나 `kubectl` 이 실행되는 동안에만 있음. 닫으면 지우고, 비정상 종료로 남은 파일은 다음 시작 때 정리 |
 | kubectl 실행 | Nubis 는 `kubectl` 을 셸을 거치지 않고 바로 실행. Claude 의 `run_kubectl` 은 `--kubeconfig` · `--context` · `--cluster` · `--user` · `-s`/`--server` · `--token` · `--as` 같은 옵션을 거부해, 저장된 인증이 다른 서버로 가거나 다른 kubeconfig 로 바뀌지 않게 함 |
-| Claude 패널 | 거부 규칙으로 `k8s_clusters.json` · `k8s-run` 읽기 차단 (2차 안전장치). `run_kubectl` 은 승인 + 감사 로그 ([10.3](#103-승인과-기록)) |
+| 포트 포워딩 | 127.0.0.1 에만 바인드. 포워딩마다 따로 만든 임시 kubeconfig 는 멈추면 지우고, `kubectl` 은 닫히면 함께 끝나는 Job 개체에 넣어 Nubis 가 비정상 종료해도 남지 않음 |
+| Claude 패널 | 거부 규칙으로 `k8s_clusters.json` · `k8s-run` 읽기 차단 (2차 안전장치). `run_kubectl` · `k8s_port_forward start` 는 승인 + 감사 로그 ([10.3](#103-승인과-기록)) |
 | 내보내기 | 내보낸 kubeconfig 는 암호화되지 않은 파일이니 안전한 곳에 보관 |
