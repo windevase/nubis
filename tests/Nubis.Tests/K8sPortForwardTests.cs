@@ -198,6 +198,48 @@ public class K8sPortForwardTests
         Assert.False(K8sPortForward.IsLocalPortFree(70000));
     }
 
+    [Fact]
+    public void 앱_안에서_잡은_포트는_다른_포워딩이_못_쓰고_제안에서도_빠진다()
+    {
+        // 다른 테스트·프로그램과 겹치지 않게 지금 빈 포트를 하나 받아 쓴다
+        var l = new TcpListener(IPAddress.Loopback, 0);
+        l.Start();
+        var port = ((IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        object a = new(), b = new();
+        Assert.True(K8sPortForward.TryReserve(port, a));
+        try
+        {
+            Assert.True(K8sPortForward.TryReserve(port, a));    // 같은 주인은 다시 잡아도 된다 (다시 시작)
+            Assert.False(K8sPortForward.TryReserve(port, b));   // 시작 중(아직 소켓이 없음)이어도 다른 포워딩은 못 잡는다
+            Assert.False(K8sPortForward.IsPortAvailable(port));
+            Assert.False(K8sPortForward.PortProbe()(port));
+            Assert.NotEqual(port, K8sPortForward.SuggestLocalPort(port, K8sPortForward.PortProbe()));
+            K8sPortForward.Release(port, b);                    // 남의 예약은 놓지 않는다
+            Assert.True(K8sPortForward.IsReserved(port));
+        }
+        finally { K8sPortForward.Release(port, a); }
+        Assert.False(K8sPortForward.IsReserved(port));
+        Assert.True(K8sPortForward.TryReserve(port, b));
+        K8sPortForward.Release(port, b);
+    }
+
+    [Fact]
+    public void 포트_검사_함수는_듣는_소켓을_비지_않았다고_본다()
+    {
+        var l = new TcpListener(IPAddress.Any, 0);
+        l.Start();
+        try
+        {
+            var port = ((IPEndPoint)l.LocalEndpoint).Port;
+            var probe = K8sPortForward.PortProbe();
+            Assert.False(probe(port));    // 0.0.0.0 으로 듣는 프로그램이 있으면 127.0.0.1 바인드가 돼도 쓰지 않는다
+            Assert.False(probe(0));
+            Assert.False(probe(70000));
+        }
+        finally { l.Stop(); }
+    }
+
     // ---------------------------------------------------------------- kubectl 출력
 
     [Theory]

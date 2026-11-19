@@ -594,7 +594,7 @@ Claude 는 `capture_screen` 으로 화면을 보고 사람처럼 조작합니다
 | 도구 | 기능 |
 |---|---|
 | `list_k8s_clusters` | 등록된 클러스터 목록 (인증 정보는 포함하지 않음)과 이 PC 에서 찾은 `kubectl` 경로 |
-| `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session`. `kubectl config view`(모든 형태), 로컬 파일을 읽고 쓰는 옵션(`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` 등), kubectl 플러그인 실행도 거부 |
+| `run_kubectl` | 클러스터를 지정해 이 PC 의 `kubectl` 로 실행 (셸을 거치지 않음). 클러스터와 인증은 저장된 값으로 고정 (`--kubeconfig`·`--context`·`--server`·`--token`·`--as` 등은 거부). 대화형이거나 끝나지 않는 명령(`exec -it`, `logs -f`, `-w`, `port-forward`, `attach`, `edit`, `proxy`)은 받지 않음 — 대신 `open_k8s_session` (포트 포워딩은 `k8s_port_forward`). `kubectl config view`(모든 형태), 로컬 파일을 읽고 쓰는 옵션(`-o *-file`, `--profile-output`, `--log-file`, `--kuberc` 등), kubectl 플러그인 실행도 거부 |
 | `open_k8s_session` | 클러스터 탭 · 파드 셸 탭 · 파드 로그 탭 열기 ([16.6](#166-클러스터-탭)) |
 | `k8s_port_forward` | 클러스터 탭의 포트 포워딩 목록 · 시작 · 중지 (`kubectl port-forward`, 127.0.0.1 에만, `start` 는 승인 필요) ([16.6](#166-클러스터-탭)) |
 | `update_k8s_cluster` · `delete_k8s_cluster` | 클러스터 이름 · 기본 네임스페이스 · 그룹 변경, Nubis 에서 삭제 (클러스터 자체는 그대로) |

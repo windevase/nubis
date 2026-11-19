@@ -22,6 +22,7 @@
   "로컬 포트는 1~65535 사이의 숫자여야 합니다.": "The local port must be a number from 1 to 65535.",
   "로컬 포트 {0} 은(는) 이미 쓰이고 있습니다. 빈 포트 {1} 을(를) 넣었습니다.": "Local port {0} is already in use. Filled in free port {1} instead.",
   "로컬 포트 {0} 은(는) 이미 쓰이고 있습니다.": "Local port {0} is already in use.",
+  "로컬 포트 {0} 은(는) 다른 포트 포워딩이 쓰고 있습니다.": "Local port {0} is used by another port forward.",
   "포트 포워딩...": "Port forward...",
   "클러스터 탭이 닫혔습니다.": "The cluster tab has been closed.",
   "포트 포워딩을 열었습니다: {0}": "Port forwarding opened: {0}",

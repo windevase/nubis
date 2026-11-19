@@ -58,7 +58,7 @@ public partial class K8sPortForwardDialog : Window
     {
         ErrorText.Visibility = Visibility.Collapsed;
         if (_localEdited || K8sPortForward.ParsePort(RemoteBox.Text) is not { } remote) return;
-        var local = K8sPortForward.SuggestLocalPort(remote, K8sPortForward.IsLocalPortFree);
+        var local = K8sPortForward.SuggestLocalPort(remote, K8sPortForward.PortProbe());
         _settingLocal = true;
         LocalBox.Text = local?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "";
         _settingLocal = false;
@@ -82,9 +82,9 @@ public partial class K8sPortForwardDialog : Window
     {
         if (K8sPortForward.ParsePort(RemoteBox.Text) is not { } remote) { ShowError(L.T("원격 포트는 1~65535 사이의 숫자여야 합니다."), RemoteBox); return; }
         if (K8sPortForward.ParsePort(LocalBox.Text) is not { } local) { ShowError(L.T("로컬 포트는 1~65535 사이의 숫자여야 합니다."), LocalBox); return; }
-        if (!K8sPortForward.IsLocalPortFree(local))
+        if (!K8sPortForward.IsPortAvailable(local))
         {
-            var alt = K8sPortForward.SuggestLocalPort(local, K8sPortForward.IsLocalPortFree);
+            var alt = K8sPortForward.SuggestLocalPort(local, K8sPortForward.PortProbe());
             ShowError(alt is { } a
                 ? L.F("로컬 포트 {0} 은(는) 이미 쓰이고 있습니다. 빈 포트 {1} 을(를) 넣었습니다.", local, a)
                 : L.F("로컬 포트 {0} 은(는) 이미 쓰이고 있습니다.", local), LocalBox);

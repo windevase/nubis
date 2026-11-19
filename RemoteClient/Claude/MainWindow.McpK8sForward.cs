@@ -69,6 +69,9 @@ public partial class MainWindow
             var c = ResolveK8sCluster(Arg(a, "cluster"));
             if (string.IsNullOrEmpty(c.Kubeconfig)) throw new McpToolException($"클러스터 '{c.Name}' 의 인증을 풀 수 없습니다. 사용자에게 다시 가져오라고 안내하세요.");
             if (Kubectl.Locate(SettingsStore.Current.KubectlPath) == null) throw new McpToolException("이 PC 에서 kubectl 을 찾지 못했습니다. 사용자에게 설치(winget install Kubernetes.kubectl)를 안내하세요.");
+            // 승인을 받기 전에 탭 지정이 맞는지부터 (승인한 뒤 엉뚱한 탭이라 실패하지 않게 — 실제 탭은 승인 뒤 다시 고른다)
+            if (IntArg(a, "session_id") is { } sid0 && !K8sClusterTabs().Any(x => x.Tab.Id == sid0 && x.View.ClusterId == c.Id))
+                throw new McpToolException($"session_id={sid0} 은(는) 클러스터 '{c.Name}' 의 클러스터 탭이 아닙니다.");
             var target = K8sPortForward.ParseTarget(Arg(a, "target"))
                          ?? throw new McpToolException("target 은 pod/이름 · svc/이름 · deploy/이름 이어야 합니다 (쿠버네티스 이름: 소문자·숫자·-·.).");
             var n = Arg(a, "namespace").Trim();
@@ -79,10 +82,10 @@ public partial class MainWindow
             if (IntArg(a, "local_port") is { } lp)
             {
                 if (!K8sPortForward.ValidPort(lp)) throw new McpToolException("local_port 는 1~65535 입니다.");
-                if (!K8sPortForward.IsLocalPortFree(lp)) throw new McpToolException($"이 PC 의 포트 {lp} 은(는) 이미 쓰이고 있습니다. 다른 local_port 를 주거나 생략하세요.");
+                if (!K8sPortForward.IsPortAvailable(lp)) throw new McpToolException($"이 PC 의 포트 {lp} 은(는) 이미 쓰이고 있습니다. 다른 local_port 를 주거나 생략하세요.");
                 l = lp;
             }
-            else l = K8sPortForward.SuggestLocalPort(r, K8sPortForward.IsLocalPortFree) ?? throw new McpToolException("빈 로컬 포트를 찾지 못했습니다. local_port 를 지정하세요.");
+            else l = K8sPortForward.SuggestLocalPort(r, K8sPortForward.PortProbe()) ?? throw new McpToolException("빈 로컬 포트를 찾지 못했습니다. local_port 를 지정하세요.");
             var args = (c.ContextName.Length > 0 ? new List<string> { "--context", c.ContextName } : new List<string>())
                 .Concat(K8sPortForward.Args(n, target.Kind, target.Name, l, r));
             return (c, n, target.Kind, target.Name, r, l, "kubectl " + string.Join(" ", args.Select(K8sTerminal.Quote)));
@@ -102,27 +105,45 @@ public partial class MainWindow
         }
         AuditLog.Write("k8s_port_forward", new[] { label }, line, "승인·시작");
 
-        var (sessionId, forward) = await OnUi(() =>
+        int sessionId;
+        K8sForward forward;
+        try
         {
-            SessionTab? tab = null;
-            if (IntArg(a, "session_id") is { } sid)
+            (sessionId, forward) = await OnUi(() =>
             {
-                tab = _tabs.FirstOrDefault(t => t.Id == sid);
-                if (tab?.View is not K8sSessionView v0 || v0.ClusterId != cluster.Id)
-                    throw new McpToolException($"session_id={sid} 은(는) 클러스터 '{cluster.Name}' 의 클러스터 탭이 아닙니다.");
-            }
-            tab ??= K8sClusterTabs().Where(x => x.View.ClusterId == cluster.Id).Select(x => x.Tab).FirstOrDefault();
-            tab ??= OpenK8sTab(cluster) ?? throw new McpToolException("클러스터 탭을 열지 못했습니다 (앱에 안내 창이 떴습니다).");
-            try { return (tab.Id, ((K8sSessionView)tab.View).StartForward(ns, kind, name, local, remote, null)); }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { throw new McpToolException(ex.Message); }
-        });
+                SessionTab? tab = null;
+                if (IntArg(a, "session_id") is { } sid)
+                {
+                    tab = _tabs.FirstOrDefault(t => t.Id == sid);
+                    if (tab?.View is not K8sSessionView v0 || v0.ClusterId != cluster.Id)
+                        throw new McpToolException($"session_id={sid} 은(는) 클러스터 '{cluster.Name}' 의 클러스터 탭이 아닙니다.");
+                }
+                tab ??= K8sClusterTabs().Where(x => x.View.ClusterId == cluster.Id).Select(x => x.Tab).FirstOrDefault();
+                tab ??= OpenK8sTab(cluster) ?? throw new McpToolException("클러스터 탭을 열지 못했습니다 (앱에 안내 창이 떴습니다).");
+                try { return (tab.Id, ((K8sSessionView)tab.View).StartForward(ns, kind, name, local, remote, null)); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException) { throw new McpToolException(ex.Message); }
+            });
+        }
+        catch (McpToolException ex)
+        {
+            // 승인 뒤 시작하지 못했으면 그것도 감사 로그에 (승인·시작만 남지 않게)
+            AuditLog.Write("k8s_port_forward", new[] { label }, line, "실패: " + ex.Message);
+            throw;
+        }
 
         // 연결됨·실패까지 최대 20초 (그 뒤에도 시작 중이면 그대로 알린다)
-        for (var i = 0; i < 100; i++)
+        try
         {
-            if (await OnUi(() => forward.State) != PortForwardState.Starting) break;
-            await Task.Delay(200, McpRequest.Token).ConfigureAwait(true);
+            for (var i = 0; i < 100; i++)
+            {
+                if (await OnUi(() => forward.State) != PortForwardState.Starting) break;
+                await Task.Delay(200, McpRequest.Token).ConfigureAwait(true);
+            }
+            // 끝남이면 kubectl 의 마지막 오류 줄이 종료 이벤트보다 늦게 올 수 있다 — 사유를 담게 잠깐 더 기다린다
+            if (await OnUi(() => forward.State == PortForwardState.Failed && forward.LastError.Length == 0))
+                await Task.Delay(500, McpRequest.Token).ConfigureAwait(true);
         }
+        catch (OperationCanceledException) { }   // Claude 가 요청을 취소해도 승인된 포워딩은 그대로, 감사 로그는 남긴다
         var (state, status) = await OnUi(() => (forward.State, Describe(forward)));
         AuditLog.Write("k8s_port_forward", new[] { label }, line, $"결과: {status}");
         var sb = new StringBuilder($"{what} (네임스페이스 {ns}) — {status}\nsession_id={sessionId} (클러스터 탭 위 목록에 보임)");

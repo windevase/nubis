@@ -21,6 +21,8 @@ public sealed class K8sForward : IPortForwardRow
     private readonly K8sCluster _cluster;
     private readonly List<string> _args;
     private Process? _proc;
+    /// <summary>실행 회차 — 이전 kubectl 의 늦게 온 출력·종료 이벤트가 다시 시작한 회차를 건드리지 않게</summary>
+    private int _run;
     private SecureTempFile? _cfg;
     private bool _stopping;
     private string _lastError = "";
@@ -69,12 +71,17 @@ public sealed class K8sForward : IPortForwardRow
         if (IsRunning) return;
         _stopping = false;
         _lastError = "";
+        var run = ++_run;
         State = PortForwardState.Starting;
         StatusText = L.T("시작하는 중…");
+        Process? started = null;
         try
         {
             var exe = Kubectl.Locate(SettingsStore.Current.KubectlPath)
                       ?? throw new FileNotFoundException(L.T("kubectl 을 찾지 못했습니다. 설치하거나(winget install Kubernetes.kubectl) Kubernetes 페이지에서 경로를 지정하세요."));
+            // 이 앱의 다른 포워딩이 시작 중(아직 포트를 열기 전)이어도 겹치지 않게 먼저 잡는다 — 끝나면 OnExited · 실패 처리에서 놓는다
+            if (!K8sPortForward.TryReserve(LocalPort, this))
+                throw new InvalidOperationException(L.F("로컬 포트 {0} 은(는) 다른 포트 포워딩이 쓰고 있습니다.", LocalPort));
             if (!K8sPortForward.IsLocalPortFree(LocalPort))
                 throw new InvalidOperationException(L.F("로컬 포트 {0} 을(를) 이미 다른 프로그램이 쓰고 있습니다.", LocalPort));
             _cfg = SecureTempFile.Create(SecureTempFile.K8sDir, Kubectl.EffectiveKubeconfig(_cluster));
@@ -97,10 +104,11 @@ public sealed class K8sForward : IPortForwardRow
             psi.Environment["KUBERC"] = "off";
 
             var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
-            p.OutputDataReceived += (_, e) => OnLine(e.Data, stderr: false);
-            p.ErrorDataReceived += (_, e) => OnLine(e.Data, stderr: true);
+            p.OutputDataReceived += (_, e) => OnLine(run, e.Data, stderr: false);
+            p.ErrorDataReceived += (_, e) => OnLine(run, e.Data, stderr: true);
             p.Exited += (_, _) => Ui(() => OnExited(p));
             p.Start();
+            started = p;
             ProcessJob.Add(p);
             _proc = p;
             try { p.StandardInput.Close(); } catch { }
@@ -109,7 +117,14 @@ public sealed class K8sForward : IPortForwardRow
         }
         catch (Exception ex)
         {
+            // 실행한 뒤에 실패했으면 kubectl 을 남기지 않는다
+            if (started != null)
+            {
+                try { if (!started.HasExited) started.Kill(entireProcessTree: true); } catch { }
+                try { started.Dispose(); } catch { }
+            }
             CleanupConfig();
+            K8sPortForward.Release(LocalPort, this);
             _proc = null;
             State = PortForwardState.Failed;
             StatusText = CloudProviders.FirstLine(ex.Message);
@@ -129,7 +144,15 @@ public sealed class K8sForward : IPortForwardRow
         }
         try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
         // Exited 이벤트가 상태·임시 파일을 정리한다. 앱 종료 중이라 디스패처가 돌지 않아도 임시 파일은 바로 지운다
-        try { if (p.WaitForExit(2000)) CleanupConfig(); } catch { }
+        try
+        {
+            if (p.WaitForExit(2000))
+            {
+                CleanupConfig();
+                K8sPortForward.Release(LocalPort, this);
+            }
+        }
+        catch { }
     }
 
     public void Restart()
@@ -138,14 +161,14 @@ public sealed class K8sForward : IPortForwardRow
         Start();
     }
 
-    private void OnLine(string? line, bool stderr)
+    private void OnLine(int run, string? line, bool stderr)
     {
         if (line == null) return;
         if (!stderr && K8sPortForward.ParseForwarding(line) != null)
         {
             Ui(() =>
             {
-                if (_state != PortForwardState.Starting) return;
+                if (run != _run || _state != PortForwardState.Starting) return;
                 State = PortForwardState.Active;
                 StatusText = L.T("연결됨");
                 StateChanged?.Invoke(this);
@@ -157,9 +180,12 @@ public sealed class K8sForward : IPortForwardRow
         if (clean.Length == 0) return;
         Ui(() =>
         {
+            if (run != _run) return;
             _lastError = clean;
             // 실행 중에도 오류(연결 하나 실패 등)를 보이되 상태는 그대로 — 끝나면 OnExited 가 마지막 오류로 바꾼다
             if (IsRunning && stderr) StatusText = _state == PortForwardState.Active ? L.F("연결됨 · {0}", clean) : clean;
+            // Exited 는 출력 파이프를 다 읽기 전에 올 수 있다 — 종료 뒤에 도착한 오류 줄(포트 바인드 실패 등)도 상태에 보인다
+            else if (_state == PortForwardState.Failed && stderr) StatusText = L.F("끝남 · {0}", clean);
         });
     }
 
@@ -171,6 +197,7 @@ public sealed class K8sForward : IPortForwardRow
         _proc = null;
         try { p.Dispose(); } catch { }
         CleanupConfig();
+        K8sPortForward.Release(LocalPort, this);
         if (_stopping)
         {
             State = PortForwardState.Stopped;
