@@ -82,7 +82,8 @@ public partial class MainWindow
             if (PromptDialog.Ask(this, L.T("탭 이름 바꾸기"), L.T("새 이름"), tab.Title)?.Trim() is { Length: > 0 } name && _tabs.Contains(tab))
             {
                 tab.Title = name;
-                if (tab.IsSelected) UpdateActiveContext();   // Claude 에게 알려 주는 현재 탭 정보(active-session.txt)도 새 이름으로
+                // Claude 에게 알려 주는 현재 탭 정보(active-session.txt)도 새 이름으로 — 나란히 보이는 다른 쪽 탭 이름도 들어 있다
+                if (tab.IsSelected || tab.IsBeside) UpdateActiveContext();
             }
         });
         if (tab.Host != null && _hosts.Contains(tab.Host)) Add(L.T("호스트 편집"), () => { SelectHome(); OpenEditor(tab.Host); });

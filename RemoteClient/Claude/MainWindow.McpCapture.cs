@@ -42,8 +42,9 @@ public partial class MainWindow
 
         // 탭을 바꿔야 하는 캡처는 RDP 입력 구간 잠금을 잡는다 — 다른 탭에 Claude 가 입력하는 중이면 그 탭을 바꿔 입력을 끊지 않게
         // (rdp_* 의 입력 뒤 캡처는 이미 잠금을 쥐고 부른다)
+        // 나란히 보기로 이미 보이는 탭(IsBeside)은 탭을 바꾸지 않고 그대로 찍는다 — 고른 탭(포커스 쪽)과 Claude 현재 화면 정보를 흔들지 않게
         var acquired = false;
-        if (!tab.IsSelected && !holdsInputSection)
+        if (!tab.IsSelected && !tab.IsBeside && !holdsInputSection)
         {
             try { await _rdpInputSection.WaitAsync(McpRequest.Token); }
             catch (OperationCanceledException) { throw new McpToolException("Claude 쪽에서 요청이 취소되어 캡처하지 않았습니다."); }
@@ -56,7 +57,7 @@ public partial class MainWindow
                 throw new McpToolException("RDP 탭이 전체 화면이라 캡처할 수 없습니다. 전체 화면을 나와 달라고 사용자에게 요청하세요.");
             }
         }
-        var switched = !tab.IsSelected;
+        var switched = !tab.IsSelected && !tab.IsBeside;
         // 캡처가 끝나면 사용자가 보던 화면(탭 또는 홈)으로 되돌린다
         var previous = _tabs.FirstOrDefault(t => t.IsSelected);
         // 사용자가 그 탭에 입력하던 중이었는지 — 되돌릴 때만 그 탭에 키보드 포커스를 돌려준다

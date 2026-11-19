@@ -51,6 +51,20 @@ internal static class SplitLayout
         return (null, closedL ? pair.Right : pair.Left);
     }
 
+    /// <summary>
+    /// 고른 탭 selected 가 closing 과 함께 닫힐 때 화면을 채울 짝의 남은 쪽. selected 가 짝이 아니거나 남는 쪽이 없으면 null
+    /// (짝 밖의 탭을 닫는데 무관한 짝의 탭으로 옮기지 않게)
+    /// </summary>
+    public static T? NextAfterClose<T>(SplitPair<T>? pair, T selected, ICollection<T> closing) where T : class =>
+        pair != null && pair.Contains(selected) ? AfterClose(pair, closing).Survivor : null;
+
+    /// <summary>
+    /// 세션 뷰 안 왼쪽 패널(SFTP · 쿠버네티스 리소스)의 최대 너비: 뷰 너비의 절반, 단 패널 최소 너비 아래로는 줄이지 않는다.
+    /// 나란히 보기로 뷰가 반으로 줄면 고정 너비 패널이 터미널을 거의 다 가리던 문제
+    /// </summary>
+    public static double SidePanelMaxWidth(double viewWidth, double panelMin) =>
+        viewWidth > 0 && !double.IsInfinity(viewWidth) ? System.Math.Max(panelMin, viewWidth / 2) : double.PositiveInfinity;
+
     /// <summary>오른쪽 영역 너비 비율 (왼쪽 · 오른쪽 열 너비). 0 이하·이상한 값이면 반반, 15%~85% 로 제한 (한쪽이 사라지지 않게)</summary>
     public static double RightRatio(double leftWidth, double rightWidth)
     {

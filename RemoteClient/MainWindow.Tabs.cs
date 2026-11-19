@@ -262,7 +262,8 @@ public partial class MainWindow
 
     private void SelectHome()
     {
-        foreach (var t in _tabs) { t.IsSelected = false; t.IsBeside = false; }
+        foreach (var t in _tabs) t.IsSelected = false;
+        HideSplitLayout();   // 나란히 보기 훅·머리줄 (MainWindow.SplitView.cs)
         SessionsHost.Visibility = Visibility.Collapsed;
         HomeView.Visibility = Visibility.Visible;
         // 선택된 홈 탭은 본문 바탕(Layer2)과 이어진다. 선택 해제는 Brushes.Transparent — XAML 트리거가 이 인스턴스로 판단한다
@@ -323,10 +324,9 @@ public partial class MainWindow
         // 하나씩 닫으며 곧 닫힐 탭을 차례로 고르면 그 뷰(RDP 등)를 보였다 숨기고 현재 탭 정보도 매번 다시 쓴다
         var set = new HashSet<SessionTab>(closing);
         var selected = _tabs.FirstOrDefault(t => t.IsSelected);
-        // 나란히 보던 짝의 한쪽이 닫히면 남은 쪽이 화면을 채운다
-        var survivor = SplitLayout.AfterClose(_split, set).Survivor;
+        // 나란히 보던 짝의 한쪽(고른 탭)이 닫히면 남은 쪽이 화면을 채운다 — 고른 탭이 짝 밖이면 평소처럼 이웃으로
         var next = selected != null && set.Contains(selected)
-            ? survivor ?? NeighborAfterClose(_tabs, _tabs.IndexOf(selected), set) : null;
+            ? SplitLayout.NextAfterClose(_split, selected, set) ?? NeighborAfterClose(_tabs, _tabs.IndexOf(selected), set) : null;
         foreach (var t in closing) CloseTab(t, reselect: false);
         if (selected == null) UpdateActiveContext();
         else if (!set.Contains(selected)) ShowSessionLayout(selected);   // 나란히 보던 다른 쪽이 닫혔을 수 있다 — 배치를 다시

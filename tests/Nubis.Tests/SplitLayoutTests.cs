@@ -64,6 +64,18 @@ public class SplitLayoutTests
     }
 
     [Fact]
+    public void NextAfterClose_OnlyWhenSelectedIsInPair()
+    {
+        var pair = new SplitPair<string>("a", "c");
+        // 고른 탭 a(짝)와 d 를 닫으면 짝의 남은 c 가 화면을 채운다
+        Assert.Equal("c", SplitLayout.NextAfterClose(pair, "a", new HashSet<string> { "a", "d" }));
+        // 고른 탭 b(짝 밖)와 짝의 a 를 함께 닫으면 무관한 c 로 옮기지 않는다 — 평소처럼 이웃 규칙(null → NeighborAfterClose)
+        Assert.Null(SplitLayout.NextAfterClose(pair, "b", new HashSet<string> { "a", "b" }));
+        Assert.Null(SplitLayout.NextAfterClose(pair, "a", new HashSet<string> { "a", "c" }));
+        Assert.Null(SplitLayout.NextAfterClose<string>(null, "a", new HashSet<string> { "a" }));
+    }
+
+    [Fact]
     public void Pair_PartnerAndSwap()
     {
         var pair = new SplitPair<string>("a", "c");
@@ -84,6 +96,20 @@ public class SplitLayoutTests
     [InlineData(double.NaN, 100, 0.5)]
     public void RightRatio_IsClamped(double left, double right, double expected) =>
         Assert.Equal(expected, SplitLayout.RightRatio(left, right), 3);
+
+    [Theory]
+    [InlineData(1600, 260, 800)]
+    [InlineData(640, 260, 320)]     // 나란히 보기로 반이 된 탭: 패널은 절반까지만
+    [InlineData(400, 260, 260)]     // 아주 좁으면 패널 최소 너비
+    public void SidePanelMaxWidth_IsHalfButNotBelowMin(double view, double min, double expected) =>
+        Assert.Equal(expected, SplitLayout.SidePanelMaxWidth(view, min));
+
+    [Fact]
+    public void SidePanelMaxWidth_UnknownWidthIsUnlimited()
+    {
+        Assert.True(double.IsPositiveInfinity(SplitLayout.SidePanelMaxWidth(0, 260)));
+        Assert.True(double.IsPositiveInfinity(SplitLayout.SidePanelMaxWidth(double.PositiveInfinity, 260)));
+    }
 
     [Fact]
     public void BesideContext_NamesSideAndSanitizesTitle()

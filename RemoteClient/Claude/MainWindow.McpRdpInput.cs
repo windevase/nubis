@@ -546,7 +546,7 @@ public partial class MainWindow
         var previous = _tabs.FirstOrDefault(t => t.IsSelected);
         var hadFocus = previous?.View.IsKeyboardFocusWithin == true;
         ShowTabWithoutFocus(tab);
-        if (!hadFocus) return;
+        if (!hadFocus || previous!.IsBeside) return;   // 나란히 보기로 계속 보이는 탭이면 포커스를 옮기지 않는다 (입력 뒤 돌아가면 다시 고른 탭)
         if (ClaudeColumn.Width.Value > 0 && _claudeView != null) _claudeView.FocusSession();
         else ReleaseHiddenSessionFocus();
     }

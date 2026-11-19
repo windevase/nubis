@@ -121,6 +121,8 @@ public partial class MainWindow
     private void OnSplitWinFocus(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
     {
         if (hwnd == IntPtr.Zero || _split == null || !_splitShown) return;
+        // 훅은 시스템 전체의 포커스 이벤트를 받는다 — 이 창 안(WebView2 · RDP 자식 창 포함)이 아니면 시각 트리를 뒤지지 않는다
+        if (GetAncestor(hwnd, GaRoot) != new System.Windows.Interop.WindowInteropHelper(this).Handle) return;
         foreach (var t in new[] { _split.Left, _split.Right })
             if (!t.IsSelected && t.IsBeside && ContainsWindow(t.View, hwnd)) { FocusBesideTab(t); return; }
     }
@@ -136,8 +138,26 @@ public partial class MainWindow
         return false;
     }
 
+    /// <summary>홈으로 가면 나란히 보기 화면을 내린다 — 훅을 풀고 머리줄 바인딩이 탭을 붙잡지 않게 (짝은 남아 다시 고르면 되살아난다)</summary>
+    private void HideSplitLayout()
+    {
+        foreach (var t in _tabs) t.IsBeside = false;
+        if (_splitShown) ApplySplitColumns(null, null, null);
+        SetSplitFocusHook(false);
+    }
+
+    /// <summary>창을 닫을 때 — 세션을 닫는 동안 오는 포커스 이벤트를 받지 않게 훅부터 푼다</summary>
+    private void ShutdownSplitView()
+    {
+        _split = null;
+        SetSplitFocusHook(false);
+    }
+
     private delegate void WinEventProc(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
-    private const uint EventObjectFocus = 0x8005, WinEventOutOfContext = 0;
+    private const uint EventObjectFocus = 0x8005, WinEventOutOfContext = 0, GaRoot = 2;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr hmod, WinEventProc proc, uint pid, uint thread, uint flags);

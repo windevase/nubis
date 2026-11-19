@@ -100,7 +100,7 @@ public partial class MainWindow
                 var old = tab.Title;
                 if (old == title) return $"session {tab.Id} 의 이름이 이미 '{title}' 입니다.";
                 tab.Title = title;
-                if (tab.IsSelected) UpdateActiveContext();   // Claude 에게 알려 주는 현재 탭 정보도 새 이름으로 (UI 와 같음)
+                if (tab.IsSelected || tab.IsBeside) UpdateActiveContext();   // Claude 에게 알려 주는 현재 탭 정보도 새 이름으로 (UI 와 같음, 나란히 보이는 쪽 포함)
                 AuditLog.Write("rename_session", new[] { $"session {tab.Id}" },
                     $"(탭 이름 바꾸기: {McpHelpers.VisibleControlChars(old)} → {title})", "실행");
                 return $"session {tab.Id} 의 이름을 '{title}' 로 바꿨습니다.";
@@ -150,10 +150,11 @@ public partial class MainWindow
                 try
                 {
                     if (!_tabs.Contains(tab)) throw new McpToolException($"session {tab.Id} 은 기다리는 사이 닫혔습니다.");
-                    ssh.ToggleSftp(want);
-                    // 패널을 닫으면 ToggleSftp 가 그 탭 터미널에 포커스를 준다 — 보이지 않는 탭이면 사용자가 Claude 패널 등에 치던 글자가
-                    // 숨은 원격 터미널로 가므로 포커스를 되돌린다 (보이는 탭이면 UI 버튼과 같음)
-                    if (!want && !tab.IsSelected)
+                    // 고른 탭이 아니면 터미널로 포커스를 옮기지 않는다 — 나란히 보이는 쪽이면 포커스를 따라 고른 탭(사용자가 입력하던 쪽)이 바뀐다
+                    ssh.ToggleSftp(want, focusTerminal: tab.IsSelected);
+                    // 고른 탭이 아닌데 포커스가 그 탭 안에 남아 있으면(닫힌 SFTP 패널 등) 사용자가 치던 글자가
+                    // 숨은(또는 나란히 보이는 다른 쪽) 원격 터미널로 가지 않게 포커스를 되돌린다 (고른 탭이면 UI 버튼과 같음)
+                    if (!want && !tab.IsSelected && tab.View.IsKeyboardFocusWithin)
                         await Dispatcher.InvokeAsync(() =>
                         {
                             if (ClaudeColumn.Width.Value > 0) _claudeView?.FocusSession();
