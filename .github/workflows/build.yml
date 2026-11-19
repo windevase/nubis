@@ -78,13 +78,24 @@ jobs:
           (@($body) + $lines) -join "`n" | Set-Content -Encoding utf8 notes.md
           gh release edit $env:GITHUB_REF_NAME --notes-file notes.md
 
-      - name: 이전 릴리스 정리 (v* 태그 — 최신만 유지, 태그는 남김)
+      - name: 이전 릴리스 정리 (v* 태그 — 설명은 남기고 다운로드 파일만 최신 릴리스에)
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 방금 만든 릴리스를 뺀 나머지 릴리스 삭제. --cleanup-tag 를 쓰지 않아 git 태그(버전 기록)는 그대로
-          gh release list --limit 100 --json tagName --jq '.[].tagName' |
-            Where-Object { $_ -and $_ -ne $env:GITHUB_REF_NAME } |
-            ForEach-Object { gh release delete $_ --yes; "삭제: $_" }
+          # 이전 릴리스는 지우지 않는다 — 릴리스 설명이 이 저장소의 변경 기록이다. 첨부 파일(zip · SHA256SUMS)만 지워
+          # 예전 버전을 받아 쓰지 않게 하고, 설명 맨 위에 최신 릴리스 안내를 한 번 넣는다 (체크섬 · VirusTotal 링크는 해시 주소라 그대로 열린다)
+          $note = '> ⬇️ Downloads are on the [latest release](https://github.com/${{ github.repository }}/releases/latest). · 다운로드 파일은 [최신 릴리스](https://github.com/${{ github.repository }}/releases/latest)에 있습니다.'
+          $tags = gh release list --limit 100 --json tagName --jq '.[].tagName' | Where-Object { $_ -and $_ -ne $env:GITHUB_REF_NAME }
+          foreach ($t in $tags) {
+            foreach ($a in (gh release view $t --json assets --jq '.assets[].name')) {
+              if ($a) { gh release delete-asset $t $a --yes; "첨부 삭제: $t / $a" }
+            }
+            $body = (gh release view $t --json body --jq .body) -join "`n"
+            if ($body -notmatch 'releases/latest\)') {
+              ($note + "`n`n" + $body) | Set-Content -Encoding utf8 old-notes.md
+              gh release edit $t --notes-file old-notes.md
+              "안내 추가: $t"
+            }
+          }
