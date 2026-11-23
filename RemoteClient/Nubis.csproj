@@ -52,5 +52,14 @@
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
+  <!-- 게시(publish) 폴더에서 createdump.exe 를 뺀다. .NET 런타임이 함께 넣는 크래시 덤프 도구(다른 프로세스 메모리를
+       읽어 파일로 저장)인데 Nubis 는 쓰지 않는다 — 예외는 데이터 폴더의 error.log 에 남긴다.
+       샌드박스(VirusTotal CAPE 등)가 이 exe 를 따로 실행해 메모리 덤프 도구 행동으로 표시하므로, 배포 실행 파일을 Nubis.exe 하나로 둔다 -->
+  <Target Name="ExcludeCreateDumpFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'createdump.exe'" />
+    </ItemGroup>
+  </Target>
+
 </Project>
 
