@@ -104,6 +104,17 @@ public class ServerStatsTests
     }
 
     [Fact]
+    public void 한쪽_카운터만_줄어도_그_인터페이스는_통째로_뺀다()
+    {
+        // eth1: 수신만 줄고(재생성) 송신은 늘어 보임 — 송신 차이도 믿을 수 없어 둘 다 뺀다
+        var a = ServerStats.Parse(Output(100, 1, 1, 1, 0, 1_000, 1_000, extraNet: "  eth1: 10000 1 0 0 0 0 0 0 100 1 0 0 0 0 0 0\n"))!;
+        var b = ServerStats.Parse(Output(102, 2, 2, 2, 0, 3_000, 2_000, extraNet: "  eth1: 10 1 0 0 0 0 0 0 2100 1 0 0 0 0 0 0\n"))!;
+        var s = ServerStats.Compute(a, b, 2);
+        Assert.Equal(1_000, s.RxPerSec!.Value, 3);
+        Assert.Equal(500, s.TxPerSec!.Value, 3);
+    }
+
+    [Fact]
     public void 새로_생긴_인터페이스와_컨테이너_가상_인터페이스는_세지_않는다()
     {
         var a = ServerStats.Parse(Output(100, 1, 1, 1, 0, 1_000, 1_000))!;

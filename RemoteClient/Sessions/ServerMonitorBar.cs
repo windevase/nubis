@@ -177,6 +177,7 @@ public sealed class ServerMonitorBar : Border
             _cpu.Text = cpu.ToString(cpu >= 10 ? "0" : "0.0", inv) + "%";
             _cpuHist.Add(cpu);
         }
+        else _cpu.Text = "—";   // 재부팅 직후 등 — 앞 숫자를 지금 값처럼 남기지 않는다
         if (s.MemTotal is { } total && s.MemUsed is { } used)
         {
             var pct = used * 100.0 / total;
@@ -191,6 +192,7 @@ public sealed class ServerMonitorBar : Border
             _rxHist.Add(rx);
             _txHist.Add(tx);
         }
+        else _rx.Text = _tx.Text = "—";
         Draw(_cpuLine, _cpuHist, 100);
         Draw(_memLine, _memHist, 100);
         // 네트워크는 두 선을 같은 눈금으로 (최소 1 KB/s — 거의 쉬는 서버에서 잡음이 꽉 찬 그래프로 보이지 않게)

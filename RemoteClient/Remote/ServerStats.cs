@@ -184,9 +184,11 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
         foreach (var (name, c) in cur.Net)
         {
             if (excluded(name) || !prev.Net.TryGetValue(name, out var p)) continue;
+            // 한쪽 카운터라도 줄었으면(인터페이스 재생성 · 랩어라운드) 이번 간격에서 그 인터페이스를 통째로 뺀다
+            if (c.Rx < p.Rx || c.Tx < p.Tx) continue;
             any = true;
-            if (c.Rx >= p.Rx) sumRx += c.Rx - p.Rx;
-            if (c.Tx >= p.Tx) sumTx += c.Tx - p.Tx;
+            sumRx += c.Rx - p.Rx;
+            sumTx += c.Tx - p.Tx;
         }
         return any ? (sumRx, sumTx, true) : null;
     }
