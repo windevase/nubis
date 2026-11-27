@@ -196,8 +196,8 @@ public class ServerOsKindTests
         Assert.False(h.HasOsLogo);
         var changed = new List<string?>();
         h.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        // 값을 바꾸는 쪽이 따로 알리지 않아도 로고가 바뀐다 (편집기 · MCP · 동기화 · 접속 판별 모두)
         h.OsDistro = "rocky rhel centos fedora";
-        h.NotifyOsChanged();
         Assert.Equal(ServerOsKind.Rocky, h.OsKind);
         Assert.True(h.HasOsLogo);
         Assert.Contains(nameof(HostEntry.OsKind), changed);
@@ -224,6 +224,64 @@ public class ServerOsKindTests
         Assert.Equal("ubuntu debian", hosts.Single().OsDistro);
         Assert.Equal(ServerOsKind.Ubuntu, hosts.Single().OsKind);
     }
+
+    [Theory]
+    [InlineData(nameof(HostEntry.Os), "Windows Server 2022")]
+    [InlineData(nameof(HostEntry.SshBannerOs), SshServerOs.Windows)]
+    [InlineData(nameof(HostEntry.OsDistro), "ubuntu debian")]
+    public void OS_값을_바꾸거나_지우면_로고_변경을_알린다(string property, string value)
+    {
+        var h = new HostEntry { Address = "10.0.0.5" };
+        var changed = new List<string?>();
+        h.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        var prop = typeof(HostEntry).GetProperty(property)!;
+        prop.SetValue(h, value);
+        Assert.True(h.HasOsLogo);
+        Assert.Contains(nameof(HostEntry.OsKind), changed);
+        Assert.Contains(nameof(HostEntry.HasOsLogo), changed);
+        // 같은 값이면 알리지 않는다
+        changed.Clear();
+        prop.SetValue(h, value);
+        Assert.Empty(changed);
+        // 주소를 바꿔 지우면(편집기 · update_host) 화면의 옛 로고도 사라져야 한다
+        prop.SetValue(h, null);
+        Assert.False(h.HasOsLogo);
+        Assert.Contains(nameof(HostEntry.HasOsLogo), changed);
+    }
+
+    [Fact]
+    public void 클라우드에서_OS_가_다른_종류로_바뀌면_배포판을_지운다()
+    {
+        var p = new CloudProfile { Provider = CloudProvider.Tencent, Name = "os", DisplayName = "OS" };
+        var hosts = new List<HostEntry>();
+        CloudSync.Apply(p, new() { new("ins-1", "web", "", "RUNNING", "ap-seoul-1", "10.0.0.1", "", false, "CentOS 7.9 64位") }, hosts);
+        var h = hosts.Single();
+        h.OsDistro = "centos rhel fedora";
+        // 같은 종류 안의 글 변화(버전)는 유지
+        CloudSync.Apply(p, new() { new("ins-1", "web", "", "RUNNING", "ap-seoul-1", "10.0.0.1", "", false, "CentOS 7.6 64位") }, hosts);
+        Assert.Equal("centos rhel fedora", h.OsDistro);
+        // 시스템 재설치로 Ubuntu 가 됨 — 옛 CentOS 배포판을 지우고 클라우드 값으로 (다음 접속 때 다시 읽음)
+        CloudSync.Apply(p, new() { new("ins-1", "web", "", "RUNNING", "ap-seoul-1", "10.0.0.1", "", false, "Ubuntu Server 22.04 LTS 64位") }, hosts);
+        Assert.Null(h.OsDistro);
+        Assert.Equal(ServerOsKind.Ubuntu, h.OsKind);
+        // 처음 받는 OS 글 · 빈 글로는 지우지 않는다
+        Assert.False(ServerOsKind.CloudOsReplaced(null, "Linux/UNIX"));
+        Assert.False(ServerOsKind.CloudOsReplaced("Linux/UNIX", ""));
+        Assert.False(ServerOsKind.CloudOsReplaced("Linux/UNIX", "Linux/UNIX"));
+    }
+
+    [Theory]
+    [InlineData("SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.6", true)]
+    [InlineData("SSH-2.0-OpenSSH_8.7", true)]
+    [InlineData("SSH-2.0-dropbear_2022.83", true)]
+    [InlineData("SSH-2.0-OpenSSH_for_Windows_9.5", false)]   // Windows — os-release 없음
+    [InlineData("SSH-2.0-Cisco-1.25", false)]                // 네트워크 장비에는 두 번째 채널을 열지 않는다
+    [InlineData("SSH-2.0-HUAWEI-1.5", false)]
+    [InlineData("SSH-2.0-RebexSSH_5.0.8372.0", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void 배포판은_OpenSSH_Dropbear_Unix_서버에서만_읽는다(string? banner, bool probe) =>
+        Assert.Equal(probe, SshServerOs.ShouldProbe(banner));
 
     [Fact]
     public void get_host_결과에_배포판과_로고_이름()

@@ -160,6 +160,13 @@ public static class ServerOsKind
         return null;
     }
 
+    /// <summary>
+    /// 클라우드 동기화: 같은 인스턴스의 OS 가 다른 종류로 바뀌었나 (OS 재설치). 앞뒤 글이 모두 있고 판별한 로고 종류가 다를 때만 —
+    /// 처음 받는 OS 글 · 같은 종류 안의 글 변화(버전 등)로는 접속해 알아낸 배포판을 지우지 않는다
+    /// </summary>
+    public static bool CloudOsReplaced(string? oldOs, string? newOs) =>
+        !string.IsNullOrWhiteSpace(oldOs) && !string.IsNullOrWhiteSpace(newOs) && FromCloudOs(oldOs) != FromCloudOs(newOs);
+
     private static readonly Regex BannerDistroRx = new(@"\b(ubuntu|debian|raspbian|freebsd)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     /// <summary>

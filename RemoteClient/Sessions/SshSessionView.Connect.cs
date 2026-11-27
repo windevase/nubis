@@ -93,6 +93,9 @@ public sealed partial class SshSessionView
 
         AuthPrompter? jumpPrompter = null;
         var authenticated = false;
+        // OS 로고용 배포판을 읽을 연결 · 접속한 주소 (SFTP 패널이 채널을 연 뒤에 읽는다 — 아래)
+        SshClient? connected = null;
+        var connectedAddress = _host.Address;
         try
         {
             _hostKeyAccepted = false;
@@ -171,7 +174,8 @@ public sealed partial class SshSessionView
                     throw new OperationCanceledException();
                 }
                 SshServerOs.Report(_host, client);
-                SshServerOs.ProbeDistro(_host, client);   // OS 로고용 배포판 (백그라운드 · SFTP 로 /etc/os-release 만 읽음)
+                connected = client;
+                connectedAddress = _host.Address;
             });
             authenticated = true;
             _skipRemembered = false;
@@ -222,8 +226,9 @@ public sealed partial class SshSessionView
                 // 패널이 이미 보이는 경우: 로그인 전에 열어 "로그인이 끝난 뒤…" 안내에 머문 패널은 지금 열고,
                 // 다시 연결된 경우는 새 연결로 목록을 새로 고친다
                 if (sftpShown && _sftp != null)
-                    _ = !_sftp.IsOpen ? OpenSftpAsync(_sftp) : sftpWasRunAs ? RefreshSftpToHomeAsync(_sftp) : _sftp.RefreshAsync();
+                    _sftpOpening = !_sftp.IsOpen ? OpenSftpAsync(_sftp) : sftpWasRunAs ? RefreshSftpToHomeAsync(_sftp) : _sftp.RefreshAsync();
                 if (IsVisible) _term.FocusTerminal();
+                if (connected != null) _ = ProbeDistroAfterSftpAsync(connected, connectedAddress, gen);
             });
         }
         catch (OperationCanceledException) when (_closed || gen != _gen)

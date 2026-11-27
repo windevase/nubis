@@ -146,7 +146,9 @@ public static class CloudSync
             h.CloudName = inst.Name;
             // 새 호스트: 프로필 기본 Vault 는 접속 때 적용되므로 여기서 따로 넣지 않는다
             if (h.Address != address) h.SshBannerOs = null;   // 주소가 바뀌면 다음 접속 때 다시 판별
-            // OsDistro(접속해 알아낸 배포판)는 동기화가 건드리지 않는다 — 같은 인스턴스라 주소가 바뀌어도 OS 는 같다 (로고에만 쓰는 값)
+            // OsDistro(접속해 알아낸 배포판)는 동기화가 덮어쓰지 않는다 — 같은 인스턴스라 주소가 바뀌어도 OS 는 같다 (로고에만 쓰는 값).
+            // 다만 클라우드가 주는 OS 가 다른 종류로 바뀌었으면(Tencent "시스템 재설치" 등 같은 인스턴스에 OS 를 새로 깜) 지워 다음 접속 때 다시 읽는다
+            if (ServerOsKind.CloudOsReplaced(h.Os, inst.Os)) h.OsDistro = null;
             h.Address = address;
             h.PrivateIp = inst.PrivateIp.Length > 0 ? inst.PrivateIp : null;
             // EIP 를 떼면 공인 IP 는 사라지지만 사용자가 고른 "공인 IP 로 접속" 은 유지 — 다시 붙이면 그대로 공인으로 (공인 IP 가 없는 동안은 EffectiveAddress 가 사설로)

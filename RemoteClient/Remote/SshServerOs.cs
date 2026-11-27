@@ -49,22 +49,30 @@ public static class SshServerOs
     private static readonly ConcurrentDictionary<(Guid, string), byte> Probed = new();
 
     /// <summary>
+    /// 배포판을 읽어 볼 서버인가 — 배너가 OpenSSH · Dropbear 인 Unix 서버만. Windows 와 네트워크 장비(Cisco · HUAWEI 등,
+    /// 두 번째 채널을 견디지 못하거나 SFTP 가 없는 장비)에는 채널을 열지 않는다
+    /// </summary>
+    public static bool ShouldProbe(string? serverVersion) =>
+        Classify(serverVersion) == Unix &&
+        (serverVersion!.Contains("OpenSSH", StringComparison.OrdinalIgnoreCase) || serverVersion.Contains("dropbear", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// 터미널 탭의 SSH 연결에서 /etc/os-release 를 읽어 배포판을 알린다 (백그라운드, 실패하면 조용히 무시).
     /// 명령을 실행하지 않고 같은 연결에 SFTP 채널을 잠깐 열어 파일만 읽는다 — 재인증 없음, 읽기 전용, 크기 상한
-    /// <see cref="ServerOsKind.MaxOsReleaseBytes"/>. Windows 서버 · SFTP 가 막힌 서버(제한 셸 등)는 건너뛰거나 실패로 끝난다.
+    /// <see cref="ServerOsKind.MaxOsReleaseBytes"/>. <see cref="ShouldProbe"/> 가 아닌 서버 · SFTP 가 막힌 서버(제한 셸 등)는 건너뛰거나 실패로 끝난다.
     /// </summary>
-    public static void ProbeDistro(HostEntry host, SshClient client)
+    /// <param name="address">접속한 주소 — 읽는 사이에 호스트 주소가 바뀌었으면 받는 쪽이 버린다</param>
+    public static void ProbeDistro(Guid hostId, string address, SshClient client)
     {
-        if (host.Id == Guid.Empty || !Probed.TryAdd((host.Id, host.Address.ToLowerInvariant()), 0)) return;
-        if (Classify(client.ConnectionInfo?.ServerVersion) == Windows) return;
-        var id = host.Id;
-        var address = host.Address;
+        if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return;
+        if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return;
+        if (!Probed.TryAdd((hostId, address.ToLowerInvariant()), 0)) return;
         _ = Task.Run(() =>
         {
             try
             {
                 if (ReadOsRelease(client) is not { } text) return;
-                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(id, address, distro, true);
+                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(hostId, address, distro, true);
             }
             catch { }
         });
