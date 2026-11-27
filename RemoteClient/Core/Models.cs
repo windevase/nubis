@@ -82,7 +82,8 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// <summary>동기화로 받은 클라우드 이름. 사용자가 Label 을 이 값과 다르게 바꿨으면 동기화가 덮어쓰지 않는다</summary>
     public string? CloudName { get; set; }
     public string? Purpose { get; set; }
-    public string? Os { get; set; }
+    /// <summary>클라우드 동기화 · 가져오기가 준 OS 글. 바뀌면 OS 로고(카드 · 탭)에 바로 알린다</summary>
+    public string? Os { get => _os; set => SetOsField(ref _os, value); }
     /// <summary>
     /// 사용자 태그 (키=값 자유 형식, 예: 용도=웹, env=prod). 클라우드 동기화는 건드리지 않는다.
     /// 키는 대소문자를 구분하지 않는다 (HostTags.Apply 가 같은 키를 하나로 다룸)
@@ -91,7 +92,28 @@ public sealed class HostEntry : INotifyPropertyChanged
     /// <summary>태그를 "키=값, ..." 한 줄로 (목록·검색용). 없으면 빈 문자열</summary>
     [JsonIgnore] public string TagsText => Tags is { Count: > 0 } t ? string.Join(", ", t.Select(kv => $"{kv.Key}={kv.Value}")) : "";
     /// <summary>SSH 접속 때 서버 배너로 판별한 OS ("windows" / "unix", SshServerOs). 주소를 바꾸면 지운다 (다른 서버일 수 있음)</summary>
-    public string? SshBannerOs { get; set; }
+    public string? SshBannerOs { get => _sshBannerOs; set => SetOsField(ref _sshBannerOs, value); }
+    /// <summary>
+    /// SSH 접속 때 알아낸 Linux 배포판 — /etc/os-release 의 ID · ID_LIKE 소문자 낱말 ("rocky rhel centos fedora"),
+    /// 읽지 못한 서버는 배너로 짐작한 한 낱말 ("ubuntu"). OS 로고에만 쓴다. 클라우드 동기화는 덮어쓰지 않고, 주소를 바꾸면 지운다
+    /// </summary>
+    public string? OsDistro { get => _osDistro; set => SetOsField(ref _osDistro, value); }
+    /// <summary>OS 로고 종류 (ServerOsKind: 접속해 알아낸 배포판 → 클라우드·가져오기 OS → 배너 순). 모르면 null = 프로토콜 아이콘</summary>
+    [JsonIgnore] public string? OsKind => ServerOsKind.Resolve(OsDistro, Os, SshBannerOs);
+    [JsonIgnore] public bool HasOsLogo => OsKind != null;
+    private string? _os, _sshBannerOs, _osDistro;
+    /// <summary>
+    /// OS 판별 값(Os · OsDistro · SshBannerOs)이 바뀌면 화면(카드 · 탭 로고)에 알린다 — 값을 바꾸는 모든 경로(편집기 · MCP · 동기화 · 접속 판별)가
+    /// 따로 알리지 않아도 로고가 옛 값으로 남지 않게. 구독자가 없으면(읽기 · 사본) 아무 일도 하지 않는다
+    /// </summary>
+    private void SetOsField(ref string? field, string? value)
+    {
+        if (field == value) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OsKind)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasOsLogo)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ToolTipText)));   // 카드 툴팁의 OS 줄
+    }
 
     // ----- 주소 (사설 / 공인) -----
     /// <summary>사설 IP (클라우드 동기화). Address 는 기본 접속 주소로 보통 사설 IP 와 같다</summary>
@@ -167,8 +189,13 @@ public sealed class HostEntry : INotifyPropertyChanged
         L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
         (Protocol != Protocol.Local && CredentialSourceText(ProfileResolver?.Invoke(CloudProfileId)) is { } src ? L.F("로그인 계정: {0}", src) + "\n" : "") +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
+        (OsTooltipName is { } osName ? $"OS: {osName}\n" : "") +
         (TagsText.Length > 0 ? L.F("태그: {0}", TagsText) + "\n" : "") +
         "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
+
+    /// <summary>툴팁의 OS 줄 — 로고 이름. 클라우드 호스트는 위에 OS 글이 이미 있어 그 글에 이름이 들어 있으면 생략</summary>
+    private string? OsTooltipName =>
+        ServerOsKind.DisplayName(OsKind) is { } n && !(IsCloud && Os?.Contains(n, StringComparison.OrdinalIgnoreCase) == true) ? n : null;
 
     /// <summary>
     /// 접속용 사본: 비어 있는 계정은 프로필 기본 계정으로 채우고, Address 를 실제 접속 주소로 바꾼다.

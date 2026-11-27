@@ -111,6 +111,7 @@ To add many servers at once, use **IMPORT** ([chapter 9](#9-importing-on-premise
 
 - **Double-click a card** to connect. Right-click for: Connect · Connect via public/private IP · Favorite · Edit · Duplicate · Delete.
 - **Favorites and Recent** — favorite hosts and hosts you connected to in the last 30 days also appear in groups at the top of the list (Recent can be turned off in Settings).
+- **OS logo** — cards, tabs and the command palette show the server's OS logo instead of the SSH/RDP icon when Nubis knows it: Ubuntu, Debian, Red Hat, CentOS, Rocky Linux, AlmaLinux, Fedora, Amazon Linux, SUSE, openSUSE, Arch, Alpine, other Linux (Tux) and Windows. It comes from the cloud image or imported OS (for example Active Directory), the SSH banner (Windows), and — when an SSH tab connects — `/etc/os-release` read once over the tab's own connection (an SFTP read of that file only; no command is run and nothing is changed). Servers whose SFTP is blocked, or that are not Linux (FreeBSD, network devices), keep the protocol icon. The result is saved, so the logo shows before you connect next time; changing the host's address clears it. The OS also appears in the card tooltip, and the search box finds hosts by distribution (`ubuntu`, `rocky` …).
 - **Search** — `Ctrl+F` jumps to the search box on the Hosts page (not while a terminal has focus — there `Ctrl+F` goes to the shell). It matches name, private/public IP, user, group, instance ID, region, OS, role and profile name; several words separated by spaces must all match. `vault:name` shows hosts that sign in with that Vault account.
 - **Keyboard selection** — in the search box, move the outline with `↑` `↓` (one row) or `Tab` (one card), press `Enter` to connect, `F2` to edit, and `Esc` to clear the search.
 - **Command palette** — `Ctrl+K` (`Ctrl+Shift+K` in a terminal) finds hosts, open tabs and actions from anywhere ([14](#14-keyboard-shortcuts)).
@@ -350,7 +351,7 @@ You can also ask Claude to find and add them for you ([10.2](#102-what-you-can-a
 | Address | Both the private and public IP are stored. The default connection uses the private IP (switch to public in the profile settings) |
 | Protocol · Port | Windows → RDP, everything else → SSH. The port comes from [Default ports](#1210-default-ports) or a per-profile value |
 | State | Terminated servers are excluded; stopped servers are dimmed. "Exclude stopped servers" in the profile settings only hides them from the list — the host's settings (account, port, …) are kept and used again when the server starts |
-| Re-sync | Name, address and state are updated. Protocol, port, account and public-IP choices you changed are kept |
+| Re-sync | Name, address and state are updated. Protocol, port, account and public-IP choices you changed are kept. The Linux distribution Nubis learned by connecting (OS logo) is never overwritten by a sync |
 | Removed servers | A server is removed only after it is missing from **two complete syncs in a row**. After the first miss, the profile's status line says it will be removed if it is still missing next time. If a removed server was a jump host for other hosts, the status line tells you to pick a new one |
 | Partial failure | If some regions fail to load, **nothing is deleted in that sync** (servers that did load are still added and updated). If regions are only denied by permissions, servers in those regions are kept and the other regions sync normally |
 | Account | See the [7.2 priority](#72-linking-it-to-hosts). Right-click the group to set a default account for the whole profile |
@@ -512,8 +513,8 @@ Claude has 84 tools. Anything you can do by hand in the app, Claude can do too. 
 
 | Tool | Purpose |
 |---|---|
-| `list_groups` · `list_hosts` | Search groups (with whether each is collapsed) and hosts. Each host row shows the Vault account actually used and where it comes from (the host, the profile default or the settings default). `vault` keeps only hosts that sign in with that account; `selected_only` returns only the cards you selected |
-| `get_host` | One host's full settings: address, cloud details, account and its source, jump host, RD Gateway, tags, open tabs and so on (only whether a password or key path is saved, never the values) |
+| `list_groups` · `list_hosts` | Search groups (with whether each is collapsed) and hosts. Each host row shows the Vault account actually used and where it comes from (the host, the profile default or the settings default). `vault` keeps only hosts that sign in with that account; `selected_only` returns only the cards you selected. The OS column carries the Linux distribution learned by connecting, in `[ ]` |
+| `get_host` | One host's full settings: address, cloud details, OS distribution and logo, account and its source, jump host, RD Gateway, tags, open tabs and so on (only whether a password or key path is saved, never the values) |
 | `add_host` · `update_host` · `delete_host` | Add, change (name, tags, address, account and so on) and delete hosts (starring a host needs no approval). A cloud host's protocol can be changed too. `clear_password` · `clear_key_path` remove a password or key path saved on the host — Claude can never set them |
 | `duplicate_host` | Copy a host as a new one, account settings included. Takes the same fields as `update_host` to change the copy, saved with one approval |
 | `bulk_update_hosts` | Change several hosts at once, with the same rules as bulk edit |

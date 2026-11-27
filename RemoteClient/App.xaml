@@ -30,6 +30,9 @@
                 <ResourceDictionary Source="Themes/Tokens.xaml"/>
             </ResourceDictionary.MergedDictionaries>
 
+            <!-- 서버 OS 로고: 로고 종류 문자열(ServerOsKind) → 고정된 벡터 그림 (호스트 카드 · 세션 탭 · 명령 팔레트, Core\BrandIcons.Os.cs) -->
+            <l:OsLogoConverter x:Key="OsLogo"/>
+
             <!-- ===== 키보드 포커스 표시 (Tab 으로 이동할 때만 보임 — 마우스 클릭에는 나타나지 않는다) ===== -->
             <Style x:Key="FocusRing">
                 <Setter Property="Control.Template">

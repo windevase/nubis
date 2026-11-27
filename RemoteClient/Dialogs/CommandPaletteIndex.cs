@@ -23,6 +23,9 @@ internal sealed class PaletteItem
     public string Glyph { get; init; } = "";
     /// <summary>아이콘 색 구분 (SSH · RDP · 그 밖)</summary>
     public Protocol? Protocol { get; init; }
+    /// <summary>서버 OS 로고 종류 (ServerOsKind, 호스트 · 호스트 탭). 있으면 글리프 대신 로고</summary>
+    public string? OsKind { get; init; }
+    public bool HasOsLogo => OsKind != null;
 
     // ----- 검색 필드 (원문. 소문자 변환은 인덱스가 한 번) -----
     /// <summary>주소들 (사설 · 공인 · 입력 주소). 앞쪽 일치를 주소마다 따로 본다</summary>
