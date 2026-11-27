@@ -59,6 +59,8 @@ public partial class MainWindow
         $"{h.Id.ToString()[..8]} | {h.DisplayName} | {GroupLabel(h)} | {h.ProtocolText.ToLowerInvariant()} {h.PrimaryAddress}:{h.Port}" +
         (h.HasPublicIp ? $" (공인 {h.PublicIp}{(h.UsePublicIp ? ", 기본 접속" : "")})" : "") +
         $" | {(h.IsCloud ? h.CloudState ?? "" : "-")} | {h.Purpose ?? ""} | {h.Os ?? ""}" +
+        // 접속해 알아낸 배포판 (있을 때만, OS 칸 뒤 [ ] — os-release ID·ID_LIKE 소문자 낱말)
+        (string.IsNullOrWhiteSpace(h.OsDistro) ? "" : $" [{h.OsDistro}]") +
         // 있을 때만 붙인다 (대부분의 호스트는 줄 길이 그대로)
         (h.Favorite ? " | ★즐겨찾기" : "") +
         (h.JumpHostId != null ? $" | 점프 {JumpName(h.JumpHostId)}" : "") +

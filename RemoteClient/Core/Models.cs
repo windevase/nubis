@@ -92,6 +92,20 @@ public sealed class HostEntry : INotifyPropertyChanged
     [JsonIgnore] public string TagsText => Tags is { Count: > 0 } t ? string.Join(", ", t.Select(kv => $"{kv.Key}={kv.Value}")) : "";
     /// <summary>SSH 접속 때 서버 배너로 판별한 OS ("windows" / "unix", SshServerOs). 주소를 바꾸면 지운다 (다른 서버일 수 있음)</summary>
     public string? SshBannerOs { get; set; }
+    /// <summary>
+    /// SSH 접속 때 알아낸 Linux 배포판 — /etc/os-release 의 ID · ID_LIKE 소문자 낱말 ("rocky rhel centos fedora"),
+    /// 읽지 못한 서버는 배너로 짐작한 한 낱말 ("ubuntu"). OS 로고에만 쓴다. 클라우드 동기화는 덮어쓰지 않고, 주소를 바꾸면 지운다
+    /// </summary>
+    public string? OsDistro { get; set; }
+    /// <summary>OS 로고 종류 (ServerOsKind: 접속해 알아낸 배포판 → 클라우드·가져오기 OS → 배너 순). 모르면 null = 프로토콜 아이콘</summary>
+    [JsonIgnore] public string? OsKind => ServerOsKind.Resolve(OsDistro, Os, SshBannerOs);
+    [JsonIgnore] public bool HasOsLogo => OsKind != null;
+    /// <summary>OS 판별 값(OsDistro · SshBannerOs)이 바뀐 뒤 화면(카드 · 탭 로고)에 알린다</summary>
+    public void NotifyOsChanged()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OsKind)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasOsLogo)));
+    }
 
     // ----- 주소 (사설 / 공인) -----
     /// <summary>사설 IP (클라우드 동기화). Address 는 기본 접속 주소로 보통 사설 IP 와 같다</summary>
@@ -167,8 +181,13 @@ public sealed class HostEntry : INotifyPropertyChanged
         L.F("접속 주소: {0}", UsePublicIp && HasPublicIp ? L.F("{0} (공인)", EffectiveAddress) : EffectiveAddress) + "\n" +
         (Protocol != Protocol.Local && CredentialSourceText(ProfileResolver?.Invoke(CloudProfileId)) is { } src ? L.F("로그인 계정: {0}", src) + "\n" : "") +
         (IsCloud ? $"{CloudRegion}  ·  {CloudState}\n{Os}\n{CloudInstanceId}\n" : "") +
+        (OsTooltipName is { } osName ? $"OS: {osName}\n" : "") +
         (TagsText.Length > 0 ? L.F("태그: {0}", TagsText) + "\n" : "") +
         "\n" + (HasPublicIp ? L.T("더블클릭하여 연결 · 우클릭으로 사설/공인 선택") : L.T("더블클릭하여 연결"));
+
+    /// <summary>툴팁의 OS 줄 — 로고 이름. 클라우드 호스트는 위에 OS 글이 이미 있어 그 글에 이름이 들어 있으면 생략</summary>
+    private string? OsTooltipName =>
+        ServerOsKind.DisplayName(OsKind) is { } n && !(IsCloud && Os?.Contains(n, StringComparison.OrdinalIgnoreCase) == true) ? n : null;
 
     /// <summary>
     /// 접속용 사본: 비어 있는 계정은 프로필 기본 계정으로 채우고, Address 를 실제 접속 주소로 바꾼다.

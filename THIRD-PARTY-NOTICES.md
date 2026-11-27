@@ -126,6 +126,19 @@ OCI(Oracle Cloud) API 도 SDK 없이 공개된 HTTP Signature(rsa-sha256) 규격
 | Microsoft.Extensions.* Abstractions · Options · Primitives, Microsoft.Bcl.AsyncInterfaces, System.Memory.Data, System.Management (SSH.NET · Azure · Google 라이브러리 의존성) | MIT | https://github.com/dotnet/runtime — Copyright (c) .NET Foundation and Contributors |
 | .NET 런타임 · WPF · Windows Forms (자체 포함 배포에 함께 들어감) | MIT | https://github.com/dotnet/runtime, https://github.com/dotnet/wpf, https://github.com/dotnet/winforms — Copyright (c) .NET Foundation and Contributors |
 
+## 서버 OS 로고
+
+호스트 카드 · 세션 탭 · 명령 팔레트의 서버 OS 로고(`RemoteClient/Core/BrandIcons.Os.cs`)는 Simple Icons 16.30.0 의 SVG 경로 데이터를 씁니다.
+
+| 항목 | 라이선스 | 출처 |
+|---|---|---|
+| Simple Icons 경로 데이터 (Ubuntu · Debian · Red Hat · CentOS · Rocky Linux · AlmaLinux · Fedora · SUSE · openSUSE · Arch Linux · Alpine Linux · Linux(Tux)) | CC0-1.0 | https://github.com/simple-icons/simple-icons |
+
+- 각 로고는 해당 상표권자의 상표이며, Nubis 는 서버의 OS 를 알아보는 용도로만 작게 표시합니다 (제휴·보증을 뜻하지 않음).
+- Simple Icons 가 따로 밝힌 로고 라이선스: Debian Open Use Logo — CC-BY-SA-3.0 (Software in the Public Interest, Inc., https://www.debian.org/logos/), Rocky Linux — CC-BY-SA-4.0 (Rocky Enterprise Software Foundation). 그 밖의 로고는 각 상표 사용 지침을 따릅니다 (Fedora · AlmaLinux · Arch Linux · Ubuntu · SUSE · openSUSE).
+- 어두운 테마에서 보이도록 일부 로고 색을 같은 브랜드의 밝은 색으로 바꿨습니다 (모양은 그대로).
+- Windows 로고는 네 사각형을 직접 그렸고, Amazon Linux 는 전용 로고 없이 Tux 를 주황으로 칠해 표시합니다.
+
 ## 시스템 구성요소 (재배포하지 않음)
 
 - Microsoft RDP Client Control (`mstscax.dll`) — Windows 기본 포함 구성요소를 호출만 함

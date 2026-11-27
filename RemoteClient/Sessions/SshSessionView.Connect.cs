@@ -171,6 +171,7 @@ public sealed partial class SshSessionView
                     throw new OperationCanceledException();
                 }
                 SshServerOs.Report(_host, client);
+                SshServerOs.ProbeDistro(_host, client);   // OS 로고용 배포판 (백그라운드 · SFTP 로 /etc/os-release 만 읽음)
             });
             authenticated = true;
             _skipRemembered = false;

@@ -382,6 +382,7 @@ public partial class MainWindow
             h.Address = address;
             if (h.PrivateIp != null) h.PrivateIp = address;
             h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
+            h.OsDistro = null;
         }
         if (changed[FPublicIp] || changed[FUsePublic])
         {

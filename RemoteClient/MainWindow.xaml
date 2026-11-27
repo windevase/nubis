@@ -40,6 +40,8 @@
                     <Grid VerticalAlignment="Center">
                         <TextBlock x:Name="glyph" Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="13"
                                    Foreground="{StaticResource TextTertiary}"/>
+                        <!-- 서버 OS 로고 (알면 글리프 대신). 원본 호스트에서 — 접속 중에 배포판을 알아내면 바로 바뀐다 -->
+                        <Image Width="14" Height="14" Source="{Binding Host.OsKind, Converter={StaticResource OsLogo}}"/>
                         <Ellipse x:Name="dot" Width="7" Height="7" Fill="{StaticResource TextTertiary}" HorizontalAlignment="Right"
                                  VerticalAlignment="Bottom" Margin="0,0,-3,-2" StrokeThickness="1.5"
                                  Stroke="{Binding Background, ElementName=bd}"/>
@@ -67,6 +69,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding HasForwards}" Value="True">
                     <Setter TargetName="fwd" Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Host.HasOsLogo}" Value="True">
+                    <Setter TargetName="glyph" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
                 <Trigger SourceName="bd" Property="IsMouseOver" Value="True">
                     <Setter TargetName="bd" Property="Background" Value="{StaticResource SubtleFillHover}"/>
@@ -110,7 +115,7 @@
         <local:RelativeTimeConverter x:Key="RelTime"/>
 
         <!-- 호스트 카드 (가상화 목록 · 1000장 이상 — 요소 수를 늘리지 말 것, 상시 그림자 금지)
-             요소: card > Grid > [타일 > 글리프] [StackPanel > (DockPanel > 별 · 이름) · 부제] [시간] [동작 버튼 2개] [체크]
+             요소: card > Grid > [타일 > 글리프] [OS 로고 Image (타일 위)] [StackPanel > (DockPanel > 별 · 이름) · 부제] [시간] [동작 버튼 2개] [체크]
              동작 버튼은 평소 Collapsed 라 템플릿이 펼쳐지지 않는다 (마우스가 올라간 카드 1장만). 그림자는 HoverLift 로 그 1장만 -->
         <DataTemplate x:Key="HostCardTemplate">
             <Border x:Name="card" Width="290" Height="68" Margin="0,0,12,12" CornerRadius="{StaticResource RadiusLg}"
@@ -128,9 +133,13 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <Border x:Name="tile" Width="36" Height="36" CornerRadius="{StaticResource RadiusLg}" Background="{StaticResource HostTileSsh}">
-                        <TextBlock Text="{Binding IconGlyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" FontSize="16"
+                        <TextBlock x:Name="tileGlyph" Text="{Binding IconGlyph, Mode=OneTime}" FontFamily="{StaticResource IconFont}" FontSize="16"
                                    Foreground="{Binding IconBrush, Mode=OneTime}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
+                    <!-- 서버 OS 로고 (타일 위에 겹침, 알면 글리프 대신). 고정된 벡터 그림을 모든 카드가 같이 쓴다.
+                         OneWay — 접속해 배포판을 알아내면 목록을 다시 만들지 않고 바뀐다 -->
+                    <Image Width="20" Height="20" Source="{Binding OsKind, Converter={StaticResource OsLogo}}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
                     <StackPanel Grid.Column="1" Margin="12,0,6,0" VerticalAlignment="Center">
                         <DockPanel>
                             <TextBlock DockPanel.Dock="Left" Text="&#xE735;" FontFamily="{StaticResource IconFont}" FontSize="11"
@@ -162,6 +171,9 @@
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding ProtocolText, Mode=OneTime}" Value="RDP">
                     <Setter TargetName="tile" Property="Background" Value="{StaticResource HostTileRdp}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasOsLogo}" Value="True">
+                    <Setter TargetName="tileGlyph" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
                 <Trigger SourceName="card" Property="IsMouseOver" Value="True">
                     <Setter TargetName="card" Property="Background" Value="{StaticResource Layer3HoverBg}"/>
