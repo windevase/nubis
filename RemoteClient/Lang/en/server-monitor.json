@@ -1,0 +1,17 @@
+{
+  "서버 모니터": "Server monitor",
+  "CPU 사용률 (모든 코어 평균)": "CPU usage (average of all cores)",
+  "메모리": "Memory",
+  "사용 중 / 전체 메모리 (캐시·버퍼 제외)": "Used / total memory (excluding cache and buffers)",
+  "네트워크": "Network",
+  "초당 수신 ↓ / 송신 ↑ (실제 NIC 합계 — lo · 컨테이너 · 브리지 · 본딩 · VLAN · VPN 가상 인터페이스 제외)": "Received ↓ / sent ↑ per second (physical NICs — excluding lo and container, bridge, bond, VLAN and VPN virtual interfaces)",
+  "서버 모니터 끄기": "Turn off server monitor",
+  "읽는 중…": "Reading…",
+  "서버 모니터 (CPU · 메모리 · 네트워크)": "Server monitor (CPU · memory · network)",
+  "연결되지 않음": "Not connected",
+  "일시 정지 (탭이 보이지 않음)": "Paused (tab not visible)",
+  "Windows 서버는 아직 지원하지 않습니다 (Linux 만)": "Windows servers are not supported yet (Linux only)",
+  "서버 응답이 너무 커서 무시했습니다": "Ignored an oversized server response",
+  "서버 상태를 읽지 못했습니다: {0}": "Could not read server status: {0}",
+  "이 서버에서 /proc 을 읽지 못했습니다 (Linux 서버만 지원)": "Could not read /proc on this server (Linux servers only)"
+}

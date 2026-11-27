@@ -143,6 +143,7 @@ public sealed partial class SshSessionView
         var panel = new StackPanel();
         panel.Children.Add(sftpButton);
         panel.Children.Add(BuildForwardButton());
+        panel.Children.Add(BuildMonitorButton());
         return new Border
         {
             Width = 36,
