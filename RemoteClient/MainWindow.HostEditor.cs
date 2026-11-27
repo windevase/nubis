@@ -383,6 +383,7 @@ public partial class MainWindow
             if (h.PrivateIp != null) h.PrivateIp = address;
             h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
             h.OsDistro = null;
+            SshServerOs.ForgetProbes(h.Id);   // 주소를 바꿨다가 되돌려도 다음 접속 때 다시 읽게
         }
         if (changed[FPublicIp] || changed[FUsePublic])
         {

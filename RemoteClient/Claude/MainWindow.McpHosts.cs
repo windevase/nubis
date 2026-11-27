@@ -345,7 +345,7 @@ public partial class MainWindow
             h.Favorite = copy.Favorite;
         else
         {
-            if (h.Address != copy.Address) { h.SshBannerOs = null; h.OsDistro = null; }   // 다른 서버일 수 있어 다음 접속 때 다시 판별
+            if (h.Address != copy.Address) { h.SshBannerOs = null; h.OsDistro = null; SshServerOs.ForgetProbes(h.Id); }   // 다른 서버일 수 있어 다음 접속 때 다시 판별
             h.Protocol = copy.Protocol; h.Address = copy.Address; h.Port = copy.Port; h.Label = copy.Label; h.Group = copy.Group;
             h.Username = copy.Username; h.PublicIp = copy.PublicIp; h.UsePublicIp = copy.UsePublicIp; h.VaultId = copy.VaultId;
             // 새 항목은 요청에서 실제로 바뀐 것만 — 승인을 기다리는 동안 사용자가 화면에서 바꾼 즐겨찾기·점프·게이트웨이를 되돌리지 않게
