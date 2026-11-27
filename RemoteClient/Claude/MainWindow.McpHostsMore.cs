@@ -309,6 +309,7 @@ public partial class MainWindow
         {
             if (copy.PrivateIp != null) copy.PrivateIp = copy.Address;
             copy.SshBannerOs = null;
+            copy.OsDistro = null;
             // 원본 서버의 공인 IP 도 새 서버에는 맞지 않는다 — 공인 IP 를 따로 주지 않았으면 지워 바꾼 주소로 접속하게
             if (!Has(a, "public_ip")) { copy.PublicIp = null; copy.UsePublicIp = false; }
             if (src.IsCloud) { copy.Os = null; copy.Purpose = null; }

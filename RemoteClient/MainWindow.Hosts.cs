@@ -201,7 +201,7 @@ public partial class MainWindow
             return VaultStore.Get(h.EffectiveVaultId(profile)) is { } v && VaultNameMatches(v.Name, q[6..], vaultNames);
         return Contains(h.DisplayName, q) || Contains(h.Address, q) || Contains(h.PrivateIp, q) || Contains(h.PublicIp, q) ||
                Contains(h.Username, q) || Contains(h.Group, q) || Contains(h.ProtocolText, q) ||
-               Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.Purpose, q) || Contains(h.TagsText, q) ||
+               Contains(h.CloudInstanceId, q) || Contains(h.CloudRegion, q) || Contains(h.Os, q) || Contains(h.OsDistro, q) || Contains(h.Purpose, q) || Contains(h.TagsText, q) ||
                Contains(profile?.GroupName, q);
     }
 

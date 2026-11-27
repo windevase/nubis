@@ -382,13 +382,20 @@ public partial class MainWindow
             h.Address = address;
             if (h.PrivateIp != null) h.PrivateIp = address;
             h.SshBannerOs = null;   // 다른 서버일 수 있어 다음 접속 때 다시 판별
+            h.OsDistro = null;
+            SshServerOs.ForgetProbes(h.Id);   // 주소를 바꿨다가 되돌려도 다음 접속 때 다시 읽게
         }
         if (changed[FPublicIp] || changed[FUsePublic])
         {
             h.PublicIp = publicIp.Length > 0 ? publicIp : null;
             h.UsePublicIp = EdUsePublic.IsChecked == true && h.PublicIp != null;
         }
-        if (changed[FPort]) h.Port = port;
+        if (changed[FPort])
+        {
+            // 같은 주소의 다른 포트는 NAT 뒤 다른 서버일 수 있다 — 배포판은 다음 접속 때 다시 읽는다 (A→B→A 로 되돌려도)
+            if (h.Port != port) { h.OsDistro = null; SshServerOs.ForgetProbes(h.Id); }
+            h.Port = port;
+        }
         if (changed[FLabel]) h.Label = EdLabel.Text.Trim();
         if (changed[FGroup]) h.Group = EdGroup.Text.Trim();
         if (changed[FTags]) h.Tags = tags;

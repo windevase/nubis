@@ -143,6 +143,7 @@ public sealed partial class SshSessionView
         var panel = new StackPanel();
         panel.Children.Add(sftpButton);
         panel.Children.Add(BuildForwardButton());
+        panel.Children.Add(BuildMonitorButton());
         return new Border
         {
             Width = 36,
@@ -151,6 +152,28 @@ public sealed partial class SshSessionView
             BorderThickness = new Thickness(0, 0, 1, 0),
             Child = panel,
         };
+    }
+
+    /// <summary>SFTP 패널이 지금 여는(또는 마지막으로 연) 작업 — 배포판 읽기 · 서버 모니터가 패널보다 먼저 채널을 차지하지 않게 기다린다</summary>
+    private Task? _sftpOpening;
+    /// <summary>OS 배포판 읽기 (돌고 있으면) — 그 순간 패널이 채널을 못 열면 끝나길 기다렸다 다시 연다 (SftpPanel.TransientChannels)</summary>
+    private Task? _distroProbe;
+
+    /// <summary>같은 연결에서 잠깐 쓰는 채널 — 서버 모니터 명령 · OS 배포판 읽기 (UI 스레드)</summary>
+    private Task?[] TransientChannels() => [_monProbe, _distroProbe];
+
+    /// <summary>
+    /// OS 로고용 배포판 읽기 (SshServerOs.ProbeDistro — 같은 연결에 SFTP 채널을 잠깐 열어 /etc/os-release 만). 패널이 채널을 먼저 연 뒤에 —
+    /// 세션 수 제한(MaxSessions)이 작은 서버에서 잠깐 여는 채널 때문에 패널이 별도 연결(OTP 재입력 · 점프 서버 호스트는 실패)로 밀려나지 않게
+    /// </summary>
+    private async Task ProbeDistroAfterSftpAsync(SshClient client, string address, int gen)
+    {
+        if (_sftpOpening is { } opening)
+        {
+            try { await opening; } catch { }
+        }
+        if (_closed || gen != _gen) return;
+        _distroProbe = SshServerOs.ProbeDistro(_host.Id, address, _host.Port, client);
     }
 
     /// <param name="focusTerminal">닫을 때 터미널에 포커스를 줄지 (Claude 가 고르지 않은 탭의 패널을 닫을 때는 false)</param>
@@ -165,6 +188,7 @@ public sealed partial class SshSessionView
             {
                 _sftp = new SftpPanel(() => _authUser != null ? (_host, _authUser, _authPassword ?? "") : null, TerminalCwdAsync, () => _client);
                 _sftp.CloseRequested += () => ToggleSftp(false);
+                _sftp.TransientChannels = TransientChannels;
                 Grid.SetColumn(_sftp, 1);
                 ((Grid)Content).Children.Add(_sftp);
             }
@@ -172,7 +196,7 @@ public sealed partial class SshSessionView
             _sftpColumn.MinWidth = 260;
             _sftpColumn.Width = new GridLength(_sftpWidth);
             _splitter.Visibility = Visibility.Visible;
-            _ = OpenSftpAsync(_sftp);
+            _sftpOpening = OpenSftpAsync(_sftp);
         }
         else
         {

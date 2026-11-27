@@ -4,8 +4,8 @@ using System.Windows.Media;
 
 namespace Nubis;
 
-/// <summary>앱에서 쓰는 벡터 아이콘 (어떤 크기·DPI 에서도 선명)</summary>
-public static class BrandIcons
+/// <summary>앱에서 쓰는 벡터 아이콘 (어떤 크기·DPI 에서도 선명). 서버 OS 로고는 BrandIcons.Os.cs</summary>
+public static partial class BrandIcons
 {
     /// <summary>
     /// Claude 마크 — 방사형으로 뻗은 주황 광선. Claude Code 패널/버튼에 사용 (Claude 연동 표시).

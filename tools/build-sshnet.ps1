@@ -5,12 +5,15 @@
 #   sudo su - 로 root 가 된 터미널을 SFTP 패널이 root 권한으로 따라가는 데 쓴다.
 # 결과 패키지(third_party\SSH.NET\packages\*.nupkg)는 저장소에 들어 있고 nuget.config 가 그 폴더를 원본으로 쓴다.
 # SSH.NET 을 올릴 때: -Tag 와 -Version 을 바꿔 실행 → 패치가 안 맞으면 고친 뒤 패치 파일을 다시 뽑는다
-#   (git -C <작업 폴더> diff > third_party\SSH.NET\nubis-sftp-exec.patch) → Nubis.csproj 의 버전 변경.
+#   (git -C <작업 폴더> diff --output=<저장소>\third_party\SSH.NET\nubis-sftp-exec.patch -- . ':!version.json')
+#   · --output 은 절대 경로로 — git -C 아래에선 상대 경로가 작업 폴더 기준이 된다. PowerShell 의 > 는 UTF-16 으로 써서 안 된다
+#   · version.json 은 빼야 한다 — 아래에서 스크립트가 버전을 써 넣어 diff 에 섞이고, 태그마다 원래 값이 달라 패치가 안 맞게 된다
+#   → Nubis.csproj 의 버전 변경.
 param(
-    [string]$Tag = '2026.0.0',
-    # 2026.0.0 보다 높아야 한다 — '2026.0.0-nubis' 처럼 쓰면 NuGet 이 2026.0.0 보다 낮은 버전으로 보고
-    # 2026.0.0 에서 고친 취약점(GHSA-mggc-4xg6-vcxf, < 2026.0.0) 경고를 낸다
-    [string]$Version = '2026.0.0.1-nubis'
+    [string]$Tag = '2026.0.1',
+    # 업스트림 태그보다 높아야 한다 — '2026.0.1-nubis' 처럼 쓰면 NuGet 이 2026.0.1 보다 낮은 버전으로 보고
+    # 그 버전에서 고친 취약점(GHSA-fpgr-j7rx-jw2p · GHSA-h4g8-5qcx-7ccw, < 2026.0.1) 경고를 낸다
+    [string]$Version = '2026.0.1.1-nubis'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot

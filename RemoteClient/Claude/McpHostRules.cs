@@ -221,6 +221,9 @@ internal static class McpHostParity
         }
         if (!string.IsNullOrWhiteSpace(h.Os) || !string.IsNullOrWhiteSpace(h.Purpose))
             sb.AppendLine($"OS: {V(h.Os)} · 용도(클라우드 태그): {V(h.Purpose)}");
+        // 접속해 알아낸 배포판 (os-release ID·ID_LIKE 낱말 — 소문자·숫자·._- 만 저장) · 화면의 OS 로고
+        if (!string.IsNullOrWhiteSpace(h.OsDistro)) sb.AppendLine($"Linux 배포판(접속 때 /etc/os-release 또는 SSH 배너로 판별): {V(h.OsDistro)}");
+        if (ServerOsKind.DisplayName(h.OsKind) is { } osLogo) sb.AppendLine($"OS 로고: {osLogo}");
 
         // ----- 계정 (값은 넣지 않음) -----
         var (vid, source) = h.ResolveVault(p);

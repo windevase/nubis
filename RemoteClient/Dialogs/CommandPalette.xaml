@@ -55,6 +55,9 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock x:Name="ic" Text="{Binding Glyph}" FontFamily="{StaticResource IconFont}" FontSize="14"
                            Foreground="{StaticResource SubText}" VerticalAlignment="Center"/>
+                <!-- 서버 OS 로고 (호스트 · 호스트 탭, 알면 글리프 대신) -->
+                <Image Width="16" Height="16" HorizontalAlignment="Left" VerticalAlignment="Center"
+                       Source="{Binding OsKind, Mode=OneTime, Converter={StaticResource OsLogo}}"/>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Title}" FontSize="13" Foreground="{StaticResource TextPrimary}" TextTrimming="CharacterEllipsis"/>
                     <TextBlock x:Name="sub" Text="{Binding Subtitle}" FontSize="12" Foreground="{StaticResource TextTertiary}"
@@ -69,6 +72,9 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Protocol}" Value="Rdp">
                     <Setter TargetName="ic" Property="Foreground" Value="{StaticResource RdpBrush}"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding HasOsLogo, Mode=OneTime}" Value="True">
+                    <Setter TargetName="ic" Property="Visibility" Value="Collapsed"/>
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Subtitle}" Value="">
                     <Setter TargetName="sub" Property="Visibility" Value="Collapsed"/>

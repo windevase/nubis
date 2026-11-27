@@ -6,12 +6,12 @@ using System.Threading.Tasks;
 namespace Nubis;
 
 /// <summary>
-/// Claude 패널 MCP 도구 — 터미널: read_terminal, get_terminal_info, get_selection, send_to_terminal, wait_for_output 등록.
+/// Claude 패널 MCP 도구 — 터미널: read_terminal, get_terminal_info, get_server_stats, get_selection, send_to_terminal, wait_for_output 등록.
 /// (등록 순서는 BuildTools / ExtraTools 에서 정한다. wait_for_output 구현은 MainWindow.McpDiagnostics.cs)
 /// </summary>
 public partial class MainWindow
 {
-    /// <summary>터미널 읽기 도구 (read_terminal, get_terminal_info, get_selection) — BuildTools 에서 open_session 다음에 yield</summary>
+    /// <summary>터미널 읽기 도구 (read_terminal, get_terminal_info, get_server_stats, get_selection) — BuildTools 에서 open_session 다음에 yield</summary>
     private IEnumerable<McpTool> TerminalReadTools()
     {
         yield return new McpTool("read_terminal",
@@ -43,6 +43,21 @@ public partial class MainWindow
                            ?? throw new McpToolException($"'{tab.Title}' 은 RDP 세션이라 터미널 정보가 없습니다. capture_screen 으로 화면을 보세요.");
                 AuditLog.Write("get_terminal_info", new[] { $"session {tab.Id}: {tab.Title}" }, "(터미널 상태 조회)", "조회");
                 return $"[session {tab.Id}: {tab.Title}]\n{info}";
+            }));
+
+        yield return new McpTool("get_server_stats",
+            "SSH 탭의 서버 모니터가 읽어 둔 현재 CPU % · 메모리 사용/전체 · 네트워크 수신/송신 속도를 돌려준다 (Linux 서버). " +
+            "이 도구는 서버에 명령을 보내지 않고, 사용자가 그 탭에서 켠 서버 모니터의 마지막 값(몇 초 전 측정)만 읽는다 — 꺼져 있으면 값이 없다고 답한다. " +
+            "기록은 없으므로 추이·과거 값은 알 수 없다. session_id 생략 시 사용자가 보고 있는 탭.",
+            Schema(new { session_id = new { type = "integer" } }),
+            a => OnUi(() =>
+            {
+                var tab = FindSession(a) ?? throw new McpToolException("세션을 찾을 수 없습니다. list_sessions 로 확인하세요.");
+                if (tab.View is not SshSessionView v)
+                    throw new McpToolException($"'{tab.Title}' 은 SSH 세션이 아니라 서버 모니터가 없습니다.");
+                var text = v.GetServerStatsText();
+                AuditLog.Write("get_server_stats", new[] { $"session {tab.Id}: {tab.Title}" }, "(서버 모니터 값 조회 — 명령 실행 없음)", "조회");
+                return $"[session {tab.Id}: {tab.Title}]\n{text}";
             }));
 
         yield return new McpTool("get_selection",

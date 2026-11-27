@@ -35,7 +35,7 @@ public partial class MainWindow
             }));
 
         yield return new McpTool("list_hosts",
-            "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS, 그 뒤에 해당할 때만 " +
+            "호스트 검색. 결과 형식: id | 이름 | 그룹 | 프로토콜 사설주소:포트 (공인 IP) | 상태 | 용도 | OS [접속해 알아낸 Linux 배포판 낱말, 있을 때만], 그 뒤에 해당할 때만 " +
             "| ★즐겨찾기 | 점프 <점프 서버 이름 (주소)> | 게이트웨이 <RD 게이트웨이> | 태그 키=값, ... | 계정 <Vault 이름>(직접/프로필 기본/설정 기본). " +
             "용도 칸은 클라우드 태그에서 온 값이고, 사용자가 붙인 태그는 '태그' 칸. '계정' 칸은 접속할 때 실제로 쓰이는 Vault 계정과 그 출처. 비밀번호는 포함하지 않는다. " +
             "selected_only=true 면 사용자가 화면에서 고른 카드만 (첫 줄에 선택 개수). 한 호스트의 자세한 설정은 get_host.",
@@ -70,7 +70,7 @@ public partial class MainWindow
                     list = list.Where(users.Contains);
                 }
                 if (q.Length > 0)
-                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.Username, h.TagsText }
+                    list = list.Where(h => new[] { h.DisplayName, h.Address, h.PrivateIp, h.PublicIp, h.CloudInstanceId, h.CloudRegion, h.Purpose, h.Os, h.OsDistro, h.Username, h.TagsText }
                         .Any(s => s?.Contains(q, StringComparison.OrdinalIgnoreCase) == true));
                 if (group.Length > 0)
                     list = list.Where(h => GroupLabel(h).Contains(group, StringComparison.OrdinalIgnoreCase));

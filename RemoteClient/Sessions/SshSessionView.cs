@@ -51,7 +51,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     // 로그인에 성공한 계정 (SFTP 패널이 같은 계정으로 연결)
     private string? _authUser, _authPassword;
 
-    // 레이아웃: [도구 막대] [SFTP 패널] [분할선] [터미널]
+    // 레이아웃: [도구 막대] [SFTP 패널] [분할선] [모니터 띠 + 터미널]
     private readonly ColumnDefinition _sftpColumn = new() { Width = new GridLength(0) };
     private readonly GridSplitter _splitter;
     private SftpPanel? _sftp;
@@ -92,10 +92,11 @@ public sealed partial class SshSessionView : UserControl, ISessionView
             Visibility = Visibility.Collapsed,
         };
         Grid.SetColumn(_splitter, 2);
-        Grid.SetColumn(_term, 3);
+        var termArea = BuildTerminalArea();   // [서버 모니터 띠] 위 [터미널] (SshSessionView.Monitor.cs)
+        Grid.SetColumn(termArea, 3);
         grid.Children.Add(strip);
         grid.Children.Add(_splitter);
-        grid.Children.Add(_term);
+        grid.Children.Add(termArea);
         Content = grid;
         // 나란히 보기 등으로 탭이 좁아지면 SFTP 패널이 터미널을 다 가리지 않게 절반까지만 (MainWindow.SplitView.cs)
         SizeChanged += (_, e) => _sftpColumn.MaxWidth = SplitLayout.SidePanelMaxWidth(e.NewSize.Width, 260);
@@ -288,6 +289,7 @@ public sealed partial class SshSessionView : UserControl, ISessionView
     public void CloseSession()
     {
         _closed = true;
+        CloseMonitor();
         // 포워딩은 바로 닫는다 — 아래 SFTP 정리(최대 2분)를 기다리는 동안 이 PC 의 포트가 열려 있지 않게.
         // 이 탭이 쓰려던 포트도 앱 안 포트 현황(LocalPortRegistry)에서 뺀다
         _forwards.Close();

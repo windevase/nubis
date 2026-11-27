@@ -38,7 +38,15 @@ public partial class MainWindow : Window
         {
             var h = _hosts.FirstOrDefault(x => x.Id == id);
             if (h == null || h.SshBannerOs == kind) return;
-            h.SshBannerOs = kind;
+            h.SshBannerOs = kind;   // Windows 로고는 HostEntry 가 화면에 알린다
+            SaveHosts();
+        });
+        // 접속해 알아낸 Linux 배포판 (OS 로고). 판별하는 사이에 주소를 바꿨거나 저장된 배포판을 지웠으면(OS 재설치) 버린다 — 다른 서버 · 옛 OS 의 값일 수 있음
+        SshServerOs.DistroDetected += (id, address, port, distro, fromOsRelease, generation) => Dispatcher.BeginInvoke(() =>
+        {
+            var h = _hosts.FirstOrDefault(x => x.Id == id);
+            if (!SshServerOs.ShouldApplyDistro(h, address, port, distro, fromOsRelease, generation)) return;
+            h!.OsDistro = distro;
             SaveHosts();
         });
         _profiles = CloudStore.Load();
