@@ -169,10 +169,13 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
         double? rx = null, tx = null;
         if (cur.Net.Count > 0 && prev.Net.Count > 0)
         {
-            // 실제 NIC 만 더한다. 남는 것이 없으면(가상 인터페이스뿐인 특이한 구성) lo 만 빼고 모두
-            if (SumNet(prev, cur, IsExcludedInterface) is not { } sum)
-                sum = SumNet(prev, cur, n => n == "lo") ?? default;
-            if (sum.Any) { rx = sum.Rx / dt; tx = sum.Tx / dt; }
+            // 실제 NIC 만 더한다. 실제 NIC 가 하나도 없는 구성(가상 인터페이스뿐)에서만 lo 만 빼고 모두 —
+            // 실제 NIC 의 카운터가 줄었거나 새로 생겨 이번 간격에 못 센 경우에 빼 둔 가상 인터페이스를 다시 더하지 않는다
+            var hasPhysical = false;
+            foreach (var name in cur.Net.Keys)
+                if (!IsExcludedInterface(name)) { hasPhysical = true; break; }
+            var sum = hasPhysical ? SumNet(prev, cur, IsExcludedInterface) : SumNet(prev, cur, n => n == "lo");
+            if (sum is { } s) { rx = s.Rx / dt; tx = s.Tx / dt; }
         }
         return new ServerStats(cpuPct, cur.MemTotal, used, rx, tx);
     }

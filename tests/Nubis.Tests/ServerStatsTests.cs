@@ -176,6 +176,20 @@ public class ServerStatsTests
     }
 
     [Fact]
+    public void 실제_NIC_를_이번에_못_세도_가상_인터페이스로_대신하지_않는다()
+    {
+        // eth0 카운터가 줄었을 때(재생성) 빼 둔 bond0 을 다시 더하면 안 된다 — 이번 간격은 값 없음
+        var a = ServerStats.Parse(Output(100, 1, 1, 1, 0, 10_000, 10_000, extraNet: " bond0: 1000 1 0 0 0 0 0 0 1000 1 0 0 0 0 0 0\n"))!;
+        var b = ServerStats.Parse(Output(102, 2, 2, 2, 0, 10, 10, extraNet: " bond0: 3000 1 0 0 0 0 0 0 3000 1 0 0 0 0 0 0\n"))!;
+        Assert.Null(ServerStats.Compute(a, b, 2).RxPerSec);
+
+        // 실제 NIC 가 새로 생겨 앞 샘플에 없을 때도 같다
+        var c = ServerStats.Parse("==> /proc/net/dev <==\n    lo: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n   br0: 1000 1 0 0 0 0 0 0 1000 1 0 0 0 0 0 0\n")!;
+        var d = ServerStats.Parse("==> /proc/net/dev <==\n    lo: 1 1 0 0 0 0 0 0 1 1 0 0 0 0 0 0\n   br0: 3000 1 0 0 0 0 0 0 3000 1 0 0 0 0 0 0\n  eth0: 500 1 0 0 0 0 0 0 500 1 0 0 0 0 0 0\n")!;
+        Assert.Null(ServerStats.Compute(c, d, 2).RxPerSec);
+    }
+
+    [Fact]
     public void iowait_가_조금_줄어도_재부팅으로_보지_않는다()
     {
         // NO_HZ 커널은 iowait 가 줄어들 수 있다 — uptime 이 늘었으면 CPU·네트워크를 계속 계산한다

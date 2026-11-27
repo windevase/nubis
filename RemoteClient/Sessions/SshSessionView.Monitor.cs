@@ -181,8 +181,9 @@ public sealed partial class SshSessionView
                     _monProbe = probe;
                     var (sample, error) = await probe;
                     if (run != _monRun || ct.IsCancellationRequested || !ReferenceEquals(client, _monClient)) return;
-                    // 명령 중에 연결이 끊겼으면(DisposeSsh 와 경쟁) 오류로 보이지 않고 상태 알림(연결되지 않음)에 맡긴다
-                    if (sample == null && !ReferenceEquals(SharedConnection?.Client, client)) continue;
+                    // 명령 중에 연결이 끊겼거나 다시 연결 중이면(상태는 바뀌었지만 알림이 아직) 성공·실패 모두 버린다 —
+                    // 앞 연결의 값을 지금 값처럼 보이지도, 오류로 보이지도 않고 상태 알림(연결되지 않음)에 맡긴다
+                    if (!ReferenceEquals(SharedConnection?.Client, client)) continue;
                     var now = Stopwatch.GetTimestamp();
                     if (sample != null)
                     {
