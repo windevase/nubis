@@ -137,8 +137,12 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
     /// <summary>
     /// 두 샘플 → 표시 값. 간격은 서버 uptime 차이(명령 왕복 지연과 무관), 없으면 이 PC 에서 잰 경과 시간.
     /// uptime 이 줄었거나(재부팅) CPU 카운터가 줄었으면 CPU·네트워크는 null — 다음 샘플부터 다시 계산한다.
+    /// 간격이 <see cref="MaxSampleGapSeconds"/> 보다 길어도(탭을 숨겼다 · 창을 최소화했다 다시 읽음) null — 최근 값이 아니라 그동안의 평균이 되므로.
     /// 인터페이스 하나의 카운터만 줄었으면(인터페이스 재생성 · 32비트 카운터 랩어라운드) 이번 간격에서 그 인터페이스만 뺀다
     /// </summary>
+    /// <summary>두 샘플 사이가 이보다 길면 차이를 계산하지 않는다 (2초 간격 + 명령 시간 제한 10초보다 넉넉히)</summary>
+    public const double MaxSampleGapSeconds = 30;
+
     public static ServerStats Compute(ServerSample? prev, ServerSample cur, double localElapsedSec)
     {
         long? used = cur.MemTotal is { } t && cur.MemAvailable is { } a ? t - a : null;
@@ -152,7 +156,7 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
             dt = cu - pu;
         }
         else dt = localElapsedSec;
-        if (rebooted || !(dt > 0.2)) return new ServerStats(null, cur.MemTotal, used, null, null);
+        if (rebooted || !(dt > 0.2) || dt > MaxSampleGapSeconds) return new ServerStats(null, cur.MemTotal, used, null, null);
 
         double? cpuPct = null;
         if (prev.Cpu is { } pc && cur.Cpu is { } cc)

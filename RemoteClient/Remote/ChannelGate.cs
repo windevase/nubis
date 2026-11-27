@@ -29,4 +29,19 @@ public static class ChannelGate
         ct.ThrowIfCancellationRequested();
         return true;
     }
+
+    /// <summary>지금 끝나지 않은 작업들 (채널 열기를 시도하기 전에 찍어 둔다)</summary>
+    public static Task[] Pending(IEnumerable<Task?>? tasks) =>
+        tasks == null ? [] : tasks.Where(t => t is { IsCompleted: false }).Select(t => t!).ToArray();
+
+    /// <summary>
+    /// 채널 열기가 실패한 뒤 한 번 더 시도할 것인가 — 시도를 시작할 때 돌던 작업(<paramref name="pendingAtStart"/>, 그사이 끝났어도)이나
+    /// 지금 도는 작업(<paramref name="pendingNow"/>)이 있었으면 그것들이 끝나길(최대 <paramref name="limit"/>) 기다리고 true.
+    /// 실패 직후 작업이 막 끝나 기다릴 것이 없어도 그 채널이 자리를 차지했을 수 있으므로 다시 시도한다. 둘 다 없었으면 false (별도 연결로)
+    /// </summary>
+    public static async Task<bool> WaitBeforeRetryAsync(Task[] pendingAtStart, IEnumerable<Task?>? pendingNow, TimeSpan limit, CancellationToken ct = default)
+    {
+        var waited = await WaitPendingAsync(pendingAtStart.Concat(pendingNow ?? []), limit, ct);
+        return waited || pendingAtStart.Length > 0;
+    }
 }

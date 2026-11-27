@@ -64,6 +64,23 @@ public class ServerStatsTests
     }
 
     [Fact]
+    public void 오래_멈췄다_다시_읽으면_첫_값은_메모리만()
+    {
+        // CodeRabbit (PR #50): 탭을 10분 숨겼다 다시 보이면 첫 CPU·네트워크 값이 최근 2초가 아니라 10분 평균이던 경로
+        var a = ServerStats.Parse(Output(100, 100, 100, 700, 100, 10_000, 5_000))!;
+        var b = ServerStats.Parse(Output(700, 130, 120, 840, 110, 30_000, 9_000))!;   // 서버 uptime 600초 뒤
+        var s = ServerStats.Compute(a, b, localElapsedSec: 600);
+        Assert.Null(s.CpuPercent);
+        Assert.Null(s.RxPerSec);
+        Assert.Equal(1_000_000L * 1024, s.MemUsed);
+        // uptime 이 없는 서버도 이 PC 경과 시간으로 같은 판단
+        var c = ServerStats.Parse(Output(100, 100, 100, 700, 100, 0, 0).Replace("==> /proc/uptime <==\n100 1234.56\n", ""))!;
+        var d = ServerStats.Parse(Output(100, 150, 150, 750, 150, 4_000, 0).Replace("==> /proc/uptime <==\n100 1234.56\n", ""))!;
+        Assert.Null(ServerStats.Compute(c, d, localElapsedSec: 600).CpuPercent);
+        Assert.NotNull(ServerStats.Compute(c, d, localElapsedSec: 12).CpuPercent);   // 느린 명령(시간 제한 10초 + 간격)은 그대로 계산
+    }
+
+    [Fact]
     public void uptime_이_없으면_이_PC_경과_시간()
     {
         var a = ServerStats.Parse(Output(100, 100, 100, 700, 100, 0, 0).Replace("==> /proc/uptime <==\n100 1234.56\n", ""))!;

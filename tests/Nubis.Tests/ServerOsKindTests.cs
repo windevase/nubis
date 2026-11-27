@@ -292,6 +292,32 @@ public class ServerOsKindTests
     }
 
     [Fact]
+    public void 재설치_전에_시작한_판별이_뒤늦게_끝나도_저장하지_않는다()
+    {
+        // CodeRabbit (PR #50): CentOS 를 읽는 중에 클라우드 동기화가 재설치(→ Ubuntu)를 알아채 배포판을 지움 → 옛 CentOS 결과가 새 값을 덮어쓰던 경로
+        var p = new CloudProfile { Provider = CloudProvider.Tencent, Name = "os", DisplayName = "OS" };
+        var h = new HostEntry { CloudProfileId = p.Id, CloudInstanceId = "ins-7", Address = "10.0.0.7", Port = 22, Os = "CentOS 7.9" };
+        var before = SshServerOs.ProbeGeneration(h.Id);   // 재설치 전에 시작한 판별이 기록한 세대
+        Assert.True(SshServerOs.ShouldApplyDistro(h, "10.0.0.7", 22, "centos rhel fedora", true, before));
+
+        CloudSync.Apply(p, new() { new("ins-7", "web", "", "RUNNING", "ap-seoul-1", "10.0.0.7", "", false, "Ubuntu Server 22.04") }, new List<HostEntry> { h });
+        Assert.Null(h.OsDistro);
+        // 같은 주소·포트지만 초기화 전에 시작한 결과는 버린다 (os-release · 배너 짐작 모두)
+        Assert.False(SshServerOs.ShouldApplyDistro(h, "10.0.0.7", 22, "centos rhel fedora", true, before));
+        Assert.False(SshServerOs.ShouldApplyDistro(h, "10.0.0.7", 22, "centos", false, before));
+        // 초기화 뒤에 시작한 판별은 새 세대라 그대로 저장된다
+        var after = SshServerOs.ProbeGeneration(h.Id);
+        Assert.NotEqual(before, after);
+        Assert.True(SshServerOs.ShouldApplyDistro(h, "10.0.0.7", 22, "ubuntu debian", true, after));
+        // 다른 호스트의 세대는 그대로
+        var other = new HostEntry { Address = "10.0.0.8", Port = 22 };
+        Assert.True(SshServerOs.ShouldApplyDistro(other, "10.0.0.8", 22, "ubuntu debian", true, SshServerOs.ProbeGeneration(other.Id)));
+        // 호스트가 없거나 주소가 바뀌었으면 여전히 버린다
+        Assert.False(SshServerOs.ShouldApplyDistro(null, "10.0.0.7", 22, "ubuntu debian", true, after));
+        Assert.False(SshServerOs.ShouldApplyDistro(h, "10.0.0.9", 22, "ubuntu debian", true, after));
+    }
+
+    [Fact]
     public void 읽는_사이에_주소나_포트를_바꿨으면_결과를_버린다()
     {
         var h = new HostEntry { Address = "10.0.0.1", PublicIp = "3.3.3.3", Port = 22 };

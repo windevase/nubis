@@ -29,10 +29,25 @@ public static class SshServerOs
     public static event Action<Guid, string>? Detected;
 
     /// <summary>
-    /// 배포판 판별 알림 (호스트 Id, 접속한 주소, 포트, 배포판 낱말, os-release 에서 읽었는가). 배너 짐작(false)은 저장된 값이 없을 때만 쓴다.
-    /// 받는 쪽은 <see cref="SameEndpoint"/> 로 그사이 주소·포트가 바뀌지 않았는지 본다. 아무 스레드에서나 올 수 있다
+    /// 배포판 판별 알림 (호스트 Id, 접속한 주소, 포트, 배포판 낱말, os-release 에서 읽었는가, 판별을 시작할 때의 <see cref="ProbeGeneration"/>).
+    /// 배너 짐작(false)은 저장된 값이 없을 때만 쓴다. 받는 쪽은 <see cref="ShouldApplyDistro"/> 로 저장할지 정한다. 아무 스레드에서나 올 수 있다
     /// </summary>
-    public static event Action<Guid, string, int, string, bool>? DistroDetected;
+    public static event Action<Guid, string, int, string, bool, int>? DistroDetected;
+
+    // 호스트별 무효화 세대 — ForgetProbes(저장된 배포판을 지움: OS 재설치 · 주소·포트 변경)마다 올린다.
+    // 그 전에 시작한 판별(옛 OS 의 os-release)이 뒤늦게 끝나도 새로 지운 값을 덮어쓰지 않게
+    private static readonly ConcurrentDictionary<Guid, int> Generations = new();
+
+    /// <summary>이 호스트의 지금 무효화 세대 (판별을 시작할 때 기록해 두고 결과를 저장할 때 비교)</summary>
+    public static int ProbeGeneration(Guid hostId) => Generations.TryGetValue(hostId, out var g) ? g : 0;
+
+    /// <summary>
+    /// 판별 결과를 저장된 호스트에 쓸 것인가 — 판별을 시작한 뒤 무효화되지 않았고(<paramref name="generation"/>),
+    /// 저장 규칙(<see cref="ServerOsKind.ShouldStore"/>)에 맞고, 그사이 주소·포트가 바뀌지 않았을 때만(<see cref="SameEndpoint"/>)
+    /// </summary>
+    public static bool ShouldApplyDistro(HostEntry? h, string address, int port, string distro, bool fromOsRelease, int generation) =>
+        h != null && ProbeGeneration(h.Id) == generation &&
+        ServerOsKind.ShouldStore(h.OsDistro, distro, fromOsRelease) && SameEndpoint(h, address, port);
 
     /// <summary>판별한 연결(주소 · 포트)이 지금 호스트 설정의 서버인가 — 읽는 사이에 주소나 포트를 바꿨으면 그 결과는 다른 서버의 것일 수 있다</summary>
     public static bool SameEndpoint(HostEntry h, string address, int port) =>
@@ -45,6 +60,7 @@ public static class SshServerOs
     /// </summary>
     public static void ForgetProbes(Guid hostId)
     {
+        Generations.AddOrUpdate(hostId, 1, (_, g) => g + 1);   // 이미 시작한 판별의 결과는 버려진다
         foreach (var key in Probed.Keys)
             if (key.Item1 == hostId) Probed.TryRemove(key, out _);
     }
@@ -56,7 +72,7 @@ public static class SshServerOs
         {
             var banner = client.ConnectionInfo?.ServerVersion;
             if (Classify(banner) is { } kind) Detected?.Invoke(host.Id, kind);
-            if (ServerOsKind.FromBanner(banner) is { } distro) DistroDetected?.Invoke(host.Id, host.Address, host.Port, distro, false);
+            if (ServerOsKind.FromBanner(banner) is { } distro) DistroDetected?.Invoke(host.Id, host.Address, host.Port, distro, false, ProbeGeneration(host.Id));
         }
         catch { }
     }
@@ -87,13 +103,14 @@ public static class SshServerOs
     {
         if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return null;
         if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return null;
+        var generation = ProbeGeneration(hostId);
         if (!MarkProbed(hostId, address, port)) return null;
         return Task.Run(() =>
         {
             try
             {
                 if (ReadOsRelease(client) is not { } text) return;
-                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(hostId, address, port, distro, true);
+                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(hostId, address, port, distro, true, generation);
             }
             catch { }
         });

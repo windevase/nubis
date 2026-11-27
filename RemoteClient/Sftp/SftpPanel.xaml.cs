@@ -201,6 +201,8 @@ public partial class SftpPanel : UserControl
         var shell = _getShell?.Invoke();
         for (var attempt = 0; attempt < 2; attempt++)
         {
+            // 시도를 시작할 때 돌던 잠깐 쓰는 채널 — 실패 직후 그것이 끝나 버려도(채널이 막 비었음) 한 번 더 열어 본다
+            var busyAtStart = ChannelGate.Pending(TransientChannels?.Invoke());
             try
             {
                 if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
@@ -216,8 +218,8 @@ public partial class SftpPanel : UserControl
                 // 서버의 세션 수 제한(MaxSessions) 등. 같은 연결에서 잠깐 쓰는 채널(서버 모니터 · OS 읽기)이 그 순간 자리를 차지했으면
                 // 끝나길 기다렸다 한 번 더 — 그래도 안 되면 별도 연결로 넘어간다 (채널 열기만 다시 하고 인증은 다시 하지 않는다)
                 Debug.WriteLine($"SFTP 채널을 터미널 연결에서 열지 못함: {ex.Message}");
-                if (attempt > 0 || shell is not { IsConnected: true } || TransientChannels?.Invoke() is not { } busy ||
-                    !await ChannelGate.WaitPendingAsync(busy, ChannelGate.TransientWait)) break;
+                if (attempt > 0 || shell is not { IsConnected: true } ||
+                    !await ChannelGate.WaitBeforeRetryAsync(busyAtStart, TransientChannels?.Invoke(), ChannelGate.TransientWait)) break;
                 if (_closed) throw new OperationCanceledException();   // 기다리는 동안 패널(탭)이 닫힘 — 별도 연결로 넘어가지 않는다
             }
         }

@@ -133,6 +133,8 @@ public sealed partial class SshSessionView
     {
         _monRun++;
         _monLoopActive = false;
+        // 다시 보일 때 첫 CPU·네트워크 값이 숨어 있던 동안의 평균이 되지 않게 차이 기준을 비운다 (재개 첫 샘플은 메모리만)
+        _monPrev = null;
         var cts = _monCts;
         _monCts = null;
         try { cts?.Cancel(); } catch { }
@@ -146,9 +148,10 @@ public sealed partial class SshSessionView
             while (run == _monRun && !ct.IsCancellationRequested)
             {
                 var delay = MonitorInterval;
-                // 창을 최소화하면 보이지 않지만 IsVisible 은 그대로다 — 읽지 않고 기다린다
+                // 창을 최소화하면 보이지 않지만 IsVisible 은 그대로다 — 읽지 않고 기다린다 (차이 기준도 비운다: 복원 뒤 첫 값이 최소화 동안의 평균이 되지 않게)
                 // 연결 직후엔 로그인 계정 대입이 상태 알림보다 조금 늦을 수 있어 SharedConnection 이 잠깐 비어 있다 — 그때는 기다린다
-                if (Window.GetWindow(this) is not { WindowState: WindowState.Minimized } && SharedConnection is { } conn)
+                if (Window.GetWindow(this) is { WindowState: WindowState.Minimized }) _monPrev = null;
+                else if (SharedConnection is { } conn)
                 {
                     var client = conn.Client;
                     if (!ReferenceEquals(client, _monClient))
@@ -168,10 +171,11 @@ public sealed partial class SshSessionView
                     // SFTP 패널이 채널을 여는 중이면(접속 · 다시 연결 직후, 패널을 막 연 때) 패널이 먼저 열게 기다린다 —
                     // 세션 수 제한(MaxSessions)이 작은 서버에서 이 명령 채널 때문에 패널이 별도 연결(OTP 재입력)로 밀려나지 않게
                     // 같은 여는 작업은 한 번만(최대 ChannelGate.TransientWait) — OTP 창 · 느린 목록이 모니터를 오래 막지 않게
+                    // 기다림이 끝난 뒤에만 기록한다 — 숨김으로 취소된 대기는 다시 보일 때 다시 기다린다
                     if (_sftpOpening is { IsCompleted: false } opening && !ReferenceEquals(opening, _monWaitedOpening))
                     {
-                        _monWaitedOpening = opening;
                         await ChannelGate.WaitPendingAsync([opening], ChannelGate.TransientWait, ct);
+                        _monWaitedOpening = opening;
                         continue;
                     }
                     // 앞 루프(멈춘 뒤 결과를 버리는 중)의 명령이 아직 돌고 있으면 끝나길 기다린다 — 한 번에 하나만
