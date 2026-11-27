@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Renci.SshNet;
@@ -28,10 +29,25 @@ public static class SshServerOs
     public static event Action<Guid, string>? Detected;
 
     /// <summary>
-    /// 배포판 판별 알림 (호스트 Id, 접속한 주소, 배포판 낱말, os-release 에서 읽었는가). 배너 짐작(false)은 저장된 값이 없을 때만 쓴다.
-    /// 아무 스레드에서나 올 수 있다
+    /// 배포판 판별 알림 (호스트 Id, 접속한 주소, 포트, 배포판 낱말, os-release 에서 읽었는가). 배너 짐작(false)은 저장된 값이 없을 때만 쓴다.
+    /// 받는 쪽은 <see cref="SameEndpoint"/> 로 그사이 주소·포트가 바뀌지 않았는지 본다. 아무 스레드에서나 올 수 있다
     /// </summary>
-    public static event Action<Guid, string, string, bool>? DistroDetected;
+    public static event Action<Guid, string, int, string, bool>? DistroDetected;
+
+    /// <summary>판별한 연결(주소 · 포트)이 지금 호스트 설정의 서버인가 — 읽는 사이에 주소나 포트를 바꿨으면 그 결과는 다른 서버의 것일 수 있다</summary>
+    public static bool SameEndpoint(HostEntry h, string address, int port) =>
+        h.Port == port &&
+        (string.Equals(h.Address, address, StringComparison.OrdinalIgnoreCase) || h.AddressCandidates().Contains(address, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 이 호스트의 "이번 실행에서 읽어 봄" 기록을 지운다 — 저장된 배포판을 지운 경우(클라우드에서 OS 재설치를 알아챔)
+    /// 같은 주소·포트로 다시 접속할 때 os-release 를 다시 읽게
+    /// </summary>
+    public static void ForgetProbes(Guid hostId)
+    {
+        foreach (var key in Probed.Keys)
+            if (key.Item1 == hostId) Probed.TryRemove(key, out _);
+    }
 
     /// <summary>연결된 클라이언트의 배너를 판별해 알린다 (실패해도 조용히 무시). 서버에 아무것도 보내지 않는다</summary>
     public static void Report(HostEntry host, BaseClient client)
@@ -40,7 +56,7 @@ public static class SshServerOs
         {
             var banner = client.ConnectionInfo?.ServerVersion;
             if (Classify(banner) is { } kind) Detected?.Invoke(host.Id, kind);
-            if (ServerOsKind.FromBanner(banner) is { } distro) DistroDetected?.Invoke(host.Id, host.Address, distro, false);
+            if (ServerOsKind.FromBanner(banner) is { } distro) DistroDetected?.Invoke(host.Id, host.Address, host.Port, distro, false);
         }
         catch { }
     }
@@ -48,6 +64,9 @@ public static class SshServerOs
     // 이번 실행에서 배포판을 읽어 본 호스트·주소·포트 — 접속할 때마다 읽지 않는다 (성공·실패 모두 한 번. 주소·포트가 바뀌면 다시
     // (같은 주소의 다른 포트는 NAT 뒤 다른 서버일 수 있음), 다음 실행 때도 다시: OS 업그레이드 반영)
     private static readonly ConcurrentDictionary<(Guid, string, int), byte> Probed = new();
+
+    /// <summary>이번 실행에서 처음 읽는 호스트·주소·포트면 기록하고 true</summary>
+    internal static bool MarkProbed(Guid hostId, string address, int port) => Probed.TryAdd((hostId, address.ToLowerInvariant(), port), 0);
 
     /// <summary>
     /// 배포판을 읽어 볼 서버인가 — 배너가 OpenSSH · Dropbear 인 Unix 서버만. Windows 와 네트워크 장비(Cisco · HUAWEI 등,
@@ -67,13 +86,13 @@ public static class SshServerOs
     {
         if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return;
         if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return;
-        if (!Probed.TryAdd((hostId, address.ToLowerInvariant(), port), 0)) return;
+        if (!MarkProbed(hostId, address, port)) return;
         _ = Task.Run(() =>
         {
             try
             {
                 if (ReadOsRelease(client) is not { } text) return;
-                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(hostId, address, distro, true);
+                if (ServerOsKind.ParseOsRelease(text) is { } distro) DistroDetected?.Invoke(hostId, address, port, distro, true);
             }
             catch { }
         });

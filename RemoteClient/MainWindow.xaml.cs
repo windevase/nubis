@@ -42,11 +42,10 @@ public partial class MainWindow : Window
             SaveHosts();
         });
         // 접속해 알아낸 Linux 배포판 (OS 로고). 판별하는 사이에 주소를 바꿨으면 버린다 — 다른 서버의 값일 수 있음
-        SshServerOs.DistroDetected += (id, address, distro, fromOsRelease) => Dispatcher.BeginInvoke(() =>
+        SshServerOs.DistroDetected += (id, address, port, distro, fromOsRelease) => Dispatcher.BeginInvoke(() =>
         {
             var h = _hosts.FirstOrDefault(x => x.Id == id);
-            if (!ServerOsKind.ShouldStore(h?.OsDistro, distro, fromOsRelease) || h == null ||
-                !h.AddressCandidates().Contains(address, StringComparer.OrdinalIgnoreCase)) return;
+            if (!ServerOsKind.ShouldStore(h?.OsDistro, distro, fromOsRelease) || h == null || !SshServerOs.SameEndpoint(h, address, port)) return;
             h.OsDistro = distro;
             SaveHosts();
         });

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows.Media;
@@ -269,6 +270,35 @@ public class ServerOsKindTests
         Assert.False(ServerOsKind.CloudOsReplaced(null, "Linux/UNIX"));
         Assert.False(ServerOsKind.CloudOsReplaced("Linux/UNIX", ""));
         Assert.False(ServerOsKind.CloudOsReplaced("Linux/UNIX", "Linux/UNIX"));
+    }
+
+    [Fact]
+    public void 재설치로_배포판을_지우면_같은_주소_포트도_다시_읽는다()
+    {
+        var id = Guid.NewGuid();
+        Assert.True(SshServerOs.MarkProbed(id, "10.0.0.1", 22));
+        Assert.False(SshServerOs.MarkProbed(id, "10.0.0.1", 22));
+        Assert.True(SshServerOs.MarkProbed(id, "10.0.0.1", 2222));   // 포트가 다르면 다른 서버일 수 있다
+        var other = Guid.NewGuid();
+        Assert.True(SshServerOs.MarkProbed(other, "10.0.0.1", 22));
+
+        // 클라우드 동기화가 OS 재설치를 알아채 배포판을 지우면 읽은 기록도 지운다 (그 호스트만)
+        var p = new CloudProfile { Provider = CloudProvider.Tencent, Name = "os", DisplayName = "OS" };
+        var hosts = new List<HostEntry> { new() { Id = id, CloudProfileId = p.Id, CloudInstanceId = "ins-9", Address = "10.0.0.1", Os = "CentOS 7.9", OsDistro = "centos rhel fedora" } };
+        CloudSync.Apply(p, new() { new("ins-9", "web", "", "RUNNING", "ap-seoul-1", "10.0.0.1", "", false, "Ubuntu Server 22.04") }, hosts);
+        Assert.Null(hosts[0].OsDistro);
+        Assert.True(SshServerOs.MarkProbed(id, "10.0.0.1", 22));
+        Assert.False(SshServerOs.MarkProbed(other, "10.0.0.1", 22));
+    }
+
+    [Fact]
+    public void 읽는_사이에_주소나_포트를_바꿨으면_결과를_버린다()
+    {
+        var h = new HostEntry { Address = "10.0.0.1", PublicIp = "3.3.3.3", Port = 22 };
+        Assert.True(SshServerOs.SameEndpoint(h, "10.0.0.1", 22));
+        Assert.True(SshServerOs.SameEndpoint(h, "3.3.3.3", 22));     // 공인 IP 로 접속한 결과
+        Assert.False(SshServerOs.SameEndpoint(h, "10.0.0.1", 2222)); // 포트를 바꾼 뒤 도착한 옛 포트의 결과
+        Assert.False(SshServerOs.SameEndpoint(h, "10.0.0.9", 22));   // 주소를 바꾼 뒤
     }
 
     [Theory]
