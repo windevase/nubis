@@ -36,6 +36,13 @@ public sealed partial class SshSessionView
     private ServerStats? _monLast;
     private DateTime _monLastAt;
     private string? _monError;
+    /// <summary>
+    /// 실행 중인 상태 명령 (없으면 null) — 탭을 빠르게 숨겼다 보이거나(탭 전환 · capture_screen · 나란히 보기) 껐다 켜도
+    /// 느린 서버에 exec 채널이 겹겹이 쌓이지 않게 한 번에 하나만 (sshd MaxSessions 를 다 써 SFTP·run_command·포워딩 채널이 막히지 않게)
+    /// </summary>
+    private Task? _monProbe;
+    /// <summary>마지막 상태 명령을 시작한 시각 (Stopwatch) — 다시 시작해도 MonitorInterval 보다 자주 읽지 않게</summary>
+    private long _monProbeAt;
 
     /// <summary>모니터 켜짐 (도구 막대 버튼 · 띠의 닫기)</summary>
     public bool MonitorOn => _monOn;
@@ -84,6 +91,7 @@ public sealed partial class SshSessionView
                 ((Grid)_term.Parent).Children.Add(_monBar);
             }
             _monBar.Reset();
+            _monBar.ShowStatus(L.T("읽는 중…"));   // 껐다 켤 때 앞의 오류·상태 글이 남지 않게
             _monBar.Visibility = Visibility.Visible;
             _monButton!.Foreground = (Brush)Application.Current.Resources["AccentText"];
             _monButton.ToolTip = L.T("서버 모니터 끄기");
@@ -107,6 +115,8 @@ public sealed partial class SshSessionView
         if (want && !_monLoopActive)
         {
             _monLoopActive = true;
+            // 다시 시작(다시 보임 · 다시 연결): 오류가 아니면 "일시 정지 · 연결되지 않음" 글을 지운다
+            if (_monBar != null && _monError == null) _monBar.ShowStatus(_monLast != null ? null : L.T("읽는 중…"));
             var cts = new CancellationTokenSource();
             _monCts = cts;
             _ = MonitorLoopAsync(++_monRun, cts.Token);
@@ -143,6 +153,7 @@ public sealed partial class SshSessionView
                     {
                         _monClient = client;
                         _monPrev = null;
+                        _monLast = null;   // 앞 연결의 값을 새 연결의 값처럼 보고하지 않게 (get_server_stats)
                         _monBar?.Reset();
                     }
                     if (SshServerOs.Classify(client.ConnectionInfo?.ServerVersion) == SshServerOs.Windows)
@@ -152,8 +163,26 @@ public sealed partial class SshSessionView
                         _monBar?.ShowStatus(_monError, error: true);
                         return;
                     }
-                    var (sample, error) = await Task.Run(() => ProbeServer(client), CancellationToken.None);
+                    // 앞 루프(멈춘 뒤 결과를 버리는 중)의 명령이 아직 돌고 있으면 끝나길 기다린다 — 한 번에 하나만
+                    if (_monProbe is { IsCompleted: false } pending)
+                    {
+                        try { await pending.WaitAsync(ct); } catch (OperationCanceledException) { return; }
+                        continue;
+                    }
+                    // 다시 시작해도 간격을 지킨다 (빠른 탭 전환마다 바로 읽지 않게)
+                    var wait = MonitorInterval - Stopwatch.GetElapsedTime(_monProbeAt);
+                    if (_monProbeAt != 0 && wait > TimeSpan.Zero)
+                    {
+                        await Task.Delay(wait, ct);
+                        continue;
+                    }
+                    _monProbeAt = Stopwatch.GetTimestamp();
+                    var probe = Task.Run(() => ProbeServer(client), CancellationToken.None);
+                    _monProbe = probe;
+                    var (sample, error) = await probe;
                     if (run != _monRun || ct.IsCancellationRequested || !ReferenceEquals(client, _monClient)) return;
+                    // 명령 중에 연결이 끊겼으면(DisposeSsh 와 경쟁) 오류로 보이지 않고 상태 알림(연결되지 않음)에 맡긴다
+                    if (sample == null && !ReferenceEquals(SharedConnection?.Client, client)) continue;
                     var now = Stopwatch.GetTimestamp();
                     if (sample != null)
                     {
@@ -234,7 +263,8 @@ public sealed partial class SshSessionView
         if (_monError != null) return head + "\n서버 모니터 오류: " + _monError;
         if (_monLast == null) return head + "\n서버 모니터가 켜져 있지만 아직 값이 없습니다 (2초 뒤 다시 확인).";
         var age = (DateTime.Now - _monLastAt).TotalSeconds;
-        var paused = !_monLoopActive ? " — 모니터 일시 정지 중(탭이 보이지 않거나 연결 끊김)이라 최신 값이 아님" : "";
+        var paused = !_monLoopActive || Window.GetWindow(this) is { WindowState: WindowState.Minimized }
+            ? " — 모니터 일시 정지 중(탭이 보이지 않음 · 창 최소화 · 연결 끊김)이라 최신 값이 아님" : "";
         return head + $"\n{_monLast.Describe()}\n측정: {age:0}초 전{paused}. CPU · 네트워크는 2초 간격 두 샘플의 차이, 메모리는 캐시·버퍼를 뺀 사용량.";
     }
 }

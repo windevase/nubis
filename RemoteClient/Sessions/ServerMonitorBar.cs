@@ -47,7 +47,7 @@ public sealed class ServerMonitorBar : Border
         items.Children.Add(Group("CPU",[_cpu], [_cpuLine], L.T("CPU 사용률 (모든 코어 평균)")));
         items.Children.Add(Group(L.T("메모리"), [_mem], [_memLine], L.T("사용 중 / 전체 메모리 (캐시·버퍼 제외)")));
         items.Children.Add(Group(L.T("네트워크"), [Arrow("↓", (Brush)res["Success"]), _rx, Arrow("↑", (Brush)res["Warning"]), _tx], [_rxLine, _txLine],
-            L.T("초당 수신 ↓ / 송신 ↑ (lo · 컨테이너 가상 인터페이스 제외)")));
+            L.T("초당 수신 ↓ / 송신 ↑ (실제 NIC 합계 — lo · 컨테이너 · 브리지 · 본딩 · VLAN · VPN 가상 인터페이스 제외)")));
 
         // 상태 글 (읽는 중 · 일시 정지) 은 값 뒤에 이어 붙고, 오류는 값 자리를 대신한다 (좁으면 말줄임)
         _status = new TextBlock

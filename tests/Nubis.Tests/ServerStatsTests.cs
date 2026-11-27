@@ -118,7 +118,68 @@ public class ServerStatsTests
         Assert.True(ServerStats.IsExcludedInterface("cali1234"));
         Assert.False(ServerStats.IsExcludedInterface("eth0"));
         Assert.False(ServerStats.IsExcludedInterface("ens5"));
-        Assert.False(ServerStats.IsExcludedInterface("bond0"));
+        Assert.False(ServerStats.IsExcludedInterface("enp0s3"));
+        Assert.False(ServerStats.IsExcludedInterface("venet0"));   // OpenVZ 컨테이너의 유일한 NIC
+    }
+
+    [Theory]
+    [InlineData("bond0")]      // 슬레이브 eth0 + eth1 합과 같다
+    [InlineData("team0")]
+    [InlineData("eth0.100")]   // VLAN — eth0 에 이미 들어 있다
+    [InlineData("vlan100")]
+    [InlineData("br0")]        // 호스트 브리지 — 포트인 eth0 와 이중
+    [InlineData("vmbr0")]      // Proxmox
+    [InlineData("tap101i0")]
+    [InlineData("vnet3")]
+    [InlineData("tun0")]       // VPN — 캡슐화된 트래픽이 eth0 에 또 잡힌다
+    [InlineData("wg0")]
+    [InlineData("tailscale0")]
+    [InlineData("vxlan.calico")]
+    public void 같은_트래픽을_두_번_세는_가상_인터페이스는_뺀다(string name) => Assert.True(ServerStats.IsExcludedInterface(name));
+
+    [Fact]
+    public void 본딩과_VLAN_이_있어도_실제_NIC_만_한_번_센다()
+    {
+        static string Net(ulong e0, ulong e1) =>
+            $"  eth1: {e1} 1 0 0 0 0 0 0 {e1} 1 0 0 0 0 0 0\n" +
+            $" bond0: {e0 + e1} 1 0 0 0 0 0 0 {e0 + e1} 1 0 0 0 0 0 0\n" +
+            $"bond0.10: {e0 + e1} 1 0 0 0 0 0 0 {e0 + e1} 1 0 0 0 0 0 0\n";
+        var a = ServerStats.Parse(Output(100, 1, 1, 1, 0, 1_000, 1_000, extraNet: Net(1_000, 1_000)))!;
+        var b = ServerStats.Parse(Output(102, 2, 2, 2, 0, 5_000, 3_000, extraNet: Net(5_000, 2_000)))!;
+        var s = ServerStats.Compute(a, b, 2);
+        // eth0 rx +4000, eth1 +1000 → 2초에 5000 = 2500/s (bond0 · bond0.10 을 더하면 세 배가 된다)
+        Assert.Equal(2_500, s.RxPerSec!.Value, 3);
+    }
+
+    [Fact]
+    public void 가상_인터페이스뿐이면_lo_만_빼고_더한다()
+    {
+        static string Dev(ulong v) =>
+            "==> /proc/net/dev <==\n" +
+            $"    lo: 99999 1 0 0 0 0 0 0 99999 1 0 0 0 0 0 0\n" +
+            $"   br0: {v} 1 0 0 0 0 0 0 {v} 1 0 0 0 0 0 0\n";
+        var a = ServerStats.Parse(Dev(1_000))!;
+        var b = ServerStats.Parse(Dev(3_000))!;
+        var s = ServerStats.Compute(a, b, 2);
+        Assert.Equal(1_000, s.RxPerSec!.Value, 3);
+    }
+
+    [Fact]
+    public void iowait_가_조금_줄어도_재부팅으로_보지_않는다()
+    {
+        // NO_HZ 커널은 iowait 가 줄어들 수 있다 — uptime 이 늘었으면 CPU·네트워크를 계속 계산한다
+        var a = ServerStats.Parse(Output(100, 1_000, 1_000, 8_000, 500, 1_000, 1_000))!;
+        var b = ServerStats.Parse(Output(102, 1_100, 1_100, 8_150, 400, 3_000, 2_000))!;   // 합계 10500 → 10750, iowait -100
+        var s = ServerStats.Compute(a, b, 2);
+        Assert.NotNull(s.RxPerSec);
+        // busy +200, idle(idle+iowait) +50 → 200 / 250 = 80%
+        Assert.Equal(80, s.CpuPercent!.Value, 3);
+
+        // 합계까지 줄어도 uptime 이 늘었으면 재부팅이 아니다 (CPU 만 그 간격에서 바닥값 0 처리)
+        var c = ServerStats.Parse(Output(104, 1_100, 1_100, 8_150, 100, 5_000, 3_000))!;
+        var s2 = ServerStats.Compute(b, c, 2);
+        Assert.NotNull(s2.RxPerSec);
+        Assert.Null(s2.CpuPercent);
     }
 
     [Fact]

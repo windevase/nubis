@@ -4,7 +4,7 @@
   "메모리": "Memory",
   "사용 중 / 전체 메모리 (캐시·버퍼 제외)": "Used / total memory (excluding cache and buffers)",
   "네트워크": "Network",
-  "초당 수신 ↓ / 송신 ↑ (lo · 컨테이너 가상 인터페이스 제외)": "Received ↓ / sent ↑ per second (excluding lo and container virtual interfaces)",
+  "초당 수신 ↓ / 송신 ↑ (실제 NIC 합계 — lo · 컨테이너 · 브리지 · 본딩 · VLAN · VPN 가상 인터페이스 제외)": "Received ↓ / sent ↑ per second (physical NICs — excluding lo and container, bridge, bond, VLAN and VPN virtual interfaces)",
   "서버 모니터 끄기": "Turn off server monitor",
   "읽는 중…": "Reading…",
   "서버 모니터 (CPU · 메모리 · 네트워크)": "Server monitor (CPU · memory · network)",

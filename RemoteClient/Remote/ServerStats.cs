@@ -4,7 +4,7 @@ using System.Globalization;
 
 namespace Nubis;
 
-/// <summary>/proc/stat 첫 줄(cpu 합계)의 누적 시간 (jiffies). Idle = idle + iowait</summary>
+/// <summary>/proc/stat 첫 줄(cpu 합계)의 누적 시간 (jiffies). Total = 앞 8개 항목 합(guest 제외), Idle = idle + iowait</summary>
 public readonly record struct CpuTimes(ulong Total, ulong Idle);
 
 /// <summary>네트워크 인터페이스 하나의 누적 수신·송신 바이트 (/proc/net/dev)</summary>
@@ -115,21 +115,24 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
     }
 
     /// <summary>
-    /// 합계에서 뺄 인터페이스: 루프백과, 실제 NIC 트래픽을 한 번 더 세는 컨테이너·가상 브리지
-    /// (docker0·br-*·veth* 는 컨테이너 트래픽이 eth0 와 이중으로 잡힌다)
+    /// 합계에서 뺄 인터페이스: 루프백과, 실제 NIC 트래픽을 한 번 더 세는 가상 인터페이스 —
+    /// 컨테이너·가상 브리지(docker0·br-*·br0·vmbr0·veth* — 브리지 포트인 eth0 와 이중), 본딩·팀(bond0 = 슬레이브 eth0+eth1 합),
+    /// VLAN(eth0.100 — eth0 에 이미 들어 있음), 터널·VPN(tun0·wg0 — 캡슐화된 트래픽이 eth0 에 또 잡힘), VM 탭(tap*·vnet*)
     /// </summary>
-    public static bool IsExcludedInterface(string name) =>
-        name == "lo"
-        || name.StartsWith("veth", StringComparison.Ordinal)
-        || name.StartsWith("docker", StringComparison.Ordinal)
-        || name.StartsWith("br-", StringComparison.Ordinal)
-        || name.StartsWith("virbr", StringComparison.Ordinal)
-        || name.StartsWith("cni", StringComparison.Ordinal)
-        || name.StartsWith("cali", StringComparison.Ordinal)
-        || name.StartsWith("flannel", StringComparison.Ordinal)
-        || name.StartsWith("cilium", StringComparison.Ordinal)
-        || name.StartsWith("lxc", StringComparison.Ordinal)
-        || name.StartsWith("kube-", StringComparison.Ordinal);
+    public static bool IsExcludedInterface(string name)
+    {
+        if (name == "lo" || name.Contains('.') || name.Contains('@')) return true;
+        foreach (var p in ExcludedPrefixes)
+            if (name.StartsWith(p, StringComparison.Ordinal)) return true;
+        return false;
+    }
+
+    private static readonly string[] ExcludedPrefixes =
+    [
+        "veth", "docker", "br", "vmbr", "virbr", "fwbr", "fwpr", "fwln", "cni", "cali", "flannel", "cilium", "lxc", "kube-", "vxlan", "geneve",
+        "bond", "team", "vlan", "ovs-", "tun", "tap", "vnet", "wg", "tailscale", "zt", "ppp", "ipsec", "vti", "ip_vti", "ip6", "sit", "gre",
+        "erspan", "tunl", "ipip", "dummy", "ifb", "nlmon",
+    ];
 
     /// <summary>
     /// 두 샘플 → 표시 값. 간격은 서버 uptime 차이(명령 왕복 지연과 무관), 없으면 이 PC 에서 잰 경과 시간.
@@ -152,30 +155,40 @@ public sealed record ServerStats(double? CpuPercent, long? MemTotal, long? MemUs
         if (rebooted || !(dt > 0.2)) return new ServerStats(null, cur.MemTotal, used, null, null);
 
         double? cpuPct = null;
-        if (prev.Cpu is { } pc && cur.Cpu is { } cc && cc.Total >= pc.Total && cc.Idle >= pc.Idle)
+        if (prev.Cpu is { } pc && cur.Cpu is { } cc)
         {
-            var dTotal = cc.Total - pc.Total;
-            var dIdle = cc.Idle - pc.Idle;
-            if (dTotal > 0) cpuPct = Math.Clamp((dTotal - Math.Min(dIdle, dTotal)) * 100.0 / dTotal, 0, 100);
+            // uptime 이 없을 때만 CPU 합계 감소로 재부팅을 판단한다 — iowait 는 커널(NO_HZ)에 따라 조금 줄어들 수 있어
+            // uptime 이 있으면 합계가 조금 줄어도 재부팅이 아니다. 항목별로 줄어든 만큼은 0 으로 본다 (top·htop 과 같음)
+            if (prev.Uptime == null || cur.Uptime == null)
+                if (cc.Total < pc.Total) return new ServerStats(null, cur.MemTotal, used, null, null);
+            var dBusy = Math.Max(0.0, (double)(cc.Total - cc.Idle) - (pc.Total - pc.Idle));
+            var dIdle = Math.Max(0.0, (double)cc.Idle - pc.Idle);
+            if (dBusy + dIdle > 0) cpuPct = Math.Clamp(dBusy * 100.0 / (dBusy + dIdle), 0, 100);
         }
-        else if (prev.Cpu is { } pc2 && cur.Cpu is { } cc2 && cc2.Total < pc2.Total)
-            return new ServerStats(null, cur.MemTotal, used, null, null);   // uptime 이 없을 때의 재부팅 판단
 
         double? rx = null, tx = null;
         if (cur.Net.Count > 0 && prev.Net.Count > 0)
         {
-            ulong sumRx = 0, sumTx = 0;
-            var any = false;
-            foreach (var (name, c) in cur.Net)
-            {
-                if (IsExcludedInterface(name) || !prev.Net.TryGetValue(name, out var p)) continue;
-                any = true;
-                if (c.Rx >= p.Rx) sumRx += c.Rx - p.Rx;
-                if (c.Tx >= p.Tx) sumTx += c.Tx - p.Tx;
-            }
-            if (any) { rx = sumRx / dt; tx = sumTx / dt; }
+            // 실제 NIC 만 더한다. 남는 것이 없으면(가상 인터페이스뿐인 특이한 구성) lo 만 빼고 모두
+            if (SumNet(prev, cur, IsExcludedInterface) is not { } sum)
+                sum = SumNet(prev, cur, n => n == "lo") ?? default;
+            if (sum.Any) { rx = sum.Rx / dt; tx = sum.Tx / dt; }
         }
         return new ServerStats(cpuPct, cur.MemTotal, used, rx, tx);
+    }
+
+    private static (ulong Rx, ulong Tx, bool Any)? SumNet(ServerSample prev, ServerSample cur, Func<string, bool> excluded)
+    {
+        ulong sumRx = 0, sumTx = 0;
+        var any = false;
+        foreach (var (name, c) in cur.Net)
+        {
+            if (excluded(name) || !prev.Net.TryGetValue(name, out var p)) continue;
+            any = true;
+            if (c.Rx >= p.Rx) sumRx += c.Rx - p.Rx;
+            if (c.Tx >= p.Tx) sumTx += c.Tx - p.Tx;
+        }
+        return any ? (sumRx, sumTx, true) : null;
     }
 
     /// <summary>바이트 → "512 B" · "1.2 KB" · "3.4 GB" (1024 단위, 화면 표시용 · 숫자 형식은 고정)</summary>
