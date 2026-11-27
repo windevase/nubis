@@ -167,7 +167,7 @@ public sealed partial class SshSessionView
             try { await opening; } catch { }
         }
         if (_closed || gen != _gen) return;
-        SshServerOs.ProbeDistro(_host.Id, address, client);
+        SshServerOs.ProbeDistro(_host.Id, address, _host.Port, client);
     }
 
     /// <param name="focusTerminal">닫을 때 터미널에 포커스를 줄지 (Claude 가 고르지 않은 탭의 패널을 닫을 때는 false)</param>

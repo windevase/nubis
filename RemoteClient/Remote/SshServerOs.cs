@@ -45,8 +45,9 @@ public static class SshServerOs
         catch { }
     }
 
-    // 이번 실행에서 배포판을 읽어 본 호스트·주소 — 접속할 때마다 읽지 않는다 (성공·실패 모두 한 번. 주소가 바뀌면 다시, 다음 실행 때도 다시: OS 업그레이드 반영)
-    private static readonly ConcurrentDictionary<(Guid, string), byte> Probed = new();
+    // 이번 실행에서 배포판을 읽어 본 호스트·주소·포트 — 접속할 때마다 읽지 않는다 (성공·실패 모두 한 번. 주소·포트가 바뀌면 다시
+    // (같은 주소의 다른 포트는 NAT 뒤 다른 서버일 수 있음), 다음 실행 때도 다시: OS 업그레이드 반영)
+    private static readonly ConcurrentDictionary<(Guid, string, int), byte> Probed = new();
 
     /// <summary>
     /// 배포판을 읽어 볼 서버인가 — 배너가 OpenSSH · Dropbear 인 Unix 서버만. Windows 와 네트워크 장비(Cisco · HUAWEI 등,
@@ -62,11 +63,11 @@ public static class SshServerOs
     /// <see cref="ServerOsKind.MaxOsReleaseBytes"/>. <see cref="ShouldProbe"/> 가 아닌 서버 · SFTP 가 막힌 서버(제한 셸 등)는 건너뛰거나 실패로 끝난다.
     /// </summary>
     /// <param name="address">접속한 주소 — 읽는 사이에 호스트 주소가 바뀌었으면 받는 쪽이 버린다</param>
-    public static void ProbeDistro(Guid hostId, string address, SshClient client)
+    public static void ProbeDistro(Guid hostId, string address, int port, SshClient client)
     {
         if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return;
         if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return;
-        if (!Probed.TryAdd((hostId, address.ToLowerInvariant()), 0)) return;
+        if (!Probed.TryAdd((hostId, address.ToLowerInvariant(), port), 0)) return;
         _ = Task.Run(() =>
         {
             try

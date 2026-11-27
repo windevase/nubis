@@ -239,6 +239,7 @@ public class ServerOsKindTests
         Assert.True(h.HasOsLogo);
         Assert.Contains(nameof(HostEntry.OsKind), changed);
         Assert.Contains(nameof(HostEntry.HasOsLogo), changed);
+        Assert.Contains(nameof(HostEntry.ToolTipText), changed);   // 카드 툴팁의 OS 줄 (OneWay 바인딩)
         // 같은 값이면 알리지 않는다
         changed.Clear();
         prop.SetValue(h, value);

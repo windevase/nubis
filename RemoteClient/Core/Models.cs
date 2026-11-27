@@ -112,6 +112,7 @@ public sealed class HostEntry : INotifyPropertyChanged
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(OsKind)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasOsLogo)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ToolTipText)));   // 카드 툴팁의 OS 줄
     }
 
     // ----- 주소 (사설 / 공인) -----
