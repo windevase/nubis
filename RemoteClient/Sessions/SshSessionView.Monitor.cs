@@ -43,6 +43,8 @@ public sealed partial class SshSessionView
     private Task? _monProbe;
     /// <summary>마지막 상태 명령을 시작한 시각 (Stopwatch) — 다시 시작해도 MonitorInterval 보다 자주 읽지 않게</summary>
     private long _monProbeAt;
+    /// <summary>모니터가 이미 기다려 준 SFTP 패널 여는 작업 (같은 작업을 거듭 기다리지 않게)</summary>
+    private Task? _monWaitedOpening;
 
     /// <summary>모니터 켜짐 (도구 막대 버튼 · 띠의 닫기)</summary>
     public bool MonitorOn => _monOn;
@@ -162,6 +164,15 @@ public sealed partial class SshSessionView
                         _monError = L.T("Windows 서버는 아직 지원하지 않습니다 (Linux 만)");
                         _monBar?.ShowStatus(_monError, error: true);
                         return;
+                    }
+                    // SFTP 패널이 채널을 여는 중이면(접속 · 다시 연결 직후, 패널을 막 연 때) 패널이 먼저 열게 기다린다 —
+                    // 세션 수 제한(MaxSessions)이 작은 서버에서 이 명령 채널 때문에 패널이 별도 연결(OTP 재입력)로 밀려나지 않게
+                    // 같은 여는 작업은 한 번만(최대 ChannelGate.TransientWait) — OTP 창 · 느린 목록이 모니터를 오래 막지 않게
+                    if (_sftpOpening is { IsCompleted: false } opening && !ReferenceEquals(opening, _monWaitedOpening))
+                    {
+                        _monWaitedOpening = opening;
+                        await ChannelGate.WaitPendingAsync([opening], ChannelGate.TransientWait, ct);
+                        continue;
                     }
                     // 앞 루프(멈춘 뒤 결과를 버리는 중)의 명령이 아직 돌고 있으면 끝나길 기다린다 — 한 번에 하나만
                     if (_monProbe is { IsCompleted: false } pending)

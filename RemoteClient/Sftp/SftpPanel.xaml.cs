@@ -94,6 +94,12 @@ public partial class SftpPanel : UserControl
         _getShell = getShell;
     }
 
+    /// <summary>
+    /// 같은 터미널 연결에서 잠깐 쓰는 채널(서버 모니터 명령 · OS 배포판 읽기) — 터미널 연결 위에 채널을 못 열었을 때
+    /// 이것들이 돌고 있었으면 끝나길 기다렸다 한 번 더 연다 (<see cref="ChannelGate"/>)
+    /// </summary>
+    public Func<IEnumerable<Task?>>? TransientChannels { get; set; }
+
     /// <summary>원격 홈 폴더 (연결 전이면 "/")</summary>
     public string Home => _home;
     /// <summary>연결해서 목록을 한 번 이상 열었음 (Home 이 실제 값)</summary>
@@ -192,20 +198,28 @@ public partial class SftpPanel : UserControl
         }
 
         // 1) 터미널 연결 위에 SFTP 채널 — 인증을 다시 하지 않는다 (OTP 서버에서 두 번 묻지 않게)
-        try
+        var shell = _getShell?.Invoke();
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            var shell = _getShell?.Invoke();
-            if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
+            try
             {
-                shared.OperationTimeout = SftpOperationTimeout;
-                _home = shared.WorkingDirectory;
-                return shared;
+                if (await Task.Run(() => SharedSftpClient.TryOpen(shell)) is { } shared)
+                {
+                    shared.OperationTimeout = SftpOperationTimeout;
+                    _home = shared.WorkingDirectory;
+                    return shared;
+                }
+                break;   // 공유할 수 없음 (지원 안 됨 · 끊김)
             }
-        }
-        catch (Exception ex)
-        {
-            // 서버의 세션 수 제한(MaxSessions) 등 — 별도 연결로 넘어간다
-            Debug.WriteLine($"SFTP 채널을 터미널 연결에서 열지 못해 별도 연결로 넘어감: {ex.Message}");
+            catch (Exception ex)
+            {
+                // 서버의 세션 수 제한(MaxSessions) 등. 같은 연결에서 잠깐 쓰는 채널(서버 모니터 · OS 읽기)이 그 순간 자리를 차지했으면
+                // 끝나길 기다렸다 한 번 더 — 그래도 안 되면 별도 연결로 넘어간다 (채널 열기만 다시 하고 인증은 다시 하지 않는다)
+                Debug.WriteLine($"SFTP 채널을 터미널 연결에서 열지 못함: {ex.Message}");
+                if (attempt > 0 || shell is not { IsConnected: true } || TransientChannels?.Invoke() is not { } busy ||
+                    !await ChannelGate.WaitPendingAsync(busy, ChannelGate.TransientWait)) break;
+                if (_closed) throw new OperationCanceledException();   // 기다리는 동안 패널(탭)이 닫힘 — 별도 연결로 넘어가지 않는다
+            }
         }
 
         // 2) 별도 연결 — 서버가 OTP 등을 요구하면 다시 묻는다.

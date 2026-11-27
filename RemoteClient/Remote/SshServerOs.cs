@@ -82,12 +82,13 @@ public static class SshServerOs
     /// <see cref="ServerOsKind.MaxOsReleaseBytes"/>. <see cref="ShouldProbe"/> 가 아닌 서버 · SFTP 가 막힌 서버(제한 셸 등)는 건너뛰거나 실패로 끝난다.
     /// </summary>
     /// <param name="address">접속한 주소 — 읽는 사이에 호스트 주소가 바뀌었으면 받는 쪽이 버린다</param>
-    public static void ProbeDistro(Guid hostId, string address, int port, SshClient client)
+    /// <returns>읽는 작업 (읽지 않으면 null) — 그동안 같은 연결의 SFTP 패널이 채널을 못 열면 이것이 끝나길 기다렸다 다시 연다</returns>
+    public static Task? ProbeDistro(Guid hostId, string address, int port, SshClient client)
     {
-        if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return;
-        if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return;
-        if (!MarkProbed(hostId, address, port)) return;
-        _ = Task.Run(() =>
+        if (hostId == Guid.Empty || string.IsNullOrEmpty(address) || !client.IsConnected) return null;
+        if (!ShouldProbe(client.ConnectionInfo?.ServerVersion)) return null;
+        if (!MarkProbed(hostId, address, port)) return null;
+        return Task.Run(() =>
         {
             try
             {
