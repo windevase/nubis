@@ -150,15 +150,3 @@ index 3185cf5..a42712f 100644
          private void Channel_Exception(object sender, ExceptionEventArgs e)
          {
              RaiseError(e.Exception);
-diff --git a/version.json b/version.json
-index 6a43a40..b193e32 100644
---- a/version.json
-+++ b/version.json
-@@ -1,6 +1,6 @@
- {
-   "$schema": "https://raw.githubusercontent.com/dotnet/Nerdbank.GitVersioning/main/src/NerdBank.GitVersioning/version.schema.json",
--  "version": "2026.0.0",
-+  "version": "2026.0.0-nubis.1",
-   "assemblyVersion": {
-     "precision": "revision"
-   },
