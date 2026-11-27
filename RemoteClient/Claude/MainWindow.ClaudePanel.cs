@@ -366,6 +366,7 @@ public partial class MainWindow
         "클러스터 관리(이름·네임스페이스·그룹)는 update_k8s_cluster, 삭제 delete_k8s_cluster, 연결 확인 test_k8s_cluster, 클라우드에서 찾기 find_k8s_clusters, kubeconfig 가져오기 import_k8s_clusters.\n" +
         "- 포트 포워딩: SSH 탭은 list_port_forwards 로 보고 add_port_forward(승인 필요, 이 탭에서만 임시)로 열고 close_port_forward 로 닫습니다. 클러스터 탭(쿠버네티스)은 k8s_port_forward(list · start · stop)입니다.\n" +
         "- 터미널의 현재 폴더·로그인 사용자·sudo 전환 여부는 get_terminal_info 로 바로 확인하세요(명령을 보내지 않아 빠르고 승인도 없음). pwd·whoami 를 send_to_terminal 로 보내지 마세요.\n" +
+        "- SSH 서버의 지금 CPU·메모리·네트워크는 get_server_stats 로 보세요(사용자가 그 탭의 서버 모니터를 켜 둔 경우에만 값이 있음, 명령을 보내지 않음). 꺼져 있으면 켜 달라고 안내하거나 승인을 받아 run_command 로 확인하세요.\n" +
         "- send_to_terminal 은 명령이 끝나 셸 프롬프트가 돌아올 때까지(기본 10초) 기다려 출력을 함께 돌려줍니다. 그 결과로 바로 답하고, '아직 실행 중' 일 때만 wait_for_output 으로 이어서 기다리세요.\n" +
         "- 로그·설정 파일은 sftp_read(tail=true 로 로그 끝부분), 폴더는 sftp_list 로 보세요. 파일 전송은 sftp_download / sftp_upload.\n" +
         "- OTP·Push 인증을 요구하는 서버는 먼저 open_session(wait_connected_sec) 으로 탭을 열어 사용자가 인증을 마치게 한 뒤 run_command 를 쓰세요(열린 탭의 로그인된 연결로 실행됩니다).\n" +

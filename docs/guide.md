@@ -197,6 +197,17 @@ Open a database (3306, 5432) or an admin web page that sits behind a server on a
 - If the server blocks forwarding (`AllowTcpForwarding no`), the listener still opens but connections fail, and the reason appears in the forwarding window.
 - Claude can see open forwards with `list_port_forwards` and open a temporary one in a tab with `add_port_forward` (it opens a port on this PC, so it **always asks for approval**).
 
+### 4.2 Server monitor (CPU · memory · network)
+
+The chart button in the toolbar left of the terminal shows a thin bar above the terminal with the server's **CPU %**, **memory used / total** and **network receive ↓ / send ↑ per second**, each with a short sparkline. It is off by default and per tab (not saved).
+
+- **Live only** — values are read every 2 seconds and only the last few points of the sparklines are kept in memory. Nothing is recorded or saved.
+- **Uses the tab's connection** — a fixed read-only command (`head` of `/proc/uptime`, `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`) runs on the tab's SSH connection, so there is no second sign-in (OTP servers included). Nothing else is sent to the server.
+- **Only while visible** — it reads only while the tab is on screen (the current tab or the other side of a side-by-side view) and pauses when the tab is hidden, the window is minimized or the connection drops; it continues when the tab shows again or reconnects.
+- CPU is the average of all cores. Memory excludes cache and buffers (`MemAvailable`). Network adds up all interfaces except `lo` and container virtual interfaces (`docker*`, `veth*`, `br-*`, `cni*`, `cali*`, …) that would count the same traffic twice. After a reboot or a counter reset the values start again from the next sample.
+- **Linux servers only.** On Windows OpenSSH servers and restricted shells (no `/proc`) the bar shows the reason instead of values and the terminal is not affected.
+- Claude can read the values the monitor is showing with `get_server_stats` — it sends no command, so it only has values while you keep the monitor on in that tab.
+
 ---
 
 ## 5. SFTP file transfer
@@ -495,7 +506,7 @@ The approval prompt shows the target servers and the full command. It flags risk
 
 ### 10.5 MCP tools
 
-Claude has 83 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
+Claude has 84 tools. Anything you can do by hand in the app, Claude can do too. The exceptions are secrets (passwords, keys) and a few protected settings; see 10.3 and 10.4.
 
 **Hosts and groups**
 
@@ -533,6 +544,7 @@ Claude has 83 tools. Anything you can do by hand in the app, Claude can do too. 
 |---|---|
 | `read_terminal` · `get_selection` · `capture_screen` | Terminal content, selected text, screen image |
 | `get_terminal_info` | The terminal's current folder, sign-in account and sudo switch (answers instantly, no command sent) |
+| `get_server_stats` | The SSH tab's current CPU · memory · network from the server monitor (no command sent; only while the monitor is on in that tab) |
 | `wait_for_output` | Wait until some text appears, the prompt returns or output goes quiet |
 | `send_to_terminal` | Type into a terminal |
 
