@@ -1,6 +1,6 @@
 <img src="nubis.png" width="96" align="right"/>
 
-[English](README.md) | **한국어** · 📖 [사용자 가이드](docs/guide.ko.md) · ⬇️ [다운로드](https://github.com/windevase/nubis/releases/latest) · 🛡️ [VirusTotal 검사 결과 (릴리스 설명)](https://github.com/windevase/nubis/releases/latest)
+[English](README.md) | **한국어** · 🌐 [홈페이지](https://www.nubis.site/) · 📖 [사용자 가이드](docs/guide.ko.md) · ⬇️ [다운로드](https://github.com/windevase/nubis/releases/latest) · 🛡️ [VirusTotal 검사 결과 (릴리스 설명)](https://github.com/windevase/nubis/releases/latest)
 
 # Nubis
 
@@ -101,15 +101,17 @@ WPF (.NET 10) · [SSH.NET](https://github.com/sshnet/SSH.NET) (조금 고친 빌
 .\build.ps1 publish    # publish\ (Nubis.exe + DLL, .NET 포함) + dist\ 포터블 zip
 ```
 
-## 코드 서명 정책
+## 다운로드 확인
 
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+배포 파일은 당분간 코드 서명을 하지 않습니다 (무료 서명 프로그램은 어느 정도 알려진 프로젝트가 대상이고, 유료 인증서는 아직 부담이 큽니다). 그래서 처음 실행할 때 Windows SmartScreen 경고가 뜰 수 있습니다. 대신 받은 zip 이 GitHub Actions 가 만든 바로 그 파일인지 확인하세요 — SHA256 값이 [릴리스 페이지](https://github.com/windevase/nubis/releases/latest)의 `SHA256SUMS.txt` 와 같아야 합니다:
 
-> SignPath Foundation 에 무료 코드 서명을 신청했다. 승인 전까지 배포 파일은 서명되지 않으므로, 릴리스 페이지의 `SHA256SUMS.txt` 로 SHA256 을 확인한다.
+```powershell
+Get-FileHash .\Nubis-<버전>-portable-win-x64.zip -Algorithm SHA256
+```
 
-- 배포 파일은 이 저장소의 소스로 [GitHub Actions](.github/workflows/build.yml) 만 만든다 (`v*` 태그를 푸시하면 테스트·빌드 후 릴리스). 로컬에서 만든 파일은 서명하지 않는다.
+- 배포 파일은 이 저장소의 소스로 [GitHub Actions](.github/workflows/build.yml) 만 만든다 (`v*` 태그를 푸시하면 테스트·빌드 후 릴리스). 로컬에서 만든 파일은 배포하지 않는다.
+- 릴리스 설명마다 zip 의 VirusTotal 검사 결과 링크가 있다.
 - 커밋·리뷰: [windevase](https://github.com/windevase)
-- 서명 승인: [windevase](https://github.com/windevase)
 
 ## 개인정보
 
