@@ -1,6 +1,6 @@
 <img src="nubis.png" width="96" align="right"/>
 
-**English** | [한국어](README.ko.md) · 📖 [User Guide](docs/guide.md) · ⬇️ [Download](https://github.com/windevase/nubis/releases/latest) · 🛡️ [VirusTotal scan (in release notes)](https://github.com/windevase/nubis/releases/latest)
+**English** | [한국어](README.ko.md) · 🌐 [Website](https://www.nubis.site/en/) · 📖 [User Guide](docs/guide.md) · ⬇️ [Download](https://github.com/windevase/nubis/releases/latest) · 🛡️ [VirusTotal scan (in release notes)](https://github.com/windevase/nubis/releases/latest)
 
 # Nubis
 
@@ -101,15 +101,17 @@ WPF on .NET 10 · [SSH.NET](https://github.com/sshnet/SSH.NET) (a small patched 
 .\build.ps1 publish    # publish\ (Nubis.exe + DLLs, self-contained) + dist\ portable zip
 ```
 
-## Code signing policy
+## Verifying downloads
 
-Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+Release builds are not code-signed for now (free signing programs are for established projects, and a paid certificate is not worth it yet), so Windows may show a SmartScreen warning the first time you run it. Instead, check that the zip you downloaded is exactly the one GitHub Actions built — its SHA256 must match the line in `SHA256SUMS.txt` on the [release page](https://github.com/windevase/nubis/releases/latest):
 
-> Signing through SignPath Foundation has been applied for. Until it is approved, release builds are unsigned — check the SHA256 in `SHA256SUMS.txt` on the release page.
+```powershell
+Get-FileHash .\Nubis-<version>-portable-win-x64.zip -Algorithm SHA256
+```
 
-- Release binaries are built only by [GitHub Actions](.github/workflows/build.yml) from this repository's source (a `v*` tag builds, tests and publishes the release). Locally built files are never signed.
+- Release binaries are built only by [GitHub Actions](.github/workflows/build.yml) from this repository's source (a `v*` tag builds, tests and publishes the release). Locally built files are never published.
+- Each release's notes link a VirusTotal scan of the zip.
 - Committers and reviewers: [windevase](https://github.com/windevase)
-- Approvers: [windevase](https://github.com/windevase)
 
 ## Privacy
 
